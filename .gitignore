@@ -1,0 +1,55 @@
+# --- Original game files: NEVER commit (see CLAUDE.md legal rules) ---
+*.MDB
+*.mdb
+*.ldb
+*.DBI
+*.dbi
+!tests/fixtures/**/*.dbi
+*.FF
+*.ff
+*.SMK
+*.smk
+*.ZIP
+*.zip
+*.EXE
+*.exe
+*.DLL
+*.dll
+*.WAV
+*.wav
+*.ogg
+*.PAL
+*.pal
+*.BMP
+*.bmp
+*.INI
+savegame.*
+data/
+gamedata/
+extracted/
+
+# --- Reverse-engineering artifacts ---
+*.gpr
+*.rep/
+*.gzf
+.rea/
+rea-evidence/
+*.evidence.json
+
+# --- Build output ---
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
+
+# --- Editors / OS ---
+.vs/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# --- Local Claude Code settings ---
+.claude/settings.local.json
