@@ -3,7 +3,9 @@
 
 #include "data/sqlite_db.hpp"
 #include "formats/dbi.hpp"
+#include "map/map_objects.hpp"
 #include "map/map_renderer.hpp"
+#include "map/rules.hpp"
 #include "map/terrain_map.hpp"
 #include "render/indexed_surface.hpp"
 
@@ -11,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 
 using namespace openday;
@@ -126,12 +129,90 @@ void testLoadAndRender() {
     CHECK(part.tilesDrawn < 4 && part.tilesDrawn > 0);
 }
 
+void testRoadVariants() {
+    using namespace game;
+    CHECK(roadVariant(0) == 0);
+    CHECK(roadVariant(kNE | kSE | kSW | kNW) == 1);
+    CHECK(roadVariant(kSE | kNW) == 6 && roadVariant(kNE | kSW) == 7);
+    CHECK(roadVariant(kSE) == 8 && roadVariant(kSW) == 9 && roadVariant(kNE) == 10 && roadVariant(kNW) == 11);
+    CHECK(roadVariant(kNE | kSE) == 12 && roadVariant(kSE | kSW) == 13);
+    CHECK(roadVariant(kNE | kNW) == 14 && roadVariant(kSW | kNW) == 15);
+    CHECK(roadVariant(kNE | kSE | kSW) == 2 && roadVariant(kSE | kSW | kNW) == 3);
+    CHECK(roadVariant(kNE | kSE | kNW) == 4 && roadVariant(kNE | kSW | kNW) == 5);
+    // Every variant is used exactly once.
+    std::set<int> seen;
+    for (int m = 0; m < 16; ++m) seen.insert(roadVariant(static_cast<std::uint8_t>(m)));
+    CHECK(seen.size() == 16);
+}
+
+void testMapObjects() {
+    const auto path = std::filesystem::temp_directory_path() / "openday_map_objects_test.sqlite";
+    std::filesystem::remove(path);
+    std::vector<game::MapSprite> objects;
+    game::TerrainMap terrain;
+    {
+        data::SqliteDb db(path, data::SqliteDb::Mode::ReadWriteCreate);
+        db.exec("CREATE TABLE \"Map\" (\"Id\" INTEGER, \"PosX\" INTEGER, \"PosY\" INTEGER, \"TerrainImg\" TEXT)");
+        for (int y = 0; y < 4; ++y)
+            for (int x = 0; x < 4; ++x)
+                db.exec("INSERT INTO \"Map\" VALUES (0, " + std::to_string(x) + ", " + std::to_string(y) +
+                        (x == 3 && y == 3 ? ", 'eau000')" : ", 'grass0')"));
+        db.exec("CREATE TABLE \"Roads On Map\" (\"Counter\" INTEGER, \"roadtype\" INTEGER, \"playerOwner\" INTEGER, \"PosX\" INTEGER, \"PosY\" INTEGER)");
+        db.exec("INSERT INTO \"Roads On Map\" VALUES (1, 0, 0, 0, 0), (2, 0, 0, 1, 0), (3, 0, 0, 2, 0), (4, 1, 0, 3, 3)");
+        db.exec("CREATE TABLE \"Walls On Map\" (\"Counter\" INTEGER, \"roadtype\" INTEGER, \"playerOwner\" INTEGER, \"currentAR\" INTEGER, \"posX\" INTEGER, \"posY\" INTEGER, \"isDamaged\" INTEGER)");
+        db.exec("INSERT INTO \"Walls On Map\" VALUES (1, 0, 0, 10, 0, 3, 1)");
+        db.exec("CREATE TABLE \"Mines On Map\" (\"Counter\" INTEGER, \"typeID\" INTEGER, \"playerOwner\" INTEGER, \"PosX\" INTEGER, \"PosY\" INTEGER, \"armed\" INTEGER)");
+        db.exec("CREATE TABLE \"Ruins On Map\" (\"Counter\" INTEGER, \"id\" TEXT, \"PosX\" INTEGER, \"PosY\" INTEGER)");
+        db.exec("CREATE TABLE \"Buildings On Map\" (\"Counter\" INTEGER, \"id\" INTEGER, \"buildingType\" INTEGER, \"playerOwner\" INTEGER, \"currentAR\" INTEGER, \"PosX\" INTEGER, \"PosY\" INTEGER)");
+        db.exec("INSERT INTO \"Buildings On Map\" VALUES (1, 7, 130, 2, 100, 1, 1)");
+        db.exec("CREATE TABLE \"Units On Map\" (\"Counter\" INTEGER, \"ID\" INTEGER, \"unitType\" INTEGER, \"unitTL\" INTEGER, \"playerOwner\" INTEGER, \"facing\" INTEGER, \"PosX\" INTEGER, \"PosY\" INTEGER)");
+        db.exec("INSERT INTO \"Units On Map\" VALUES (1, 9, 5, 1, 0, 6, 1, 1)");
+
+        game::GlobalRules rules;
+        rules.roadImage = {{0, "ROAL"}, {1, "ROAH"}};
+        rules.walls[0] = {"WALLC", 60}; // currentAR 10 <= 33% of 60: damaged
+        rules.buildings[130] = {"HHQ", 2, 2};
+        rules.units[{5, 1}] = {"BDN", 0};
+        rules.terrainClass = {{"GRASS0", game::TerrainClass::Plain}, {"EAU000", game::TerrainClass::DeepWater}};
+        terrain = game::loadTerrainMap(db);
+        objects = game::loadMapObjects(db, rules, terrain);
+    }
+    std::filesystem::remove(path);
+
+    std::set<std::string> names;
+    for (const auto& o : objects) names.insert(std::to_string(o.x) + "," + std::to_string(o.y) + ":" + o.name);
+    // A straight road along x: dead end, straight, dead end; the lone
+    // high-tech piece over deep water becomes a bridge.
+    CHECK(names.count("0,0:ROALG008") && names.count("1,0:ROALG006") && names.count("2,0:ROALG011"));
+    CHECK(names.count("3,3:ROAHB000"));
+    CHECK(names.count("0,3:WALLC100"));
+    // A 2 x 2 building of player 2 at (1, 1): one sprite per footprint tile.
+    CHECK(names.count("1,1:HHQ2000") && names.count("2,1:HHQ2010") && names.count("1,2:HHQ2001") && names.count("2,2:HHQ2011"));
+    CHECK(names.count("1,1:BDN0600"));
+    CHECK(objects.size() == 4 + 1 + 4 + 1);
+
+    CHECK(game::rampNumber(0, 0) == 16 && game::rampNumber(6, 1) == 21 && game::rampNumber(10, 3) == 31);
+    CHECK(game::rampNumber(7, 0) == 32 && game::rampNumber(1, 2) == 32);
+
+    // Within a tile the scene draws by layer: the unit after the building.
+    const game::MapScene scene(std::move(terrain), std::move(objects));
+    const game::MapSprite* building = nullptr;
+    const game::MapSprite* unit = nullptr;
+    for (const auto& o : scene.objects()) {
+        if (o.x == 1 && o.y == 1 && o.layer == game::Layer::Building) building = &o;
+        if (o.x == 1 && o.y == 1 && o.layer == game::Layer::Unit) unit = &o;
+    }
+    CHECK(building && unit && building < unit);
+}
+
 } // namespace
 
 int main() {
     try {
         testGeometry();
         testLoadAndRender();
+        testRoadVariants();
+        testMapObjects();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "exception: %s\n", e.what());
         ++failures;

@@ -1,23 +1,25 @@
-// mapview: SDL3 viewer for the terrain of the scenario maps.
+// mapview: SDL3 viewer for the scenario maps (terrain and placed objects).
 //
 //   mapview [--game-dir DIR] --data DIR [--scenario NAME] [--scale N]
-//   mapview [--game-dir DIR] --data DIR --scenario NAME --screenshot OUT.png
+//   mapview [--game-dir DIR] --data DIR --scenario NAME --screenshot OUT.png [--no-objects]
 //
-// --game-dir  game installation (default: $OPENDAY_GAME_DIR); TERRAINS.DBI is
-//             read from its IMGS folder.
+// --game-dir  game installation (default: $OPENDAY_GAME_DIR); the sprite
+//             archives are read from its IMGS folder.
 // --data      output folder of tools/mdb/mdb2sqlite.py (default:
 //             $OPENDAY_DATA_DIR).
 // --scenario  scenario database name without extension, e.g. s1-1-1.
 //
 // Controls: arrow keys / WASD or drag with the mouse to scroll, PageUp /
 // PageDown for the previous / next scenario, 1-4 to set the zoom, C to toggle
-// palette cycling (water, lights), Esc to quit.
+// palette cycling (water, lights), O to toggle objects, Esc to quit.
 
 #include "data/sqlite_db.hpp"
 #include "formats/bmp_palette.hpp"
 #include "formats/palcycle.hpp"
 #include "formats/png_writer.hpp"
+#include "map/map_objects.hpp"
 #include "map/map_renderer.hpp"
+#include "map/rules.hpp"
 #include "map/terrain_map.hpp"
 #include "render/indexed_surface.hpp"
 
@@ -31,6 +33,7 @@
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -45,6 +48,7 @@ struct Options {
     std::string scenario;
     fs::path screenshot;
     int scale = 2;
+    bool objects = true;
 };
 
 std::string lower(std::string s) {
@@ -57,7 +61,7 @@ fs::path envPath(const char* name) {
     return v ? fs::path(v) : fs::path();
 }
 
-// Scenario databases are the converted files below SCENS that have a Map table.
+// Scenario databases are the converted files that have a Map table.
 std::vector<fs::path> findScenarios(const fs::path& dataDir) {
     std::vector<fs::path> found;
     for (const auto& e : fs::recursive_directory_iterator(dataDir)) {
@@ -67,6 +71,12 @@ std::vector<fs::path> findScenarios(const fs::path& dataDir) {
     std::sort(found.begin(), found.end(),
               [](const fs::path& a, const fs::path& b) { return lower(a.stem().string()) < lower(b.stem().string()); });
     return found;
+}
+
+fs::path findGlobalDb(const fs::path& dataDir) {
+    for (const auto& e : fs::recursive_directory_iterator(dataDir))
+        if (e.is_regular_file() && lower(e.path().filename().string()) == "global.sqlite") return e.path();
+    throw data::DbError("GLOBAL.sqlite not found in " + dataDir.string());
 }
 
 // Main palette (INTERF\PAL.BMP) plus the color-cycling table (INTERF\PALCYCLE.PAL).
@@ -81,32 +91,43 @@ struct Palettes {
 
 struct LoadedMap {
     std::string name;
-    game::TerrainMap terrain;
+    game::MapScene scene;
 };
 
-LoadedMap loadMap(const fs::path& path) {
-    return {path.stem().string(), game::loadTerrainMap(data::SqliteDb(path))};
+LoadedMap loadMap(const fs::path& path, const game::GlobalRules& rules) {
+    const data::SqliteDb db(path);
+    game::TerrainMap terrain = game::loadTerrainMap(db);
+    std::vector<game::MapSprite> objects = game::loadMapObjects(db, rules, terrain);
+    return {path.stem().string(), game::MapScene(std::move(terrain), std::move(objects))};
 }
 
 int usage() {
-    std::fprintf(stderr,
-                 "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N] [--screenshot OUT.png]\n");
+    std::fprintf(stderr, "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N]\n"
+                         "               [--screenshot OUT.png] [--no-objects]\n");
     return 2;
 }
 
-int screenshot(const LoadedMap& map, game::SpriteCache& terrain, const Palettes& palettes, const fs::path& out) {
-    const game::Rect bounds = game::iso::mapBounds(map.terrain.size);
+int screenshot(const LoadedMap& map, game::SpriteLibrary& sprites, const Palettes& palettes, const fs::path& out,
+               bool objects) {
+    const int size = map.scene.terrain().size;
+    const game::Rect bounds = game::iso::mapBounds(size);
     render::IndexedSurface surface(bounds.w, bounds.h, 0);
-    const game::RenderStats stats = game::drawTerrain(surface, bounds, map.terrain, terrain);
+    const game::RenderStats stats = map.scene.draw(surface, bounds, sprites, objects);
     formats::writePngRgba(out, surface.width(), surface.height(), surface.toRgba(palettes.at(0, false)));
-    std::printf("%s: %dx%d tiles, %d drawn, %d missing sprites -> %s (%d x %d)\n", map.name.c_str(), map.terrain.size,
-                map.terrain.size, stats.tilesDrawn, stats.missingSprites, out.string().c_str(), surface.width(),
-                surface.height());
+    std::printf("%s: %dx%d tiles, %d drawn, %zu objects, %d missing sprites -> %s (%d x %d)\n", map.name.c_str(), size,
+                size, stats.tilesDrawn, objects ? map.scene.objects().size() : std::size_t{0}, stats.missingSprites,
+                out.string().c_str(), surface.width(), surface.height());
+    if (objects && stats.missingSprites > 0) {
+        std::set<std::string> missing;
+        for (const game::MapSprite& o : map.scene.objects())
+            if (!sprites.get(o.set, o.name)) missing.insert(o.name);
+        for (const std::string& name : missing) std::printf("  missing: %s\n", name.c_str());
+    }
     return stats.missingSprites == 0 ? 0 : 1;
 }
 
-int run(const std::vector<fs::path>& scenarios, std::size_t current, game::SpriteCache& terrain,
-        const Palettes& palettes, int scale) {
+int run(const std::vector<fs::path>& scenarios, std::size_t current, const game::GlobalRules& rules,
+        game::SpriteLibrary& sprites, const Palettes& palettes, int scale, bool showObjects) {
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
@@ -120,16 +141,17 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, game::Sprit
     }
     SDL_SetRenderVSync(renderer, 1);
 
-    LoadedMap map = loadMap(scenarios[current]);
-    game::Rect bounds = game::iso::mapBounds(map.terrain.size);
+    LoadedMap map = loadMap(scenarios[current], rules);
+    game::Rect bounds = game::iso::mapBounds(map.scene.terrain().size);
     float camX = 0, camY = 0; // map pixel at the top-left of the view
     auto centerCamera = [&](int viewW, int viewH) {
         camX = static_cast<float>(bounds.w - viewW) / 2;
         camY = static_cast<float>(bounds.h - viewH) / 2;
     };
     auto updateTitle = [&] {
-        const std::string title = "OpenDay map viewer - " + map.name + " (" + std::to_string(map.terrain.size) + "x" +
-                                  std::to_string(map.terrain.size) + ")";
+        const int n = map.scene.terrain().size;
+        const std::string title =
+            "OpenDay map viewer - " + map.name + " (" + std::to_string(n) + "x" + std::to_string(n) + ")";
         SDL_SetWindowTitle(window, title.c_str());
     };
     updateTitle();
@@ -151,12 +173,13 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, game::Sprit
             case SDL_EVENT_KEY_DOWN:
                 if (ev.key.key == SDLK_ESCAPE) running = false;
                 if (ev.key.key == SDLK_C) cycling = !cycling;
+                if (ev.key.key == SDLK_O) showObjects = !showObjects;
                 if (ev.key.key >= SDLK_1 && ev.key.key <= SDLK_4) scale = static_cast<int>(ev.key.key - SDLK_1) + 1;
                 if (ev.key.key == SDLK_PAGEDOWN || ev.key.key == SDLK_PAGEUP) {
                     const std::size_t n = scenarios.size();
                     current = ev.key.key == SDLK_PAGEDOWN ? (current + 1) % n : (current + n - 1) % n;
-                    map = loadMap(scenarios[current]);
-                    bounds = game::iso::mapBounds(map.terrain.size);
+                    map = loadMap(scenarios[current], rules);
+                    bounds = game::iso::mapBounds(map.scene.terrain().size);
                     centered = false;
                     updateTitle();
                 }
@@ -203,7 +226,7 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, game::Sprit
 
         surface.fill(0);
         const game::Rect view{static_cast<int>(camX), static_cast<int>(camY), viewW, viewH};
-        game::drawTerrain(surface, view, map.terrain, terrain);
+        map.scene.draw(surface, view, sprites, showObjects);
 
         void* pixels = nullptr;
         int pitch = 0;
@@ -235,6 +258,10 @@ int main(int argc, char** argv) {
     opt.dataDir = envPath("OPENDAY_DATA_DIR");
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
+        if (a == "--no-objects") {
+            opt.objects = false;
+            continue;
+        }
         if (i + 1 >= argc) return usage();
         if (a == "--game-dir") opt.gameDir = argv[++i];
         else if (a == "--data") opt.dataDir = argv[++i];
@@ -266,14 +293,14 @@ int main(int argc, char** argv) {
             current = static_cast<std::size_t>(it - scenarios.begin());
         }
 
-        game::SpriteCache terrain(
-            std::make_shared<const formats::DbiArchive>(formats::DbiArchive::fromFile(opt.gameDir / "IMGS" / "TERRAINS.DBI")));
+        const game::GlobalRules rules = game::loadGlobalRules(data::SqliteDb(findGlobalDb(opt.dataDir)));
+        game::SpriteLibrary sprites = game::SpriteLibrary::fromGameDir(opt.gameDir);
+        const Palettes palettes{formats::loadBmpPalette(opt.gameDir / "INTERF" / "PAL.BMP"),
+                                formats::PalCycle::fromFile(opt.gameDir / "INTERF" / "PALCYCLE.PAL")};
 
-        Palettes palettes{formats::loadBmpPalette(opt.gameDir / "INTERF" / "PAL.BMP"),
-                          formats::PalCycle::fromFile(opt.gameDir / "INTERF" / "PALCYCLE.PAL")};
-
-        if (!opt.screenshot.empty()) return screenshot(loadMap(scenarios[current]), terrain, palettes, opt.screenshot);
-        return run(scenarios, current, terrain, palettes, opt.scale);
+        if (!opt.screenshot.empty())
+            return screenshot(loadMap(scenarios[current], rules), sprites, palettes, opt.screenshot, opt.objects);
+        return run(scenarios, current, rules, sprites, palettes, opt.scale, opt.objects);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 1;

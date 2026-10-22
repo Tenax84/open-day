@@ -217,7 +217,7 @@ given file, and three are empty in every shipped file (`Attack Army`,
 | `Attack Army` | Same shape, unused. |
 | `Automated Units` | Automated units the AI calls in: `AutomatedType`, start and destination tile, `TurnArrival`. |
 | `Roads On Map` | `roadtype`, `playerOwner`, position. |
-| `Walls On Map` | Wall type (column named `roadtype`), `playerOwner`, `currentAR`, position, `isDamaged`. |
+| `Walls On Map` | Wall type (column named `roadtype`), `playerOwner`, `currentAR`, position, `isDamaged` (actually a "broken end" flag, see [map-objects.md](map-objects.md)). |
 | `Mines On Map` | `typeID`, `playerOwner`, position, `armed`, and visibility flags `hidden_AI`, `hidden_1` … `hidden_4`. |
 | `Ruins On Map` | Ruin sprite `id`, position (unused in shipped files). |
 | `Objective` | One row: `ObjectifId` (→ `Objectives Id Lookup`), `TurnNumber` (turn limit or hold duration *(?)*). |
@@ -261,9 +261,8 @@ Four characters follow the code:
   `0`–`7`, then `00`. `<c>` is `0` (race default color, `Colors` enum 0/5/6/7)
   or `1`–`4` (player colors, `Colors` enum 1–4). Some units have only
   variant `0`, e.g. convoy vehicles and units that only the AI uses *(?)*.
-  Infantry codes also have facings `A`–`H`, a second pose per direction
-  for some or all color variants. This is probably a firing or crouching
-  pose *(?)*.
+  Infantry codes also have facings `A`–`H`: the same eight directions as
+  drawn when the unit stands in forest (see [map-objects.md](map-objects.md)).
 - **Buildings:** `<c>` = color variant as above (human buildings mostly
   `1`–`4`, other races `0`), `<d>` = state `0` intact, `1` damaged (only when
   `DamagedImages` is true; some neutral objects use `1` for a second look *(?)*),
@@ -314,7 +313,7 @@ of `1`–`3` is open: perhaps a resolution or zoom level.
 | `TERRAINS.DBI` | `<family><nnn>`. Families are climates: `ARID`, `DESE` (desert), `NORD` (temperate), `POLE` (polar), `BORE` (boreal), `JUNG` (jungle), `EAU` (open water). A family with `X` in place of its last letter (`ARIX`, `BORX`, …) holds burned variants. `T` + two climate abbreviations (`TARDE`, `TBONO`, `TDEJU`, `TNOPO`, and their `…X` burned forms) are transition tiles between two climates *(?)*. The hundreds digit loosely groups features (forest, mountain/rock, water edge, …), but the authoritative class is `Terrain Types.type`. |
 | `RUINS.DBI` | `B<r>RUI<nnn>` building rubble and `U<r>RUI<nnn>` unit wrecks, `<r>` = race letter (`H`, `T`, `B`, `M`). For unit wrecks, the first digit also encodes the race (1 Shubblar, 2 human, 3 Shadamar, 4 Tauran *(?)*). |
 | `ROADS.DBI` | `ROA<t><k><nnn>`: `<t>` = `L` low-tech / `H` high-tech (`Road Types.img_id`), `<k>` = `G`, `R`, `B` sub-sets (plain ground, river crossing, bridge *(?)*), `<nnn>` = connection variant, 16 per set (a 4-neighbor bitmask *(?)*). |
-| `WALLS.DBI` | `WALL<t><s><nn>`: `<t>` = `C`/`L`/`F`/`R` (`Wall Types.img_id`), `<s>` = `0` intact / `1` damaged (`Walls On Map.isDamaged` *(?)*), `<nn>` = connection variant. |
+| `WALLS.DBI` | `WALL<t><s><nn>`: `<t>` = `C`/`L`/`F`/`R` (`Wall Types.img_id`), `<s>` = `0` intact / `1` damaged (computed from `currentAR`, see [map-objects.md](map-objects.md)), `<nn>` = connection variant. |
 | `MINES.DBI` | `MINE<nnn>`, `GMINE<nnn>` (`Mine Types.ImageID` + number). |
 | `LISTBOX.DBI` | `<code>999`: the 38×38 list/purchase icon of every unit, building, automated unit, mine, road and wall code. |
 | `SYMBOLS.DBI` | UI symbols and cursors: `UA…` automated-unit target cursors (`Automated Units.cursorID`), `DEPL<p><nn>` deployment-zone markers per player *(?)*, `PATH…`, `SEL…`, `TARGET`, … |
@@ -327,7 +326,6 @@ of `1`–`3` is open: perhaps a resolution or zoom level.
   `burned_min`.
 - Meaning of the numbers in death-match file names, of the `1`–`3` suffix of
   automated-unit animations, and of the four colony `mapScreen` images.
-- Whether infantry facings `A`–`H` are a firing pose or another state.
 - Where the objective icons (`OBJ000`…) are stored (not in any `.DBI`;
   `SYMBOLS.DBI` has similar `OBJT…` names).
 - How `GAMEINFO.MDB` is copied/used at run time (`CACHE\` folder).

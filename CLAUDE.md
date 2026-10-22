@@ -34,7 +34,9 @@ Jogalap (nem jogi tanács): az EU 2009/24/EK irányelv 5. cikk (3) bek. (működ
 - **Kész:** `PALCYCLE.PAL` (`docs/formats/PALCYCLE.md`, `engine/formats/palcycle.*`): 100 ms-os lépés, 18 lépéses ciklus, a 235–244 indexek cserélődnek.
 - **Kész:** taktikai térkép terepének kirajzolása (`docs/mechanics/isometric-map.md`): `engine/data` (SQLite), `engine/render` (8 bites felület), `game/map` (betöltés + izometrikus rajzolás), `tools/mapview` (SDL3, palettaciklussal, `--screenshot`). Mind a 114 pálya hiánytalanul kirajzolódik.
 - Függőségek: SDL 3.4.16 és SQLite 3.50.4 FetchContenttel (`cmake/Dependencies.cmake`), hash-sel rögzítve.
-- Következő jelöltek: utak, falak, aknák, romok és épületek a térképen (`Roads/Walls/Mines/Buildings On Map` + `ROADS/WALLS/MINES/RUINS/UB.DBI`), utána egységek (UB.DBI álló sprite-ok, FF animációk).
+- **Kész:** pályaobjektumok (`docs/mechanics/map-objects.md`, `game/map/map_objects.*`, `rules.*`): utak (G/B/R készlet, feljárók), falak (sérülés páncélból, törött végek), aknák, romok, többcsempés épületek, álló egységek (erdei gyalogos-póz, hídon −5 px). Közös, cellánkénti mélységi rajzolás rétegsorrenddel. Mind a 114 pálya hiánytalan.
+- Nyitott: aknák 000/001 utótagja, játékos-slot → szín tábla, tornyok iránya.
+- Következő jelöltek: egységanimációk az FF-ből a térképen (mozgás, lövés), majd a játékmenet magja (körök, kiválasztás, mozgatás) a kliens–szerver üzenetes felépítés szerint.
 
 ## Tervezett repó-higiénia
 

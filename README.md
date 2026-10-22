@@ -56,8 +56,9 @@ graphics of your installation.
   container (Smacker videos; frames as PNG, audio as WAV).
 - `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
   (Python standard library only).
-- `mapview` — SDL3 viewer for the terrain of every scenario map, with
-  palette cycling (animated water). It needs the converted databases:
+- `mapview` — SDL3 viewer for every scenario map: terrain, roads, walls,
+  mines, buildings and units, with palette cycling (animated water). It
+  needs the converted databases:
 
   ```
   python3 tools/mdb/mdb2sqlite.py --game-dir "<game dir>" ~/openday-data
@@ -65,7 +66,7 @@ graphics of your installation.
   ```
 
   Arrow keys / WASD or mouse drag scroll, PageUp/PageDown switch scenario,
-  1–4 zoom, C toggles palette cycling. `--screenshot out.png` renders the
+  1–4 zoom, C toggles palette cycling, O toggles the objects. `--screenshot out.png` renders the
   whole map to a file instead of opening a window.
 
 Everything these tools produce comes from your own game data; do not
