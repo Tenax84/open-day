@@ -24,9 +24,9 @@
 *.bmp
 *.INI
 savegame.*
-data/
-gamedata/
-extracted/
+/data/
+/gamedata/
+/extracted/
 
 # --- Reverse-engineering artifacts ---
 *.gpr
