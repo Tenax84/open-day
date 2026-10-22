@@ -31,7 +31,10 @@ Jogalap (nem jogi tanács): az EU 2009/24/EK irányelv 5. cikk (3) bek. (működ
 - **Kész:** `ANMSUNIT.FF` (`docs/formats/FF.md`): konténer Smacker 2 videókkal; saját SMK-dekóder (`engine/formats/smk.*`), `fftool`. Átlátszóság: a képkocka bal felső pixelének indexe a színkulcs.
 - **Kész:** MDB-k (`docs/formats/MDB.md`, `docs/mechanics/data-model.md`), `tools/mdb/mdb2sqlite.py` (csak stdlib, mind a 122 adatbázis).
 - **CI:** GitHub Actions, macOS arm64 / Windows / Linux, figyelmeztetés nélkül.
-- Következő jelöltek: `PALCYCLE.PAL`, a stratégiai/taktikai térkép kirajzolása SDL3-mal a pálya-MDB `Map` táblája + DBI csempék alapján.
+- **Kész:** `PALCYCLE.PAL` (`docs/formats/PALCYCLE.md`, `engine/formats/palcycle.*`): 100 ms-os lépés, 18 lépéses ciklus, a 235–244 indexek cserélődnek.
+- **Kész:** taktikai térkép terepének kirajzolása (`docs/mechanics/isometric-map.md`): `engine/data` (SQLite), `engine/render` (8 bites felület), `game/map` (betöltés + izometrikus rajzolás), `tools/mapview` (SDL3, palettaciklussal, `--screenshot`). Mind a 114 pálya hiánytalanul kirajzolódik.
+- Függőségek: SDL 3.4.16 és SQLite 3.50.4 FetchContenttel (`cmake/Dependencies.cmake`), hash-sel rögzítve.
+- Következő jelöltek: utak, falak, aknák, romok és épületek a térképen (`Roads/Walls/Mines/Buildings On Map` + `ROADS/WALLS/MINES/RUINS/UB.DBI`), utána egységek (UB.DBI álló sprite-ok, FF animációk).
 
 ## Tervezett repó-higiénia
 

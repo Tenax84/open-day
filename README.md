@@ -34,7 +34,10 @@ C:\Program Files (x86)\GOG Galaxy\Games\Fallen Haven Liberation Day
 ## Building
 
 Requirements: CMake 3.21+ and a C++20 compiler (MSVC 2022+, Clang 15+ or
-GCC 12+). SDL3 will be needed once the engine itself exists.
+GCC 12+). SDL3 and SQLite are used from the system if installed, otherwise
+CMake downloads pinned versions and builds them. On Linux, SDL3 needs the
+usual X11/Wayland development packages. Pass `-DOPENDAY_BUILD_VIEWER=OFF` to
+build only the tools and libraries without SDL3.
 
 ```
 cmake -S . -B build
@@ -53,6 +56,17 @@ graphics of your installation.
   container (Smacker videos; frames as PNG, audio as WAV).
 - `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
   (Python standard library only).
+- `mapview` — SDL3 viewer for the terrain of every scenario map, with
+  palette cycling (animated water). It needs the converted databases:
+
+  ```
+  python3 tools/mdb/mdb2sqlite.py --game-dir "<game dir>" ~/openday-data
+  mapview --game-dir "<game dir>" --data ~/openday-data --scenario s1-1-1
+  ```
+
+  Arrow keys / WASD or mouse drag scroll, PageUp/PageDown switch scenario,
+  1–4 zoom, C toggles palette cycling. `--screenshot out.png` renders the
+  whole map to a file instead of opening a window.
 
 Everything these tools produce comes from your own game data; do not
 redistribute it.
