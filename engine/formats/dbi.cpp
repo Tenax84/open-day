@@ -1,5 +1,7 @@
 #include "formats/dbi.hpp"
 
+#include "formats/binary.hpp"
+
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -12,25 +14,11 @@ constexpr std::size_t kRecordHeaderSize = 20;
 constexpr std::uint16_t kRunTransparent = 1;
 constexpr std::uint16_t kRunLiteral = 2;
 
-using Bytes = std::span<const std::uint8_t>;
-
-std::uint16_t readU16(Bytes d, std::size_t off) {
-    return static_cast<std::uint16_t>(d[off] | (d[off + 1] << 8));
-}
-
-std::uint32_t readU32(Bytes d, std::size_t off) {
-    return static_cast<std::uint32_t>(d[off]) | (static_cast<std::uint32_t>(d[off + 1]) << 8) |
-           (static_cast<std::uint32_t>(d[off + 2]) << 16) | (static_cast<std::uint32_t>(d[off + 3]) << 24);
-}
-
-void putU16(std::vector<std::uint8_t>& out, std::uint16_t v) {
-    out.push_back(static_cast<std::uint8_t>(v));
-    out.push_back(static_cast<std::uint8_t>(v >> 8));
-}
-
-void putU32(std::vector<std::uint8_t>& out, std::uint32_t v) {
-    for (int i = 0; i < 4; ++i) out.push_back(static_cast<std::uint8_t>(v >> (8 * i)));
-}
+using binary::Bytes;
+using binary::putU16;
+using binary::putU32;
+using binary::readU16;
+using binary::readU32;
 
 // Names are NUL-padded to 8 bytes; a name may fill all 8 bytes without a
 // terminator, and anything after the first NUL is garbage.

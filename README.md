@@ -48,8 +48,14 @@ graphics of your installation.
 ## Tools
 
 - `dbitool` — inspect and extract `IMGS\*.DBI` sprite archives
-  (`info`, `list`, `extract`, `sheet`). Extracted images come from your own
-  game data; do not redistribute them.
+  (`info`, `list`, `extract`, `sheet`).
+- `fftool` — inspect and extract the `ANMSUNIT\ANMSUNIT.FF` unit animation
+  container (Smacker videos; frames as PNG, audio as WAV).
+- `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
+  (Python standard library only).
+
+Everything these tools produce comes from your own game data; do not
+redistribute it.
 
 ## Clean-room policy
 

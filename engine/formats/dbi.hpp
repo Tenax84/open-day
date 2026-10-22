@@ -1,7 +1,6 @@
 // Reader for DBI sprite archives. See docs/formats/DBI.md.
 #pragma once
 
-#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -10,17 +9,13 @@
 #include <unordered_map>
 #include <vector>
 
+#include "formats/palette.hpp"
+
 namespace openday::formats {
 
 struct DbiError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
-
-struct Rgb {
-    std::uint8_t r = 0, g = 0, b = 0;
-};
-
-using Palette = std::array<Rgb, 256>;
 
 // Decoded sprite: one palette index per pixel plus a parallel opacity mask.
 struct DbiSprite {

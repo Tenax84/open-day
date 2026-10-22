@@ -28,7 +28,10 @@ Jogalap (nem jogi tanács): az EU 2009/24/EK irányelv 5. cikk (3) bek. (működ
   - Licenc: **GPL-3.0** (`LICENSE`).
 - **Kész:** `.DBI` formátum dokumentálva (`docs/formats/DBI.md`), olvasó (`engine/formats/dbi.*`), `dbitool` (info/list/extract/sheet → PNG), szintetikus teszt + opcionális teszt a helyi telepítésen (mind az 5976 sprite dekódolódik).
 - Build Windowson: `cmake -S . -B build -G "Visual Studio 18 2026" -A x64` (VS 2026 Community van telepítve, 2022 nincs).
-- Következő jelölt: `ANMSUNIT.FF` (egységanimációk), `PALCYCLE.PAL`, MDB-séma feltérképezése.
+- **Kész:** `ANMSUNIT.FF` (`docs/formats/FF.md`): konténer Smacker 2 videókkal; saját SMK-dekóder (`engine/formats/smk.*`), `fftool`. Átlátszóság: a képkocka bal felső pixelének indexe a színkulcs.
+- **Kész:** MDB-k (`docs/formats/MDB.md`, `docs/mechanics/data-model.md`), `tools/mdb/mdb2sqlite.py` (csak stdlib, mind a 122 adatbázis).
+- **CI:** GitHub Actions, macOS arm64 / Windows / Linux, figyelmeztetés nélkül.
+- Következő jelöltek: `PALCYCLE.PAL`, a stratégiai/taktikai térkép kirajzolása SDL3-mal a pálya-MDB `Map` táblája + DBI csempék alapján.
 
 ## Tervezett repó-higiénia
 

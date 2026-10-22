@@ -6,3 +6,11 @@ add_test(NAME dbi_test COMMAND dbi_test)
 if(DEFINED ENV{OPENDAY_GAME_DIR})
     add_test(NAME dbi_game_files COMMAND dbi_test --game-dir "$ENV{OPENDAY_GAME_DIR}")
 endif()
+
+add_executable(ff_test ff_test.cpp)
+target_link_libraries(ff_test PRIVATE openday_formats)
+add_test(NAME ff_test COMMAND ff_test)
+
+if(DEFINED ENV{OPENDAY_GAME_DIR})
+    add_test(NAME ff_game_files COMMAND ff_test --game-dir "$ENV{OPENDAY_GAME_DIR}")
+endif()
