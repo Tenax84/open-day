@@ -26,7 +26,9 @@ Jogalap (nem jogi tanács): az EU 2009/24/EK irányelv 5. cikk (3) bek. (működ
 - **Eldöntve (2026-10-22):**
   - Nyelv: **C++20 + CMake + SDL3**.
   - Licenc: **GPL-3.0** (`LICENSE`).
-- Első feladat (folyamatban): a `.DBI` grafikus formátum visszafejtése és dokumentálása (`docs/formats/DBI.md`), majd egy viewer/kibontó eszköz.
+- **Kész:** `.DBI` formátum dokumentálva (`docs/formats/DBI.md`), olvasó (`engine/formats/dbi.*`), `dbitool` (info/list/extract/sheet → PNG), szintetikus teszt + opcionális teszt a helyi telepítésen (mind az 5976 sprite dekódolódik).
+- Build Windowson: `cmake -S . -B build -G "Visual Studio 18 2026" -A x64` (VS 2026 Community van telepítve, 2022 nincs).
+- Következő jelölt: `ANMSUNIT.FF` (egységanimációk), `PALCYCLE.PAL`, MDB-séma feltérképezése.
 
 ## Tervezett repó-higiénia
 

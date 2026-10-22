@@ -33,8 +33,23 @@ C:\Program Files (x86)\GOG Galaxy\Games\Fallen Haven Liberation Day
 
 ## Building
 
-Planned stack: C++20, CMake, SDL3. Build instructions will follow once there
-is code to build.
+Requirements: CMake 3.21+ and a C++20 compiler (MSVC 2022+, Clang 15+ or
+GCC 12+). SDL3 will be needed once the engine itself exists.
+
+```
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release
+```
+
+If `OPENDAY_GAME_DIR` is set at configure time, an extra test decodes the
+graphics of your installation.
+
+## Tools
+
+- `dbitool` — inspect and extract `IMGS\*.DBI` sprite archives
+  (`info`, `list`, `extract`, `sheet`). Extracted images come from your own
+  game data; do not redistribute them.
 
 ## Clean-room policy
 
