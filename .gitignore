@@ -53,3 +53,8 @@ Thumbs.db
 
 # --- Local Claude Code settings ---
 .claude/settings.local.json
+
+# --- Converted game data (derived from original files) ---
+*.sqlite
+*.sqlite3
+*.db
