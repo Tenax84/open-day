@@ -1,0 +1,247 @@
+#include "anim/battle_animations.hpp"
+
+#include <algorithm>
+
+namespace openday::game {
+namespace {
+
+int lastFrame(const render::Animation* a) { return a && !a->frames.empty() ? static_cast<int>(a->frames.size()) - 1 : 0; }
+
+// The next part of a sequence starts one tick after a part that showed
+// frames, or on the same tick after an empty one.
+int after(int end, const render::Animation* shown) { return shown ? end + 1 : end; }
+
+} // namespace
+
+BattleAnimations::BattleAnimations(MapScene& scene, MapEntities& entities, const GlobalRules& rules,
+                                   render::AnimationCache* clips)
+    : scene_(scene), entities_(entities), rules_(rules), clips_(clips), unitHidden_(entities.units.size(), 0),
+      buildingHidden_(entities.buildings.size(), false) {}
+
+const render::Animation* BattleAnimations::clip(const std::string& name) {
+    return clips_ && !name.empty() ? clips_->get(name) : nullptr;
+}
+
+const render::Animation* BattleAnimations::unitClip(const UnitType& type, int color, UnitAction action, int facing) {
+    for (const int c : {color, 1, 0})
+        if (const render::Animation* a = clip(unitClipName(type, c, action, facing))) return a;
+    return nullptr;
+}
+
+void BattleAnimations::hideUnit(int unit) { ++unitHidden_[static_cast<std::size_t>(unit)]; }
+
+void BattleAnimations::showUnit(int unit) {
+    int& h = unitHidden_[static_cast<std::size_t>(unit)];
+    h = std::max(0, h - 1);
+}
+
+void BattleAnimations::refreshUnit(int unit) {
+    const MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
+    std::vector<MapSprite> sprites;
+    if (u.alive) {
+        const TerrainMap& t = scene_.terrain();
+        const bool onBridge = t.inside(u.x, u.y) && rules_.classOf(t.at(u.x, u.y)) == TerrainClass::DeepWater &&
+                              scene_.hasObject(u.x, u.y, Layer::Road);
+        sprites.push_back(unitSprite(u, unit, t, rules_, onBridge));
+    }
+    scene_.replaceEntity(Layer::Unit, unit, std::move(sprites));
+}
+
+int BattleAnimations::unitAt(Point tile) const {
+    for (std::size_t i = 0; i < entities_.units.size(); ++i) {
+        const MapUnit& u = entities_.units[i];
+        if (u.alive && u.x == tile.x && u.y == tile.y) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+int BattleAnimations::buildingAt(Point tile) const {
+    for (std::size_t i = 0; i < entities_.buildings.size(); ++i) {
+        const MapBuilding& b = entities_.buildings[i];
+        if (b.alive && tile.x >= b.x && tile.y >= b.y && tile.x < b.x + b.type->sizeX && tile.y < b.y + b.type->sizeY)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void BattleAnimations::move(int unit, const std::vector<Point>& path) {
+    if (unit < 0 || path.size() < 2) return;
+    MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
+    if (!u.alive) return;
+    const UnitType& type = *u.type;
+    const int n = scene_.terrain().size;
+    const Point from = path.front(), to = path.back();
+    const int lastFacing = facingOfStep(to.x - path[path.size() - 2].x, to.y - path[path.size() - 2].y);
+
+    AnimTrack begin;
+    begin.clips[0] = unitClip(type, u.color, UnitAction::MoveStart, u.facing);
+    begin.duration = lastFrame(begin.clips[0]);
+    begin.pos = framePosition(from.x, from.y, n, begin.clips[0] ? begin.clips[0]->width : 0,
+                              begin.clips[0] ? begin.clips[0]->height : 0);
+    begin.tile = from;
+    begin.sound = begin.clips[0];
+    begin.onStart = [this, unit] { hideUnit(unit); };
+    const render::Animation* beginClip = begin.clips[0];
+    const int beginEnd = animator_.add(std::move(begin));
+
+    AnimTrack slide;
+    slide.start = after(beginEnd, beginClip);
+    slide.loop = true;
+    const render::Animation* any = nullptr;
+    for (int f = 0; f < 8; ++f) {
+        slide.clips[static_cast<std::size_t>(f)] = unitClip(type, u.color, UnitAction::Move, f);
+        if (!any) any = slide.clips[static_cast<std::size_t>(f)];
+    }
+    if (any) slide.path = slidePositions(path, type.movePixSpeed, n, any->width, any->height);
+    slide.duration = slide.path.empty() ? 0 : static_cast<int>(slide.path.size()) - 1;
+    // The original plays the engine sound from a looping facing-0 copy; here it plays once.
+    slide.sound = slide.path.empty() ? nullptr : slide.clips[0];
+    const bool slideShown = !slide.path.empty();
+    const int slideEnd = animator_.add(std::move(slide));
+
+    AnimTrack end;
+    end.start = slideShown ? slideEnd + 1 : slideEnd;
+    end.clips[0] = unitClip(type, u.color, UnitAction::MoveEnd, lastFacing);
+    end.duration = lastFrame(end.clips[0]);
+    end.pos = framePosition(to.x, to.y, n, end.clips[0] ? end.clips[0]->width : 0, end.clips[0] ? end.clips[0]->height : 0);
+    end.tile = to;
+    end.sound = end.clips[0];
+    end.onEnd = [this, unit, to, lastFacing] {
+        MapUnit& mu = entities_.units[static_cast<std::size_t>(unit)];
+        mu.x = to.x;
+        mu.y = to.y;
+        mu.facing = lastFacing;
+        refreshUnit(unit);
+        showUnit(unit);
+    };
+    animator_.add(std::move(end));
+}
+
+void BattleAnimations::attack(int unit, Point target, int shots) {
+    if (unit < 0) return;
+    MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
+    if (!u.alive) return;
+    const UnitType& type = *u.type;
+    const int n = scene_.terrain().size;
+    const Point from{u.x, u.y};
+    const int facing = type.hasFacings ? facingToward(from, target) : 0;
+    auto place = [&](AnimTrack& t, Point tile) {
+        const render::Animation* c = t.clips[0];
+        t.pos = framePosition(tile.x, tile.y, n, c ? c->width : 0, c ? c->height : 0);
+        t.tile = tile;
+        t.sound = c;
+    };
+
+    AnimTrack begin;
+    begin.clips[0] = unitClip(type, u.color, UnitAction::ShootBegin, facing);
+    begin.duration = lastFrame(begin.clips[0]);
+    place(begin, from);
+    begin.onStart = [this, unit, facing] {
+        hideUnit(unit);
+        entities_.units[static_cast<std::size_t>(unit)].facing = facing;
+        refreshUnit(unit);
+    };
+    const render::Animation* prevClip = begin.clips[0];
+    int prevEnd = animator_.add(std::move(begin));
+
+    const render::Animation* shotClip = unitClip(type, u.color, UnitAction::Shoot, facing);
+    const render::Animation* projClip = unitClip(type, u.color, UnitAction::Projectile, 0);
+    const render::Animation* impactClip = unitClip(type, u.color, UnitAction::Impact, 0);
+    for (int i = 0; i < std::max(1, shots); ++i) {
+        AnimTrack shot;
+        shot.start = after(prevEnd, prevClip);
+        shot.clips[0] = shotClip;
+        shot.duration = lastFrame(shotClip);
+        place(shot, from);
+        const int shotStart = std::max(shot.start, animator_.now() + 1);
+        prevEnd = animator_.add(std::move(shot));
+        prevClip = shotClip;
+
+        AnimTrack proj;
+        proj.start = shotStart + type.projectileStart;
+        proj.clips[0] = projClip;
+        if (projClip)
+            for (const Point& p : projectilePath(from, target, type, n, projClip->width, projClip->height))
+                proj.path.push_back({p, {-1, -1}, 0});
+        proj.duration = proj.path.empty() ? 0 : static_cast<int>(proj.path.size()) - 1;
+        proj.sound = proj.path.empty() ? nullptr : projClip;
+        const bool projShown = !proj.path.empty();
+        const int projEnd = animator_.add(std::move(proj));
+
+        AnimTrack impact;
+        impact.start = projShown ? projEnd + 1 : projEnd;
+        impact.clips[0] = impactClip;
+        impact.duration = lastFrame(impactClip);
+        place(impact, target);
+        animator_.add(std::move(impact));
+    }
+
+    AnimTrack end;
+    end.start = after(prevEnd, prevClip);
+    end.clips[0] = unitClip(type, u.color, UnitAction::ShootEnd, facing);
+    end.duration = lastFrame(end.clips[0]);
+    place(end, from);
+    end.onEnd = [this, unit] { showUnit(unit); };
+    animator_.add(std::move(end));
+}
+
+void BattleAnimations::destroyUnit(int unit) {
+    if (unit < 0) return;
+    const MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
+    if (!u.alive) return;
+    AnimTrack t;
+    t.clips[0] = unitClip(*u.type, u.color, UnitAction::Explosion, 0);
+    t.duration = lastFrame(t.clips[0]);
+    const render::Animation* c = t.clips[0];
+    t.pos = framePosition(u.x, u.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
+    t.tile = {u.x, u.y};
+    t.sound = c;
+    t.onStart = [this, unit] { hideUnit(unit); };
+    t.onEnd = [this, unit] {
+        MapUnit& mu = entities_.units[static_cast<std::size_t>(unit)];
+        if (!mu.alive) return;
+        mu.alive = false;
+        refreshUnit(unit);
+        // The ruin name comes with the server's message in the original;
+        // the unit type's ruinImageID is the presumed source *(?)*.
+        if (!mu.type->ruinImage.empty())
+            scene_.addObject({mu.x, mu.y, Layer::Ruin, SpriteSet::Ruins, mu.type->ruinImage});
+    };
+    animator_.add(std::move(t));
+}
+
+void BattleAnimations::destroyBuilding(int building) {
+    if (building < 0) return;
+    const MapBuilding& b = entities_.buildings[static_cast<std::size_t>(building)];
+    if (!b.alive) return;
+    const BuildingType& type = *b.type;
+    AnimTrack t;
+    t.clips[0] = clip(buildingClipName(type));
+    t.duration = lastFrame(t.clips[0]);
+    const render::Animation* c = t.clips[0];
+    t.pos = buildingFramePosition(b.x, b.y, type.sizeX, type.sizeY, scene_.terrain().size, c ? c->width : 0,
+                                  c ? c->height : 0);
+    t.tile = {b.x + type.sizeX - 1, b.y + type.sizeY - 1}; // in front of the whole footprint
+    t.sound = c;
+    t.onStart = [this, building] { buildingHidden_[static_cast<std::size_t>(building)] = true; };
+    t.onEnd = [this, building] {
+        entities_.buildings[static_cast<std::size_t>(building)].alive = false;
+        scene_.replaceEntity(Layer::Building, building, {});
+    };
+    animator_.add(std::move(t));
+}
+
+SceneExtras BattleAnimations::extras() const {
+    SceneExtras e;
+    e.hidden = [this](const MapSprite& s) {
+        if (s.entity < 0) return false;
+        const auto i = static_cast<std::size_t>(s.entity);
+        if (s.layer == Layer::Unit) return i < unitHidden_.size() && unitHidden_[i] > 0;
+        if (s.layer == Layer::Building) return i < buildingHidden_.size() && buildingHidden_[i];
+        return false;
+    };
+    e.overlays = animator_.overlays();
+    return e;
+}
+
+} // namespace openday::game

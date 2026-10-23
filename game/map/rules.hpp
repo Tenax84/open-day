@@ -2,6 +2,7 @@
 // See docs/mechanics/data-model.md.
 #pragma once
 
+#include <array>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -14,16 +15,32 @@ namespace openday::game {
 enum class TerrainClass { ShallowWater = 0, DeepWater = 1, Riverside = 2, Plain = 3, Mountains = 4, Forest = 5, Crack = 6, Unknown = -1 };
 
 struct BuildingType {
-    std::string image; // UB.DBI code, upper case
+    std::string image; // UB.DBI code and ANMSUNIT.FF BUILDING\ clip, upper case
     int sizeX = 1;
     int sizeY = 1;
     int armor = 0;
     bool damagedImages = false;
+    bool hasExplosion = false;
 };
 
+// Unit actions with their own animation clip, in the program's order
+// (docs/mechanics/unit-animation.md, "Entry name").
+enum class UnitAction { MoveStart, Move, MoveEnd, ShootBegin, Shoot, ShootEnd, Projectile, Impact, Explosion };
+inline constexpr std::size_t kUnitActionCount = 9;
+
 struct UnitType {
-    std::string image; // UB.DBI code, upper case
+    std::string image; // UB.DBI and ANMSUNIT.FF code, upper case
     int movement = 0;  // Unit Movement Lookup; 2 = trooper (infantry)
+    int race = 0;      // 0 = human
+    bool isConvoy = false;
+    bool hasFacings = true;
+    std::array<bool, kUnitActionCount> clips{}; // per UnitAction: the clip exists
+    int movePixSpeed = 8;                       // pixels per tick along the longer screen axis
+    int projectileStart = 0;                    // ticks into the shot clip
+    int projectileOffset = 0;                   // pixels skipped at the start
+    int projectileSpeed = 20;                   // pixels per tick
+    int projectileCurve = 0;                    // arc height in percent of the path length
+    std::string ruinImage;                      // RUINS.DBI name, upper case
 };
 
 struct WallType {

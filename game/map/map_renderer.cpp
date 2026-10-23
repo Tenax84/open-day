@@ -76,6 +76,10 @@ RenderStats drawTerrain(render::IndexedSurface& target, const Rect& view, const 
 
 MapScene::MapScene(TerrainMap terrain, std::vector<MapSprite> objects)
     : terrain_(std::move(terrain)), objects_(std::move(objects)) {
+    reindex();
+}
+
+void MapScene::reindex() {
     const int n = terrain_.size;
     std::stable_sort(objects_.begin(), objects_.end(), [](const MapSprite& a, const MapSprite& b) {
         return std::tie(a.y, a.x, a.layer) < std::tie(b.y, b.x, b.layer);
@@ -91,9 +95,44 @@ MapScene::MapScene(TerrainMap terrain, std::vector<MapSprite> objects)
     firstObject_.back() = static_cast<std::uint32_t>(objects_.size());
 }
 
-RenderStats MapScene::draw(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects) const {
+bool MapScene::hasObject(int x, int y, Layer layer) const {
+    if (!terrain_.inside(x, y)) return false;
+    const std::size_t tile = static_cast<std::size_t>(y) * static_cast<std::size_t>(terrain_.size) + static_cast<std::size_t>(x);
+    for (std::uint32_t i = firstObject_[tile]; i < firstObject_[tile + 1]; ++i)
+        if (objects_[i].layer == layer) return true;
+    return false;
+}
+
+void MapScene::replaceEntity(Layer layer, int entity, std::vector<MapSprite> sprites) {
+    std::erase_if(objects_, [&](const MapSprite& o) { return o.layer == layer && o.entity == entity; });
+    for (MapSprite& s : sprites)
+        if (terrain_.inside(s.x, s.y)) objects_.push_back(std::move(s));
+    reindex();
+}
+
+void MapScene::addObject(MapSprite sprite) {
+    if (!terrain_.inside(sprite.x, sprite.y)) return;
+    objects_.push_back(std::move(sprite));
+    reindex();
+}
+
+RenderStats MapScene::draw(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects,
+                           const SceneExtras* extras) const {
     RenderStats stats;
     const int n = terrain_.size;
+    // Overlays by tile; the ones whose tile is not drawn go last.
+    std::unordered_multimap<std::size_t, const Overlay*> overlayAt;
+    std::vector<bool> overlayDone;
+    if (extras) {
+        overlayDone.assign(extras->overlays.size(), false);
+        for (const Overlay& ov : extras->overlays)
+            if (terrain_.inside(ov.tileX, ov.tileY))
+                overlayAt.emplace(static_cast<std::size_t>(ov.tileY) * static_cast<std::size_t>(n) + static_cast<std::size_t>(ov.tileX), &ov);
+    }
+    auto drawOverlay = [&](const Overlay& ov) {
+        if (ov.sprite) target.blit(*ov.sprite, ov.x - view.x, ov.y - view.y);
+        overlayDone[static_cast<std::size_t>(&ov - extras->overlays.data())] = true;
+    };
     forVisibleTiles(n, view, [&](int x, int y, Point o) {
         auto blit = [&](SpriteSet set, const std::string& name, int dy) {
             const formats::DbiSprite* sprite = sprites.get(set, name);
@@ -105,13 +144,19 @@ RenderStats MapScene::draw(render::IndexedSurface& target, const Rect& view, Spr
         };
         blit(SpriteSet::Terrain, terrain_.at(x, y), 0);
         ++stats.tilesDrawn;
-        if (!showObjects) return;
         const std::size_t tile = static_cast<std::size_t>(y) * static_cast<std::size_t>(n) + static_cast<std::size_t>(x);
-        for (std::uint32_t i = firstObject_[tile]; i < firstObject_[tile + 1]; ++i) {
-            const MapSprite& obj = objects_[i];
-            blit(obj.set, obj.name, obj.dy);
-        }
+        if (showObjects)
+            for (std::uint32_t i = firstObject_[tile]; i < firstObject_[tile + 1]; ++i) {
+                const MapSprite& obj = objects_[i];
+                if (extras && extras->hidden && extras->hidden(obj)) continue;
+                blit(obj.set, obj.name, obj.dy);
+            }
+        const auto [first, last] = overlayAt.equal_range(tile);
+        for (auto it = first; it != last; ++it) drawOverlay(*it->second);
     });
+    if (extras)
+        for (std::size_t i = 0; i < extras->overlays.size(); ++i)
+            if (!overlayDone[i]) drawOverlay(extras->overlays[i]);
     return stats;
 }
 

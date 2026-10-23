@@ -72,6 +72,21 @@ void testGeometry() {
     CHECK(game::iso::tileOrigin(0, 1, 2).x == 0 && game::iso::tileOrigin(0, 1, 2).y == 14);
     const game::Rect b = game::iso::mapBounds(2);
     CHECK(b.w == 110 && b.h == 84);
+
+    // Every pixel of a tile's diamond maps back to that tile.
+    const int n = 5;
+    for (int ty = 0; ty < n; ++ty)
+        for (int tx = 0; tx < n; ++tx) {
+            const game::Point o = game::iso::tileOrigin(tx, ty, n);
+            for (int row = 0; row < 28; ++row) {
+                const int half = row < 14 ? 1 + 2 * row : 1 + 2 * (27 - row); // half of the diamond width
+                for (int col = 27 - half; col < 27 + half; ++col) {
+                    const game::Point t = game::iso::tileAt(o.x + col, o.y + 28 + row, n);
+                    CHECK(t.x == tx && t.y == ty);
+                    if (t.x != tx || t.y != ty) return;
+                }
+            }
+        }
 }
 
 void testLoadAndRender() {

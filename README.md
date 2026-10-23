@@ -57,8 +57,9 @@ graphics of your installation.
 - `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
   (Python standard library only).
 - `mapview` — SDL3 viewer for every scenario map: terrain, roads, walls,
-  mines, buildings and units, with palette cycling (animated water). It
-  needs the converted databases:
+  mines, buildings and units, with palette cycling (animated water) and
+  unit animations with sound (move, attack, destruction). It needs the
+  converted databases:
 
   ```
   python3 tools/mdb/mdb2sqlite.py --game-dir "<game dir>" ~/openday-data
@@ -66,8 +67,13 @@ graphics of your installation.
   ```
 
   Arrow keys / WASD or mouse drag scroll, PageUp/PageDown switch scenario,
-  1–4 zoom, C toggles palette cycling, O toggles the objects. `--screenshot out.png` renders the
-  whole map to a file instead of opening a window.
+  1–4 zoom, C toggles palette cycling, O toggles the objects, M toggles
+  sound. Left click selects a unit; right click moves it to a tile or
+  attacks the unit or building there; X destroys what is under the mouse.
+  Movement follows a straight line and ignores the game rules for now.
+  `--screenshot out.png` renders the whole map to a file instead of
+  opening a window; `--do move:X,Y:TX,TY` (or `attack:…`, `destroy:X,Y`)
+  with `--ticks N` captures an animation in progress.
 
 Everything these tools produce comes from your own game data; do not
 redistribute it.

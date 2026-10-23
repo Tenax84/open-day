@@ -35,8 +35,9 @@ Jogalap (nem jogi tanács): az EU 2009/24/EK irányelv 5. cikk (3) bek. (működ
 - **Kész:** taktikai térkép terepének kirajzolása (`docs/mechanics/isometric-map.md`): `engine/data` (SQLite), `engine/render` (8 bites felület), `game/map` (betöltés + izometrikus rajzolás), `tools/mapview` (SDL3, palettaciklussal, `--screenshot`). Mind a 114 pálya hiánytalanul kirajzolódik.
 - Függőségek: SDL 3.4.16 és SQLite 3.50.4 FetchContenttel (`cmake/Dependencies.cmake`), hash-sel rögzítve.
 - **Kész:** pályaobjektumok (`docs/mechanics/map-objects.md`, `game/map/map_objects.*`, `rules.*`): utak (G/B/R készlet, feljárók), falak (sérülés páncélból, törött végek), aknák, romok, többcsempés épületek, álló egységek (erdei gyalogos-póz, hídon −5 px). Közös, cellánkénti mélységi rajzolás rétegsorrenddel. Mind a 114 pálya hiánytalan.
-- Nyitott: aknák 000/001 utótagja, játékos-slot → szín tábla, tornyok iránya.
-- Következő jelöltek: egységanimációk az FF-ből a térképen (mozgás, lövés), majd a játékmenet magja (körök, kiválasztás, mozgatás) a kliens–szerver üzenetes felépítés szerint.
+- **Kész:** egységanimációk a térképen (`docs/mechanics/unit-animation.md`): `engine/render/animation.*` (SMK → színkulcsos, kivágott képkockák + hang, gyorsítótár), `game/anim/` (klipnevek, irányok, elhelyezés, csúszási és lövedékpályák, 15 tick/s idővonal, mozgás L/M/N, lövés S/T/U + P/I, robbanás E + rom, épületrobbanás). `mapview`: kijelölés, mozgatás, támadás, X = robbantás, hang; képernyőkép-módban `--do`/`--ticks`.
+- Nyitott: aknák 000/001 utótagja, játékos-slot → szín tábla (az animációk P0–P4 változatánál is), tornyok iránya, a mozgó egység takarási táblái.
+- Következő jelöltek: a játékmenet magja (körök, útkeresés, akciópontok, kiválasztás) a kliens–szerver üzenetes felépítés szerint; vagy a felület (INTERF SMK hátterek, menük).
 
 ## Tervezett repó-higiénia
 

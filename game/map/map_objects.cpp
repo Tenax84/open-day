@@ -72,7 +72,20 @@ int rampNumber(int variant, int orientation) {
     }
 }
 
-std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain) {
+MapSprite unitSprite(const MapUnit& unit, int entity, const TerrainMap& terrain, const GlobalRules& rules, bool onBridge) {
+    const bool inForest = unit.type->movement == 2 && terrain.inside(unit.x, unit.y) &&
+                          rules.classOf(terrain.at(unit.x, unit.y)) == TerrainClass::Forest;
+    const int facing = unit.facing & 7;
+    const char facingChar = static_cast<char>(inForest ? 'A' + facing : '0' + facing);
+    return {unit.x, unit.y, Layer::Unit, SpriteSet::UnitsBuildings,
+            unit.type->image + std::to_string(unit.color) + facingChar + "00", onBridge ? -5 : 0, entity};
+}
+
+std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain,
+                                      MapEntities* entities) {
+    MapEntities local;
+    MapEntities& ent = entities ? *entities : local;
+    ent = {};
     std::vector<MapSprite> out;
     auto inside = [&](int x, int y) { return x >= 0 && y >= 0 && x < terrain.size && y < terrain.size; };
     // Terrain class of a tile; tiles outside the map count as unknown.
@@ -163,6 +176,8 @@ std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const Glob
                          const auto type = rules.buildings.find(toInt(r, 0));
                          if (type == rules.buildings.end()) return;
                          const BuildingType& bt = type->second;
+                         const int entity = static_cast<int>(ent.buildings.size());
+                         ent.buildings.push_back({&bt, toInt(r, 2), toInt(r, 3)});
                          const std::string prefix = bt.image + std::to_string(toInt(r, 1)) +
                                                     (bt.damagedImages && isDamaged(toInt(r, 4), bt.armor) ? "1" : "0");
                          for (int dy = 0; dy < bt.sizeY; ++dy)
@@ -170,7 +185,7 @@ std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const Glob
                                  const int x = toInt(r, 2) + dx, y = toInt(r, 3) + dy;
                                  if (inside(x, y))
                                      out.push_back({x, y, Layer::Building, SpriteSet::UnitsBuildings,
-                                                    prefix + std::to_string(dx) + std::to_string(dy)});
+                                                    prefix + std::to_string(dx) + std::to_string(dy), 0, entity});
                              }
                      });
 
@@ -179,14 +194,12 @@ std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const Glob
     scenario.forEach("SELECT unitType, unitTL, playerOwner, facing, PosX, PosY FROM \"Units On Map\"",
                      [&](const data::Row& r) {
                          const auto type = rules.units.find({toInt(r, 0), toInt(r, 1)});
-                         const int x = toInt(r, 4), y = toInt(r, 5), facing = toInt(r, 3) & 7;
+                         const int x = toInt(r, 4), y = toInt(r, 5);
                          if (type == rules.units.end() || !inside(x, y)) return;
-                         const bool inForest = type->second.movement == 2 && classAt(x, y) == TerrainClass::Forest;
-                         const char facingChar = static_cast<char>(inForest ? 'A' + facing : '0' + facing);
+                         const MapUnit unit{&type->second, toInt(r, 2), toInt(r, 3) & 7, x, y};
                          const bool onBridge = classAt(x, y) == TerrainClass::DeepWater && anyRoad.count({x, y});
-                         out.push_back({x, y, Layer::Unit, SpriteSet::UnitsBuildings,
-                                        type->second.image + std::to_string(toInt(r, 2)) + facingChar + "00",
-                                        onBridge ? -5 : 0});
+                         out.push_back(unitSprite(unit, static_cast<int>(ent.units.size()), terrain, rules, onBridge));
+                         ent.units.push_back(unit);
                      });
     return out;
 }

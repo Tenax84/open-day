@@ -26,3 +26,11 @@ endif()
 add_executable(map_test map_test.cpp)
 target_link_libraries(map_test PRIVATE openday_game openday_warnings)
 add_test(NAME map_test COMMAND map_test)
+
+add_executable(animation_test animation_test.cpp)
+target_link_libraries(animation_test PRIVATE openday_render openday_warnings)
+add_test(NAME animation_test COMMAND animation_test)
+
+add_executable(anim_test anim_test.cpp)
+target_link_libraries(anim_test PRIVATE openday_game openday_warnings)
+add_test(NAME anim_test COMMAND anim_test)

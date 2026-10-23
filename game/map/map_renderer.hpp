@@ -2,8 +2,10 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -37,6 +39,15 @@ inline constexpr int kHalfStepY = 14;
 // diamond starts at the top corner of the map.
 inline Point tileOrigin(int x, int y, int mapSize) {
     return {(x - y + mapSize - 1) * kHalfStepX, (x + y) * kHalfStepY};
+}
+
+// Tile whose ground diamond contains the map pixel (px, py); the result may
+// lie outside the map. Inverse of tileOrigin, with the diamond centered at
+// (27, 42) in the sprite.
+inline Point tileAt(int px, int py, int mapSize) {
+    const double a = (px - (mapSize - 1) * kHalfStepX - 27 + 0.5) / kHalfStepX; // x - y
+    const double b = (py - 42 + 0.5) / kHalfStepY;                              // x + y
+    return {static_cast<int>(std::floor((a + b) / 2 + 0.5)), static_cast<int>(std::floor((b - a) / 2 + 0.5))};
 }
 
 // Pixel extent of a whole map, including the space above the top row that
@@ -83,6 +94,18 @@ struct RenderStats {
 RenderStats drawTerrain(render::IndexedSurface& target, const Rect& view, const TerrainMap& map,
                         SpriteCache& terrain);
 
+// A sprite drawn in addition to the scene for one frame (animation frames).
+struct Overlay {
+    int tileX = -1, tileY = -1; // drawn after the objects of this tile; a tile outside the map = after everything
+    int x = 0, y = 0;           // map pixel position of the sprite's top-left corner
+    const formats::DbiSprite* sprite = nullptr;
+};
+
+struct SceneExtras {
+    std::function<bool(const MapSprite&)> hidden; // objects not to draw (optional)
+    std::vector<Overlay> overlays;
+};
+
 // Draws terrain and objects together, tile by tile in depth order; objects
 // on a tile follow its terrain in Layer order.
 class MapScene {
@@ -90,9 +113,19 @@ public:
     MapScene(TerrainMap terrain, std::vector<MapSprite> objects);
     const TerrainMap& terrain() const { return terrain_; }
     const std::vector<MapSprite>& objects() const { return objects_; }
-    RenderStats draw(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects = true) const;
+    bool hasObject(int x, int y, Layer layer) const;
+
+    // Replaces the sprites of one unit or building (Layer + MapSprite::entity)
+    // with `sprites`, which may be empty to remove it.
+    void replaceEntity(Layer layer, int entity, std::vector<MapSprite> sprites);
+    void addObject(MapSprite sprite);
+
+    RenderStats draw(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects = true,
+                     const SceneExtras* extras = nullptr) const;
 
 private:
+    void reindex();
+
     TerrainMap terrain_;
     std::vector<MapSprite> objects_;      // sorted by tile, then layer
     std::vector<std::uint32_t> firstObject_; // per tile: index into objects_, size*size + 1 entries

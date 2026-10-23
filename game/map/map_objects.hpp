@@ -27,6 +27,27 @@ struct MapSprite {
     SpriteSet set = SpriteSet::Roads;
     std::string name; // upper case
     int dy = 0;       // vertical pixel offset (units on bridges are drawn 5 px higher)
+    int entity = -1;  // Unit / Building layer: index into MapEntities::units / buildings
+};
+
+// A unit or building placed on the map, for animating and changing it.
+struct MapUnit {
+    const UnitType* type = nullptr; // points into GlobalRules
+    int color = 0;                  // color variant (currently the owner slot *(?)*)
+    int facing = 0;                 // 0-7, docs/mechanics/unit-animation.md
+    int x = 0, y = 0;
+    bool alive = true;
+};
+
+struct MapBuilding {
+    const BuildingType* type = nullptr; // points into GlobalRules
+    int x = 0, y = 0;                   // footprint corner with the smallest x and y
+    bool alive = true;
+};
+
+struct MapEntities {
+    std::vector<MapUnit> units;
+    std::vector<MapBuilding> buildings;
 };
 
 // Neighbor directions on the isometric grid, as bits of a connection mask.
@@ -41,7 +62,14 @@ int roadVariant(std::uint8_t mask);
 int rampNumber(int variant, int orientation);
 
 // Builds the object sprites of a scenario from its "... On Map" tables.
-std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain);
+// When `entities` is given, it receives the units and buildings, and their
+// sprites refer to them through MapSprite::entity.
+std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain,
+                                      MapEntities* entities = nullptr);
+
+// Static UB.DBI sprite of a unit at its tile. `onBridge`: the tile is deep
+// water with a road on it.
+MapSprite unitSprite(const MapUnit& unit, int entity, const TerrainMap& terrain, const GlobalRules& rules, bool onBridge);
 
 // Formats a sprite number as three digits ("7" -> "007").
 std::string threeDigits(int n);

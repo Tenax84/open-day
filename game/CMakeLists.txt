@@ -1,4 +1,7 @@
 add_library(openday_game
+    anim/animator.cpp
+    anim/battle_animations.cpp
+    anim/unit_animation.cpp
     map/terrain_map.cpp
     map/map_objects.cpp
     map/map_renderer.cpp

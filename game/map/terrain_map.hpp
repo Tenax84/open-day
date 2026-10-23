@@ -14,6 +14,7 @@ struct TerrainMap {
     std::vector<std::string> tiles; // TERRAINS.DBI sprite names, upper case, index y * size + x
 
     const std::string& at(int x, int y) const { return tiles[static_cast<std::size_t>(y * size + x)]; }
+    bool inside(int x, int y) const { return x >= 0 && y >= 0 && x < size && y < size; }
 };
 
 // Reads the `Map` table of a converted scenario database. Throws

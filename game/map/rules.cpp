@@ -19,14 +19,35 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
     GlobalRules r;
     auto toInt = [](const data::Row& row, int col) { return static_cast<int>(row.integer(col)); };
 
-    global.forEach("SELECT typeID, unitTechLevel, facingsImageID, Movement FROM \"Unit Types\"",
+    // The animation columns are in UnitAction order; -1 means "no clip".
+    global.forEach("SELECT typeID, unitTechLevel, facingsImageID, Movement, Race, isConvoy, Facings, "
+                   "MoveAnimation_PixSpeed, ShootShootAnimation_ProjBegin, ShootProjectileAnimation_PixOffset, "
+                   "ShootProjectileAnimation_PixSpeed, ShootProjectileAnimation_Curve, ruinImageID, "
+                   "MoveStartAnimation_Begin, MoveAnimation_Begin, MoveEndAnimation_Begin, "
+                   "ShootBeginAnimation_Begin, ShootShootAnimation_Begin, ShootEndAnimation_Begin, "
+                   "ShootProjectileAnimation_Begin, ShootImpactAnimation_Begin, ExplosionAnimation_Begin "
+                   "FROM \"Unit Types\"",
                    [&](const data::Row& row) {
-                       r.units[{toInt(row, 0), toInt(row, 1)}] = UnitType{toUpper(row.text(2)), toInt(row, 3)};
+                       UnitType u;
+                       u.image = toUpper(row.text(2));
+                       u.movement = toInt(row, 3);
+                       u.race = toInt(row, 4);
+                       u.isConvoy = row.integer(5) != 0;
+                       u.hasFacings = row.integer(6) != 0;
+                       u.movePixSpeed = toInt(row, 7);
+                       u.projectileStart = toInt(row, 8);
+                       u.projectileOffset = toInt(row, 9);
+                       u.projectileSpeed = toInt(row, 10);
+                       u.projectileCurve = toInt(row, 11);
+                       u.ruinImage = toUpper(row.text(12));
+                       for (std::size_t a = 0; a < kUnitActionCount; ++a) u.clips[a] = row.integer(13 + static_cast<int>(a)) != -1;
+                       r.units[{toInt(row, 0), toInt(row, 1)}] = std::move(u);
                    });
-    global.forEach("SELECT TypeID, ImageID, SizeX, SizeY, Armor, DamagedImages FROM \"Building Types\"",
+    global.forEach("SELECT TypeID, ImageID, SizeX, SizeY, Armor, DamagedImages, ExplosionAnimation_Begin "
+                   "FROM \"Building Types\"",
                    [&](const data::Row& row) {
                        r.buildings[toInt(row, 0)] = BuildingType{toUpper(row.text(1)), toInt(row, 2), toInt(row, 3),
-                                                                 toInt(row, 4), row.integer(5) != 0};
+                                                                 toInt(row, 4), row.integer(5) != 0, row.integer(6) != -1};
                    });
     global.forEach("SELECT RoadType, img_id FROM \"Road Types\"",
                    [&](const data::Row& row) { r.roadImage[toInt(row, 0)] = toUpper(row.text(1)); });
