@@ -30,7 +30,7 @@ std::vector<ui::AtlasElement> atlasElements(int resolution) {
     add(e, 846, 4, 100, 24);
 
     // Battle: side panels and the message strip depend on the resolution.
-    for (const int panel : {0, 226, 310}) add(e, panel, 1, large ? 184 : 136, large ? 768 : 480);
+    for (const int panel : {0, 226, 310, 507}) add(e, panel, 1, large ? 184 : 136, large ? 768 : 480);
     add(e, 498, 1, large ? 840 : 504, large ? 40 : 32);
     // Deployment view.
     for (const int f : {5, 9, 13, 17}) add(e, f, 4, 53, 17);
@@ -58,6 +58,13 @@ std::vector<ui::AtlasElement> atlasElements(int resolution) {
     add(e, 290, 4, 53, 17);  // END TURN
     add(e, 294, 4, 44, 43);  // emblem
     add(e, 298, 4, 53, 17);  // CENTER
+    // Automated units view (tactical-interface.md 6.2).
+    add(e, 512, 4, 110, 17); // AUTOMATED UNITS (back)
+    add(e, 516, 4, 44, 43);  // emblem
+    add(e, 520, 4, 53, 17);  // MAP
+    add(e, 524, 4, 53, 17);  // GOAL
+    add(e, 528, 4, 53, 17);  // list up *(?: size)*
+    add(e, 532, 4, 53, 17);  // list down
     // Message strip buttons.
     add(e, 499, 4, 53, 17); // CHAT
     add(e, 693, 4, 53, 17); // MENU

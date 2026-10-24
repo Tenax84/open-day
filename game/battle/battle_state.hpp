@@ -204,6 +204,37 @@ public:
     int holdCount = 0;
     int lastHeldTurn = -1;
 
+    // Automated units (docs/mechanics/automated-units.md 2). Per player the
+    // usable types; with `automatedNeedsBuildings` only those whose
+    // Prerequisite building the player owns on the map (campaign city
+    // battles, death match).
+    std::array<std::vector<int>, kPlayerSlots> automated{};
+    std::array<bool, kPlayerSlots> automatedNeedsBuildings{};
+    // DeployOnce types already called, per player (2.4).
+    std::array<std::vector<int>, kPlayerSlots> automatedUsed{};
+    std::vector<int> usableAutomated(int player) const;
+    // Bridge sites of the map (city-building.md 4.3), for the bridge builders.
+    std::vector<Point> bridgeSites;
+    bool isBridgeSite(Point p) const;
+    // The scenario's Automated Units rows, called by the computer player in
+    // the turn `turn` (tactical-ai.md 6.2); server only.
+    struct ScheduledAutomated {
+        int type = 0;
+        Point start, dest;
+        int turn = 0;
+    };
+    std::vector<ScheduledAutomated> scheduledAutomated;
+    // The computer player's strategic AI info (tactical-ai.md 0, 6.1):
+    // present in campaign and counter-attack battles.
+    struct AiSupport {
+        bool present = false;
+        int chance = 0; // AiAutoUnitChanceCall
+        int budget = 0; // AiAutoUnitRes
+        std::vector<int> types{}; // AI automated available
+    } aiSupport;
+    bool counterAttack = false; // the computer player attacks the player's city
+    int oneOffDeployment = 0;   // Scenario Info.One Off Deployment (emergency drop, 6.3)
+
     // Looks up a unit type at a tech level; with a negative `techLevel`,
     // the lowest level of that type. nullptr if unknown.
     const UnitType* unitType(int typeId, int techLevel) const;

@@ -81,6 +81,16 @@ void BattleView::apply(const std::vector<Event>& events) {
                        [&](const TerrainBurned& e) {
                            anim_.schedule([this, e] { scene_.setTerrain(e.tile.x, e.tile.y, e.terrain); });
                        },
+                       [&](const AutomatedArrived& e) {
+                           const auto t = state_.rules().automated.find(e.typeId);
+                           if (t != state_.rules().automated.end()) anim_.automated(t->second, e.outcome, e.tile, e.second);
+                       },
+                       [&](const UnitFiredAA& e) { anim_.antiAir(e.unit); },
+                       [&](const UnitTransported& e) {
+                           if (e.pickedUp) anim_.liftUnit(e.unit);
+                           else if (state_.inside(e.pos)) anim_.placeUnit(e.unit, e.pos);
+                           else anim_.removeUnit(e.unit);
+                       },
                        [&](const auto&) {},
                    },
                    event);
@@ -92,6 +102,13 @@ void BattleView::apply(const std::vector<Event>& events) {
                        [&](const RoadDestroyed&) { redraw(Layer::Road, roadLayer()); },
                        [&](const MineDestroyed&) { redraw(Layer::Mine, mineLayer()); },
                        [&](const MinesRevealed&) { redraw(Layer::Mine, mineLayer()); },
+                       [&](const BridgeBuilt& e) {
+                           redraw(Layer::Road, roadLayer());
+                           anim_.refreshUnitsAt(e.tile);
+                       },
+                       [&](const Repaired& e) {
+                           if (e.wall >= 0) redraw(Layer::Wall, wallLayer());
+                       },
                        [&](const TurnStarted&) {
                            if (viewer_ < 0) redraw(Layer::Mine, mineLayer());
                        },

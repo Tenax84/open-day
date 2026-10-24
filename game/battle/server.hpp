@@ -42,6 +42,7 @@ private:
     void handleEndTurn(const EndTurnRequest& r);
     void handleDeploy(const DeployRequest& r);
     void handleUndeploy(const UndeployRequest& r);
+    void handleAutomated(const AutomatedRequest& r);
     // Runs the objective check; ends the battle when it is decided.
     bool checkEnd();
     // battle-flow.md 1.3: objective check, next participant, new turn.
@@ -67,12 +68,38 @@ private:
     void destroyUnit(int unit);
     void destroyBuilding(int building);
     int rollDamage(int base, int random, bool scaled);
+    // An armed mine goes off (tactical-combat.md 7): damage with the mine's
+    // owner as attacker, then the mines around it become visible to `revealFor`.
+    void explodeMine(int mine, int revealFor);
+
+    // --- Automated units (server_automated.cpp, automated-units.md 4-6) ---
+    struct AutomatedCall {
+        const AutomatedType* type = nullptr;
+        int owner = 0;
+        int acc = 0;                 // AA damage taken
+        std::vector<int> candidates; // AA units, sorted
+        int passes = 0;
+    };
+    // Runs a call: AA fire and the effect of its category, tech buildings,
+    // battle-over check and DeployOnce (4.1). Shared with the computer player.
+    void callAutomated(const AutomatedType& type, int owner, Point p1, Point p2);
+    // One AA pass at `tile` (5.2); returns false when the automated unit was
+    // shot down.
+    bool antiAir(AutomatedCall& call, Point tile);
+    void automatedDestroy(AutomatedCall& call, Point target);
+    void automatedRepair(AutomatedCall& call, Point target);
+    void automatedBridge(AutomatedCall& call, Point target);
+    void automatedMines(AutomatedCall& call, Point target);
+    void automatedDrop(AutomatedCall& call, Point target);
+    void automatedTransport(AutomatedCall& call, Point source, Point destination);
 
     BattleState state_;
     CombatOptions options_;
     std::mt19937 rng_;
     std::vector<Event> out_;
     std::vector<int> deployed_; // units placed during deployment (may be taken back)
+    DamageCause cause_;         // credited for the destructions being resolved
+    int aiAutomatedBudget_ = 0; // the computer player's automated-unit budget (tactical-ai.md 6.1)
 };
 
 } // namespace openday::game

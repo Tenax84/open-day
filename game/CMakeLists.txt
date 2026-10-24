@@ -5,12 +5,14 @@ add_library(openday_game
     anim/battle_view.cpp
     anim/unit_animation.cpp
     battle/ai.cpp
+    battle/automated.cpp
     battle/battle_state.cpp
     battle/combat.cpp
     battle/messages.cpp
     battle/movement.cpp
     battle/objectives.cpp
     battle/server.cpp
+    battle/server_automated.cpp
     campaign/campaign.cpp
     campaign/city.cpp
     campaign/colony.cpp

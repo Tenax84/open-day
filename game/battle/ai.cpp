@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <iterator>
 
 #include "battle/combat.hpp"
 
@@ -303,7 +304,9 @@ void TacticalAi::hunt(int unit, int& budget) {
         const PathMap map(state_, unit);
         const Candidate best = evaluateUnits(unit, map, enemyUnits());
         if (!best.found) {
-            moveToCenter(unit, map);
+            // A counter-attack calls the transport instead (6.4).
+            if (state_.counterAttack) callTransport(unit);
+            else moveToCenter(unit, map);
             return;
         }
         const Moved m = moveToFire(unit, best);
@@ -482,6 +485,186 @@ void TacticalAi::gotoGroup(const std::vector<int>& units, bool fast) {
 
 // --- The turn --------------------------------------------------------------
 
+// --- Automated units (section 6) ---------------------------------------------
+
+int TacticalAi::draw(int n) { return n > 0 ? server_.random(n) : 0; }
+
+bool TacticalAi::callAutomated(int typeId, Point p1, Point p2) {
+    const auto it = state_.rules().automated.find(typeId);
+    if (it == state_.rules().automated.end()) return false;
+    const AutomatedType& t = it->second;
+    // Human types other than the bombers and the nuke are dropped.
+    if (t.race == 0 && typeId != 4 && typeId != 5 && typeId != 6) return false;
+    server_.callAutomated(t, 0, p1, p2);
+    return true;
+}
+
+bool TacticalAi::dropTarget(Point& target) {
+    // From a random position of the map's unit list, the first enemy unit
+    // further down (no wrap-around) with armor <= 30, grav or ground.
+    std::vector<int> onMap;
+    for (int i = 0; i < static_cast<int>(state_.units().size()); ++i)
+        if (state_.unit(i).alive) onMap.push_back(i);
+    const int start = draw(static_cast<int>(onMap.size()));
+    for (std::size_t k = static_cast<std::size_t>(start); k < onMap.size(); ++k) {
+        const BattleUnit& u = state_.unit(onMap[k]);
+        if (isEnemy(u) && u.armor <= 30 && (u.type->category == 0 || u.type->category == 1)) {
+            target = u.pos;
+            return true;
+        }
+    }
+    return false;
+}
+
+void TacticalAi::randomCall() {
+    const BattleState::AiSupport& ai = state_.aiSupport;
+    if (!ai.present || over()) return;
+    const int chance = state_.counterAttack ? 25 : ai.chance;
+    if (draw(100) >= chance || ai.types.empty()) return;
+    const int id = ai.types[static_cast<std::size_t>(draw(static_cast<int>(ai.types.size())))];
+    const auto it = state_.rules().automated.find(id);
+    if (it == state_.rules().automated.end()) return;
+    const AutomatedType& t = it->second;
+    if (!state_.counterAttack) {
+        const bool owned = std::any_of(state_.buildings().begin(), state_.buildings().end(), [&](const BattleBuilding& b) {
+            return b.alive && b.owner == 0 && b.type->id == t.prerequisite;
+        });
+        if (!owned) return;
+    }
+    Point target{-1, -1};
+    bool found = false;
+    const int count = static_cast<int>(state_.units().size());
+    switch (id) {
+    case 9: // mine detection, counter-attacks only
+        if (!state_.counterAttack) return;
+        found = true;
+        if (draw(100) < 50) {
+            target = {0, 0};
+            for (const BattleMine& m : state_.mines())
+                if (m.alive && !m.hidden[0]) {
+                    target = m.pos;
+                    break;
+                }
+        } else {
+            const int x = draw(state_.size());
+            target = {x, draw(state_.size())};
+        }
+        break;
+    case 10: { // medic: the most damaged alien mobile unit
+        int best = 0;
+        for (int i = 0; i < count; ++i) {
+            const BattleUnit& u = state_.unit(i);
+            if (!u.alive || u.owner != 0 || !isAlien(u) || !isMobile(u)) continue;
+            if (u.type->armor - u.armor > best) {
+                best = u.type->armor - u.armor;
+                target = u.pos;
+                found = true;
+            }
+        }
+        break;
+    }
+    case 11:
+    case 12:
+    case 13: { // fighters, gene bomb: the enemy unit with the most armor
+        int best = 0;
+        for (int i = 0; i < count; ++i) {
+            const BattleUnit& u = state_.unit(i);
+            if (isEnemy(u) && u.armor > best) {
+                best = u.armor;
+                target = u.pos;
+                found = true;
+            }
+        }
+        break;
+    }
+    case 14:
+    case 19:
+    case 20:
+    case 21:
+    case 22:
+    case 23:
+    case 24:
+    case 25: found = dropTarget(target); break;
+    default: return; // transports and bridges are not called this way
+    }
+    if (!found || t.cost > server_.aiAutomatedBudget_) return;
+    server_.aiAutomatedBudget_ -= t.cost;
+    callAutomated(id, target, target);
+}
+
+void TacticalAi::emergencyDrop() {
+    if (draw(100) >= 67 || state_.turn >= 5 || over()) return;
+    // Trooper, Grenadier, Assault Trooper, LAV, Light Tank (by their
+    // UNIT TYPE ID LOOKUP symbols).
+    static constexpr int kTypes[5] = {2, 56, 58, 8, 9};
+    std::vector<int> onMap;
+    for (int i = 0; i < static_cast<int>(state_.units().size()); ++i)
+        if (state_.unit(i).alive) onMap.push_back(i);
+    int enemies = 0;
+    for (const int i : onMap)
+        if (isEnemy(state_.unit(i))) ++enemies;
+    // The original's count is one too high when the list does not end with
+    // an enemy unit (6.3); kept.
+    if (onMap.empty() || !isEnemy(state_.unit(onMap.back()))) ++enemies;
+    const int calls = state_.oneOffDeployment > 1200 ? 3 : state_.oneOffDeployment > 700 ? 2 : state_.oneOffDeployment > 300 ? 1 : 0;
+    if (enemies <= 30 || calls == 0 || state_.rules().automated.size() < 20) return;
+    const AutomatedType& drop = std::next(state_.rules().automated.begin(), 19)->second;
+    for (const int type : kTypes) {
+        int ofType = 0;
+        for (const int i : onMap)
+            if (isEnemy(state_.unit(i)) && state_.unit(i).type->typeId == type) ++ofType;
+        if (ofType * 10 <= enemies * 6) continue; // share above 60 %
+        for (int c = 0; c < calls && !over(); ++c) {
+            // At no net cost: the budget is raised by the cost first.
+            server_.aiAutomatedBudget_ += drop.cost;
+            Point target;
+            if (!dropTarget(target) || drop.cost > server_.aiAutomatedBudget_) continue;
+            server_.aiAutomatedBudget_ -= drop.cost;
+            callAutomated(drop.id, target, target);
+        }
+    }
+}
+
+void TacticalAi::scheduledCalls(int turn) {
+    auto& rows = state_.scheduledAutomated;
+    for (std::size_t i = 0; i < rows.size() && !over();) {
+        if (rows[i].turn != turn) {
+            ++i;
+            continue;
+        }
+        const BattleState::ScheduledAutomated row = rows[i];
+        rows.erase(rows.begin() + static_cast<std::ptrdiff_t>(i));
+        callAutomated(row.type, row.start, row.dest);
+    }
+}
+
+void TacticalAi::callTransport(int unit) {
+    const BattleState::AiSupport& ai = state_.aiSupport;
+    const BattleUnit& u = state_.unit(unit);
+    if (!ai.present || u.availableAp() < 10 || u.type->movement == 4 || u.type->movement == 6) return;
+    if (std::find(ai.types.begin(), ai.types.end(), 7) == ai.types.end()) return;
+    const auto it = state_.rules().automated.find(7);
+    if (it == state_.rules().automated.end() || it->second.cost > server_.aiAutomatedBudget_) return;
+    server_.aiAutomatedBudget_ -= it->second.cost; // even if no tile is found
+    BattleUnit probe;
+    probe.type = u.type;
+    probe.owner = 0;
+    const Point from = u.pos;
+    for (const int e : enemyUnits()) {
+        const BattleUnit& enemy = state_.unit(e);
+        std::vector<Point> tiles;
+        for (int y = enemy.pos.y - 10; y <= enemy.pos.y + enemy.type->sizeY - 1 + 10; ++y)
+            for (int x = enemy.pos.x - 10; x <= enemy.pos.x + enemy.type->sizeX - 1 + 10; ++x) tiles.push_back({x, y});
+        for (std::size_t i = 0; i < tiles.size(); ++i)
+            std::swap(tiles[i], tiles[static_cast<std::size_t>(draw(static_cast<int>(tiles.size())))]);
+        for (const Point p : tiles)
+            if (evaluateTile(state_, probe, p).enterable) {
+                callAutomated(7, from, p);
+                return;
+            }
+    }
+}
+
 void TacticalAi::playTurn() {
     const int count = static_cast<int>(state_.units().size());
     auto ai = [&](int i) { return state_.unit(i).alive && state_.unit(i).owner == 0; };
@@ -497,6 +680,12 @@ void TacticalAi::playTurn() {
         if (ai(i) && isMobile(state_.unit(i)) && state_.unit(i).order.order != 0 && state_.unit(i).availableAp() > 4)
             ordered.push_back(i);
     ordered = insertionSort(ordered, [&](int a, int b) { return state_.unit(a).order.order < state_.unit(b).order.order; });
+    const int turn = state_.turn;
+
+    // Phase 2: a random automated unit; phase 3: the emergency drop.
+    randomCall();
+    emergencyDrop();
+    if (over()) return;
 
     // Phases 4-5: stationary fire, before anything moves.
     std::vector<int> stationary;
@@ -518,6 +707,12 @@ void TacticalAi::playTurn() {
         if (state_.unit(i).alive) stationaryFire(i);
     }
 
+    // Phase 6: the scenario's scheduled automated units; phase 7: another
+    // random call.
+    scheduledCalls(turn);
+    randomCall();
+    if (over()) return;
+
     // Phases 8-9: units without orders hunt.
     std::vector<int> free;
     for (int i = 0; i < count; ++i)
@@ -529,7 +724,7 @@ void TacticalAi::playTurn() {
         if (y.type->apDamage) return false;
         return x.type->range > y.type->range; // only the range decides (1.3)
     });
-    if (!enemyUnits().empty())
+    if (!enemyUnits().empty() || state_.counterAttack)
         for (const int i : free) {
             if (over()) return;
             int budget = kStepBudget;

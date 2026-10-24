@@ -14,6 +14,7 @@
 
 #include "anim/battle_session.hpp"
 #include "app/screens.hpp"
+#include "battle/automated.hpp"
 #include "battle/combat.hpp"
 #include "battle/objectives.hpp"
 #include "formats/bmp_palette.hpp"
@@ -187,6 +188,9 @@ public:
             app_.audio().soundEnabled = app_.settings().sound;
             app_.audio().play(a.audio);
         };
+        // Automated-unit clips centre the view on their tile (automated-units.md 8.3).
+        session_->animations().setView(width_, viewW_, viewH_);
+        session_->animations().onCenter = [this](game::Point tile) { centerOn(tile); };
         buildMinimapTerrain();
         centerOnHuman();
         buildControls();
@@ -232,6 +236,9 @@ public:
         if (mode == Mode::Deploy) {
             if (deployList_.handle(e)) return;
         }
+        if (mode == Mode::Automated) {
+            if (autoList_.handle(e)) return;
+        }
         // Minimap click: centre the view.
         const ui::Rect mm = minimapRect();
         if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1 && mm.contains(e.x, e.y)) {
@@ -251,6 +258,7 @@ public:
         if (e.button != 1 || session_->animations().busy()) return;
         if (mode == Mode::Deploy) deployClick(tile);
         else if (mode == Mode::Tactic) tacticClick(tile);
+        else if (mode == Mode::Automated) automatedClick(tile);
     }
 
     void update(int ms) override {
@@ -262,7 +270,7 @@ public:
         edgeScroll(ms);
         const Mode mode = this->mode();
         if (mode != lastMode_) {
-            if (mode == Mode::Tactic) {
+            if (mode == Mode::Tactic && lastMode_ != Mode::Automated) {
                 fire_ = false;
                 done_.clear();
                 std::erase_if(selection_, [&](int u) { return !ownUnit(u); });
@@ -290,11 +298,11 @@ public:
         drawMap();
         for (int y = 0; y < viewH_; ++y) std::copy_n(viewport_.row(y), viewW_, s.row(y));
         const Mode mode = this->mode();
-        const int panelFrame = mode == Mode::Deploy ? 0 : mode == Mode::Tactic ? 226 : 310;
+        const int panelFrame = mode == Mode::Deploy ? 0 : mode == Mode::Tactic ? 226 : mode == Mode::Automated ? 507 : 310;
         ui::drawFrame(s, ui, panelFrame, {viewW_, 0, width_ - viewW_, height_});
         drawStrip(s, ui);
         for (const ui::Button& b : buttons(mode)) b.draw(s, ui);
-        drawResource(s, ui, mode);
+        drawResource(s, ui);
         if (infoTile_) drawInfoCard(s, ui, *infoTile_);
         else drawMinimap(s, ui);
         if (mode == Mode::Tactic) {
@@ -302,6 +310,8 @@ public:
             drawTurnCounter(s, ui);
         } else if (mode == Mode::Wait) {
             drawPlayerList(s, ui);
+        } else if (mode == Mode::Automated) {
+            drawAutomatedList(s, ui);
         } else {
             drawDeployList(s, ui);
         }
@@ -311,13 +321,13 @@ public:
     }
 
 private:
-    enum class Mode { Deploy, Tactic, Wait };
+    enum class Mode { Deploy, Tactic, Wait, Automated };
     enum class Dialog { None, Goal, Menu, Overview };
 
     Mode mode() const {
         if (session_->state().deploying) return Mode::Deploy;
         if (session_->displayedPlayer() == kHuman && !session_->animations().busy() && !session_->state().over)
-            return reinforcing_ ? Mode::Deploy : Mode::Tactic;
+            return reinforcing_ ? Mode::Deploy : automated_ ? Mode::Automated : Mode::Tactic;
         return Mode::Wait;
     }
 
@@ -459,12 +469,25 @@ private:
             button(at(12, 374, 19, 17), 270, "<", 'p', [this] { cycle(-1); }),
             button(at(41, 374, 53, 17), 278, "Guard", 0, [this] { guard(); }),
             button(at(103, 374, 19, 17), 274, ">", ' ', [this] { cycle(1); }),
-            button(at(12, 402, 110, 17), 286, "Automated", 'a',
-                   [this] { showMessage(text(app_, 71, "No automated units"), 5000); }),
+            button(at(12, 402, 110, 17), 286, "Automated", 'a', [this] { openAutomated(); }),
             button(at(12, 428, 110, 17), 282, "Reinforcement", 'r', [this] { startReinforcement(); }),
             button(at(11, 456, 53, 17), 290, "End turn", ui::kKeyEnter, [this] { endTurn(); }),
         };
         strip(tacticButtons_);
+
+        // Automated units view (6.2).
+        autoButtons_ = {
+            disabled(button(at(5, 0, 44, 43), 516, "", ui::kKeyF1, nullptr)),
+            button(at(10, 169, 53, 17), 520, "Map", ui::kKeyF4, [this] { openOverview(false); }),
+            button(at(71, 169, 53, 17), 524, "Goal", ui::kKeyF5, [this] { openGoal(); }),
+            button(at(9, 404, 53, 17), 528, "Up", 0, [this] { autoList_.scroll(-1); }),
+            button(at(70, 404, 53, 17), 532, "Down", 0, [this] { autoList_.scroll(1); }),
+            button(at(12, 428, 110, 17), 512, "Automated", ui::kKeyEscape, [this] { closeAutomated(); }),
+        };
+        strip(autoButtons_);
+        autoList_.rect = at(9, 205, 118, 5 * 39);
+        autoList_.rowHeight = 39;
+        autoList_.onSelect = [this](int row) { selectAutomated(row); };
 
         // Waiting view (4.2).
         waitButtons_ = {
@@ -477,6 +500,7 @@ private:
 
     std::vector<ui::Button>& buttons(Mode m) {
         if (m == Mode::Deploy) return deployButtons_;
+        if (m == Mode::Automated) return autoButtons_;
         if (m == Mode::Tactic) {
             // Toggle states follow the settings and the screen state.
             tacticButtons_[3].checked = group_;
@@ -740,6 +764,107 @@ private:
         session_->send(game::EndTurnRequest{session_->state().currentPlayer});
     }
 
+    // --- Automated units (tactical-interface.md 6.2, automated-units.md 3) --
+
+    void openAutomated() {
+        const game::BattleState& s = session_->state();
+        autoTypes_.clear();
+        for (const int id : s.usableAutomated(kHuman))
+            if (const auto it = s.rules().automated.find(id); it != s.rules().automated.end()) autoTypes_.push_back(&it->second);
+        if (autoTypes_.empty()) {
+            showMessage(text(app_, 71, "You don't have any automated units available"), 5000);
+            return;
+        }
+        fire_ = false;
+        preview_.clear();
+        plannedTarget_.reset();
+        autoList_.rows.clear();
+        for (const game::AutomatedType* t : autoTypes_) autoList_.rows.push_back(t->name);
+        autoList_.top = 0;
+        automated_ = true;
+        selectAutomated(0); // opening the view selects the first row
+    }
+
+    void closeAutomated() {
+        automated_ = false;
+        autoPoints_.clear();
+    }
+
+    const game::AutomatedType* selectedAutomated() const {
+        const int row = autoList_.selected;
+        return row >= 0 && row < static_cast<int>(autoTypes_.size()) ? autoTypes_[static_cast<std::size_t>(row)] : nullptr;
+    }
+
+    void selectAutomated(int row) {
+        autoList_.selected = row;
+        autoPoints_.clear();
+        const game::AutomatedType* t = selectedAutomated();
+        if (!t) return;
+        if (t->id != lastAutomated_) showMessage(t->explain, 10000);
+        lastAutomated_ = t->id;
+    }
+
+    void automatedClick(game::Point tile) {
+        const game::AutomatedType* t = selectedAutomated();
+        if (!t) return;
+        const game::BattleState& s = session_->state();
+        auto refuse = [&](int id, const char* fallback) {
+            showMessage(text(app_, id, fallback), 5000);
+            app_.sound("INVALIDE.WAV");
+        };
+        if (s.deployBudget[kHuman] < t->cost) return refuse(448, "Need more tactical resource");
+        const game::Point* source = autoPoints_.empty() ? nullptr : &autoPoints_.front();
+        if (!game::automatedTargetOk(s, kHuman, *t, tile, true, source)) return refuse(320, "Invalid target");
+        autoPoints_.push_back(tile);
+        if (static_cast<int>(autoPoints_.size()) < game::automatedPoints(*t)) {
+            showMessage(t->secondExplain.empty() ? "Click on destination" : t->secondExplain, 10000);
+            return;
+        }
+        if (s.deployBudget[kHuman] < t->cost) {
+            autoPoints_.clear();
+            return refuse(448, "Need more tactical resource");
+        }
+        const game::AutomatedRequest request{kHuman, t->id, autoPoints_};
+        closeAutomated();
+        const std::string refused = session_->send(request);
+        if (!refused.empty()) showMessage(refused, 5000);
+    }
+
+    void drawAutomatedList(render::IndexedSurface& s, const ui::UiContext& ui) {
+        const render::Font& f = *ui.standard;
+        const ui::Rect area = autoList_.rect;
+        for (int i = 0; i < autoList_.visibleRows(); ++i) {
+            const int row = autoList_.top + i;
+            if (row >= static_cast<int>(autoTypes_.size())) break;
+            const game::AutomatedType* t = autoTypes_[static_cast<std::size_t>(row)];
+            const ui::Rect r{area.x, area.y + i * 39, 118, 39};
+            // The list icon is assumed to be <facingsImageID>999 like the units' *(?)*.
+            if (const formats::DbiSprite* icon = app_.data().sprites.get(game::SpriteSet::ListBox, t->image + "999"))
+                s.blit(*icon, r.x + 2, r.y + 2);
+            f.draw(s, r.x + 50, r.y + 2, t->name, ui.white);
+            f.draw(s, r.x + 50, r.y + 24, std::to_string(t->cost), ui.white);
+            if (row == autoList_.selected) frameRect(s, {r.x + 1, r.y + 1, r.w - 2, r.h - 2}, ui.white);
+        }
+    }
+
+    // Markers of the automated-units view: bridge sites, the transport's
+    // source, the target cursor.
+    void automatedMarkers(std::vector<game::Overlay>& markers, game::Point hover) {
+        const game::AutomatedType* t = selectedAutomated();
+        if (!t) return;
+        const game::BattleState& s = session_->state();
+        if (t->kind() == game::AutomatedCategory::Build)
+            for (const game::Point p : s.bridgeSites)
+                if (s.roadAt(p) < 0) marker(markers, p, game::bridgePlacementOk(s, p) ? "BRIDGE" : "BRIDG001");
+        const std::string race = t->image.empty() ? "H" : t->image.substr(0, 1);
+        if (!autoPoints_.empty()) marker(markers, autoPoints_.front(), race + "TRANSPS");
+        if (!s.inside(hover)) return;
+        const game::Point* source = autoPoints_.empty() ? nullptr : &autoPoints_.front();
+        const bool ok = game::automatedTargetOk(s, kHuman, *t, hover, true, source);
+        if (ok && source) marker(markers, hover, race + "TRANSPD");
+        marker(markers, hover, ok ? t->cursor : "CINVA");
+    }
+
     // --- Dialogs -------------------------------------------------------------
 
     void openGoal() {
@@ -994,6 +1119,7 @@ private:
                 else if (std::find(deployed_.begin(), deployed_.end(), u) != deployed_.end()) marker(markers, hover, "CRECA");
             }
         }
+        if (mode == Mode::Automated) automatedMarkers(markers, hover);
         if (mode == Mode::Tactic) {
             for (const game::PlannedMove& m : preview_) {
                 const std::vector<std::string> names = game::previewSprites(m);
@@ -1164,10 +1290,11 @@ private:
         }
     }
 
-    void drawResource(render::IndexedSurface& s, const ui::UiContext& ui, Mode mode) {
+    void drawResource(render::IndexedSurface& s, const ui::UiContext& ui) {
         const ui::Rect r{viewW_ + 64, 26, 40, 14};
         fillRect(s, r, ui.black);
-        const int value = mode == Mode::Deploy ? session_->state().deployBudget[kHuman] : 0;
+        // Deployment: the remaining budget; later the tactical resource (2.4).
+        const int value = session_->state().deployBudget[kHuman];
         ui.standard->drawIn(s, r.x, r.y - 1, r.w, r.h + 2, std::to_string(std::clamp(value, 0, 99999)), ui.white);
     }
 
@@ -1279,7 +1406,7 @@ private:
     std::vector<ui::Button> overviewButtons_;
     ui::RadioGroup overviewArmy_;
     ui::ListBox overviewList_;
-    std::vector<ui::Button> deployButtons_, tacticButtons_, waitButtons_, dialogButtons_;
+    std::vector<ui::Button> deployButtons_, tacticButtons_, waitButtons_, dialogButtons_, autoButtons_;
     ui::RadioGroup soundGroup_, animGroup_, scrollGroup_;
     ui::ListBox deployList_;
     std::vector<const game::UnitType*> deployTypes_;
@@ -1292,6 +1419,12 @@ private:
     std::optional<game::Point> plannedTarget_;
     std::map<int, game::Point> destination_; // remembered destinations (MOVE ALL)
     std::set<int> done_;
+    // Automated units view.
+    bool automated_ = false;
+    ui::ListBox autoList_;
+    std::vector<const game::AutomatedType*> autoTypes_;
+    std::vector<game::Point> autoPoints_; // target points given so far
+    int lastAutomated_ = -1;              // the type selected last (explanation text)
 };
 
 } // namespace
@@ -1322,6 +1455,10 @@ std::unique_ptr<Screen> makeBattle(App& app, const ScenarioEntry& entry) {
         s.players.clear();
         s.players = {0, kHuman};
         s.deployBudget[kHuman] = entry.budget;
+        std::erase_if(s.automated[kHuman], [&](int id) {
+            const auto it = s.rules().automated.find(id);
+            return it == s.rules().automated.end() || it->second.race != 0;
+        });
         s.deploying = !s.deployZone[kHuman].empty();
     };
     return makeBattle(app, std::move(config));

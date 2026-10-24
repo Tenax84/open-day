@@ -1048,7 +1048,15 @@ views, objectives dialog, in-game options, battle report) on top of
   unit cycling, GUARD, END TURN, the overwatch and auto-fire lamps (stored
   as options; the overwatch AP reserve is not applied yet) and the cheat
   keys Tab + W / L (only with `--cheats`) work as described.
-- Not implemented yet: encyclopedia (emblem), automated units, turning a
+- Automated units view (6.2): panel 507, the usable list (icon, name,
+  cost; the first row selected on opening), the explanation for 10 s when
+  the selection changes, the per-type cursor over valid tiles and `CINVA`
+  elsewhere, the bridge-site markers, the transport's two points, strings
+  448 and 320, and string 71 in the message strip (not a message box) when
+  nothing is usable. The scroll buttons sit below the list at (9, 404) and
+  (70, 404), 53×17 *(OpenDay choice)*. The resource indicator shows the
+  tactical resource in the tactical views (2.4).
+- Not implemented yet: encyclopedia (emblem), turning a
   unit by clicking it, chat, the turn time
   limit, the ability icons of the info card, statistics beyond units and
   buildings lost and destroyed (the RANK column shows 1).

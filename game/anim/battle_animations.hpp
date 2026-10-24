@@ -46,6 +46,22 @@ public:
     // Runs `fn` when the actions scheduled so far have played.
     void schedule(std::function<void()> fn);
 
+    // Automated units (docs/mechanics/automated-units.md 8). The clip of a
+    // call starts after the previous clip; the actions scheduled next (the
+    // effect) start at its action frame.
+    void automated(const AutomatedType& type, int outcome, Point tile, bool second);
+    // A unit fires at the automated unit of the last automated() call.
+    void antiAir(int unit);
+    // A transported unit leaves the map / is put down on `tile`.
+    void liftUnit(int unit);
+    void placeUnit(int unit, Point tile);
+    // Redraws the units on a tile (a new bridge under them).
+    void refreshUnitsAt(Point tile);
+    // The tactical view, for the AA aim point: screen width and viewport size.
+    void setView(int screenWidth, int viewWidth, int viewHeight);
+    // Called when an automated-unit clip starts: centre the view on the tile.
+    std::function<void(Point)> onCenter;
+
     // Unit / building at a tile, or -1.
     int unitAt(Point tile) const;
     int buildingAt(Point tile) const;
@@ -81,6 +97,10 @@ private:
     };
     std::vector<Planned> planned_;
     std::vector<bool> buildingHidden_;
+    int autoClipEnd_ = -1; // last tick of the latest automated-unit clip
+    int aaTick_ = 0;       // when the AA units of the current call fire
+    Point aaAim_{};        // the tile they face
+    int screenWidth_ = 640, viewW_ = 504, viewH_ = 448;
 };
 
 } // namespace openday::game

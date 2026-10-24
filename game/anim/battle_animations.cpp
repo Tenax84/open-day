@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "battle/automated.hpp"
+
 namespace openday::game {
 namespace {
 
@@ -293,6 +295,94 @@ SceneExtras BattleAnimations::extras() const {
     };
     e.overlays = animator_.overlays();
     return e;
+}
+
+} // namespace openday::game
+
+namespace openday::game {
+
+void BattleAnimations::setView(int screenWidth, int viewWidth, int viewHeight) {
+    screenWidth_ = screenWidth;
+    viewW_ = viewWidth;
+    viewH_ = viewHeight;
+}
+
+void BattleAnimations::automated(const AutomatedType& type, int outcome, Point tile, bool second) {
+    const int n = scene_.terrain().size;
+    AnimTrack t;
+    // One clip after the other; the second clip of a transport starts when
+    // the first one ends (automated-units.md 8.2).
+    t.start = std::max(startTick(), autoClipEnd_ + 1);
+    t.clips[0] = clip(automatedClipName(type, second, static_cast<AutomatedOutcome>(std::clamp(outcome, 1, 3))));
+    t.duration = lastFrame(t.clips[0]);
+    const render::Animation* c = t.clips[0];
+    t.pos = framePosition(tile.x, tile.y, n, c ? c->width : 0, c ? c->height : 0);
+    t.tile = {-1, -1}; // drawn over everything
+    t.sound = c;
+    t.onStart = [this, tile] {
+        if (onCenter) onCenter(tile);
+    };
+    const int start = t.start;
+    autoClipEnd_ = animator_.add(std::move(t));
+    // Frame numbers are 1-based; without a clip everything happens at once.
+    auto at = [&](int frame) { return c ? start + std::clamp(frame - 1, 0, lastFrame(c)) : start; };
+    aaTick_ = at(second ? type.secondFrameAA : type.frameAA);
+    const int action = at(second ? type.secondFrameAction : type.frameAction);
+    // The AA units aim at a screen point of the view centred on the tile,
+    // scaled by the screen width (8.4).
+    const int ax = (second ? type.secondAAX : type.aaX) * screenWidth_ / 1024;
+    const int ay = (second ? type.secondAAY : type.aaY) * screenWidth_ / 1024;
+    const Point o = iso::tileOrigin(tile.x, tile.y, n);
+    aaAim_ = iso::tileAt(o.x + 27 - viewW_ / 2 + ax, o.y + 42 - viewH_ / 2 + ay, n);
+    // The effect records play from the action frame on.
+    cursor_ = std::max(cursor_, action);
+}
+
+void BattleAnimations::antiAir(int unit) {
+    if (unit < 0) return;
+    const MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
+    if (!u.alive) return;
+    const Point from = plannedTile(unit);
+    const int facing = u.type->hasFacings ? facingToward(from, aaAim_) : planned_[static_cast<std::size_t>(unit)].facing;
+    planned_[static_cast<std::size_t>(unit)].facing = facing;
+    AnimTrack t;
+    t.start = std::max(aaTick_, animator_.now() + 1);
+    t.clips[0] = unitClip(*u.type, u.color, UnitAction::Shoot, facing);
+    t.duration = lastFrame(t.clips[0]);
+    const render::Animation* c = t.clips[0];
+    t.pos = framePosition(from.x, from.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
+    t.tile = from;
+    t.sound = c;
+    t.onStart = [this, unit, facing] {
+        hideUnit(unit);
+        entities_.units[static_cast<std::size_t>(unit)].facing = facing;
+        refreshUnit(unit);
+    };
+    t.onEnd = [this, unit] { showUnit(unit); };
+    animator_.add(std::move(t)); // does not delay the effect
+}
+
+void BattleAnimations::liftUnit(int unit) {
+    schedule([this, unit] { hideUnit(unit); });
+}
+
+void BattleAnimations::placeUnit(int unit, Point tile) {
+    planned_[static_cast<std::size_t>(unit)].tile = tile;
+    schedule([this, unit, tile] {
+        MapUnit& mu = entities_.units[static_cast<std::size_t>(unit)];
+        mu.x = tile.x;
+        mu.y = tile.y;
+        refreshUnit(unit);
+        showUnit(unit);
+    });
+}
+
+void BattleAnimations::refreshUnitsAt(Point tile) {
+    schedule([this, tile] {
+        for (std::size_t i = 0; i < entities_.units.size(); ++i)
+            if (entities_.units[i].alive && entities_.units[i].x == tile.x && entities_.units[i].y == tile.y)
+                refreshUnit(static_cast<int>(i));
+    });
 }
 
 } // namespace openday::game

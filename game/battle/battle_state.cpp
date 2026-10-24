@@ -4,6 +4,8 @@
 #include <set>
 #include <tuple>
 
+#include "battle/automated.hpp"
+
 namespace openday::game {
 namespace {
 
@@ -173,6 +175,30 @@ std::vector<int> BattleState::buyable(int player) const {
     return out;
 }
 
+std::vector<int> BattleState::usableAutomated(int player) const {
+    std::vector<int> out;
+    if (player < 0 || player >= kPlayerSlots) return out;
+    const auto p = static_cast<std::size_t>(player);
+    for (const int id : automated[p]) {
+        const auto it = rules_->automated.find(id);
+        if (it == rules_->automated.end()) continue;
+        if (std::find(automatedUsed[p].begin(), automatedUsed[p].end(), id) != automatedUsed[p].end()) continue;
+        if (automatedNeedsBuildings[p]) {
+            const int prereq = it->second.prerequisite;
+            const bool owned = std::any_of(buildings_.begin(), buildings_.end(), [&](const BattleBuilding& b) {
+                return b.alive && b.owner == player && b.type->id == prereq;
+            });
+            if (!owned) continue;
+        }
+        if (std::find(out.begin(), out.end(), id) == out.end()) out.push_back(id);
+    }
+    return out;
+}
+
+bool BattleState::isBridgeSite(Point p) const {
+    return std::any_of(bridgeSites.begin(), bridgeSites.end(), [&](Point s) { return s.x == p.x && s.y == p.y; });
+}
+
 int BattleState::techFound() const {
     int sum = 0;
     for (const int b : techHeld)
@@ -296,6 +322,32 @@ BattleState loadBattle(const data::SqliteDb& scenario, const GlobalRules& rules,
     if (scenario.hasTable("Scenario Info"))
         scenario.forEach("SELECT turn_qty FROM \"Scenario Info\"",
                          [&](const data::Row& r) { s.turnLimit = r.isNull(0) ? 0 : toInt(r, 0); });
+    if (hasColumn(scenario, "Scenario Info", "One Off Deployment"))
+        scenario.forEach("SELECT \"One Off Deployment\" FROM \"Scenario Info\"",
+                         [&](const data::Row& r) { s.oneOffDeployment = r.isNull(0) ? 0 : toInt(r, 0); });
+
+    // Automated units (automated-units.md 2.3): the scenario's list, or in
+    // death match the prerequisite buildings on the map. Skirmish uses the
+    // scenario's list *(?)*; campaign battles replace it (prepare).
+    std::vector<int> oneOff;
+    if (scenario.hasTable("One Off Automated Available"))
+        scenario.forEach("SELECT Enum FROM \"One Off Automated Available\" WHERE Available <> 0 ORDER BY Counter",
+                         [&](const data::Row& r) { oneOff.push_back(toInt(r, 0)); });
+    std::vector<int> all;
+    for (const auto& [id, a] : rules.automated) all.push_back(id);
+    for (int p = 1; p < kPlayerSlots; ++p) {
+        const bool byBuildings = s.objective.kind == 8 || (s.objective.kind == 9 && p == 1);
+        s.automated[static_cast<std::size_t>(p)] = byBuildings ? all : oneOff;
+        s.automatedNeedsBuildings[static_cast<std::size_t>(p)] = byBuildings;
+    }
+    if (scenario.hasTable("Automated Units"))
+        scenario.forEach("SELECT AutomatedType, StartX, StartY, DestX, DestY, TurnArrival FROM \"Automated Units\" "
+                         "ORDER BY Counter",
+                         [&](const data::Row& r) {
+                             s.scheduledAutomated.push_back(
+                                 {toInt(r, 0), {toInt(r, 1), toInt(r, 2)}, {toInt(r, 3), toInt(r, 4)}, toInt(r, 5)});
+                         });
+    s.bridgeSites = findBridgeSites(s.size(), [&](Point p) { return s.classAt(p); });
     return s;
 }
 

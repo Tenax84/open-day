@@ -65,7 +65,16 @@ struct CheatRequest {
     bool win = false;
 };
 
-using Request = std::variant<MoveRequest, ShootRequest, EndTurnRequest, DeployRequest, UndeployRequest, CheatRequest>;
+// Calls an automated unit (automated-units.md 3.4): one target point, or
+// for a transport the unit to pick up and the destination.
+struct AutomatedRequest {
+    int player = 0;
+    int typeId = 0;
+    std::vector<Point> points;
+};
+
+using Request =
+    std::variant<MoveRequest, ShootRequest, EndTurnRequest, DeployRequest, UndeployRequest, CheatRequest, AutomatedRequest>;
 
 // --- Events (server -> clients) ---
 
@@ -101,14 +110,26 @@ struct WallDamaged {
     int armor = 0;
 };
 
+// Who destroyed a unit or a building (battle-flow.md 5.3, "Who gets the
+// kill"). This is the hook for the battle statistics: `attacker` is the
+// credited player slot (-1 = unknown), `automatedType` the automated type
+// when an automated "destroy" unit did it (-1 otherwise). Statistics are not
+// counted yet.
+struct DamageCause {
+    int attacker = -1;
+    int automatedType = -1;
+};
+
 struct UnitDestroyed {
     int unit = -1;
-    std::string wreck; // RUINS.DBI name left on the tile, or empty
+    std::string wreck{}; // RUINS.DBI name left on the tile, or empty
+    DamageCause cause{};
 };
 
 struct BuildingDestroyed {
     int building = -1;
-    std::vector<BattleRuin> rubble;
+    std::vector<BattleRuin> rubble{};
+    DamageCause cause{};
 };
 
 struct WallDestroyed {
@@ -186,6 +207,55 @@ struct OrderChanged {
     ScriptedOrder order;
 };
 
+// An automated unit arrived over `tile` (CTMMsgAutoUnit, automated-units.md
+// 5.2). `second`: the delivery leg of a transport (its second animation).
+struct AutomatedArrived {
+    int typeId = 0;
+    int owner = 0;
+    int outcome = 1; // AutomatedOutcome: 1 OK, 2 damaged, 3 destroyed
+    Point tile;
+    bool second = false;
+};
+
+// A unit fired at an automated unit (CTMMsgUnitAA); `ap` is its currentAP
+// afterwards.
+struct UnitFiredAA {
+    int unit = -1;
+    int ap = 0;
+};
+
+// Repair of one tile by a medic (CTMMsgRepair, 6.2): the new armor of the
+// building, unit and wall on it and the unit's new AP (-1 = no such object).
+struct Repaired {
+    Point tile;
+    int building = -1, buildingArmor = 0;
+    int unit = -1, unitArmor = 0, unitAp = 0;
+    int wall = -1, wallArmor = 0;
+};
+
+// A bridge section built by an automated bridge builder (CTMMsgBridge).
+struct BridgeBuilt {
+    int roadType = 1;
+    int owner = 0;
+    Point tile;
+};
+
+// A transported unit (CTMMsgUpdateUnit, 6.6): picked up (taken off the map),
+// put down on `pos` with `ap` and `armor`, or lost (`pos` outside the map).
+struct UnitTransported {
+    int unit = -1;
+    bool pickedUp = false;
+    int ap = 0;
+    int armor = 0;
+    Point pos{-1, -1};
+};
+
+// A DeployOnce type was used (2.4); `player` -1 = by every player.
+struct AutomatedUsed {
+    int player = -1;
+    int typeId = 0;
+};
+
 // A request that was refused as a whole; the state is unchanged.
 struct RequestRejected {
     std::string reason;
@@ -194,7 +264,8 @@ struct RequestRejected {
 using Event = std::variant<UnitMoved, UnitShot, UnitDamaged, BuildingDamaged, WallDamaged, UnitDestroyed,
                            BuildingDestroyed, WallDestroyed, RoadDestroyed, MineDestroyed, MineExploded, MinesRevealed,
                            TerrainBurned, TurnStarted, BattleOver, UnitAdded, OrderChanged, DeployBudget, UnitRemoved,
-                           RequestRejected, TechChanged>;
+                           RequestRejected, TechChanged, AutomatedArrived, UnitFiredAA, Repaired, BridgeBuilt,
+                           UnitTransported, AutomatedUsed>;
 
 // Applies an event to a state. The server changes its own state only
 // through this function, so client copies stay identical.

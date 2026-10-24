@@ -634,6 +634,48 @@ calls are in tactical-ai.md 6. Summary:
 - `SecondExplain` exists only in English in the data; OpenDay may add its
   own translations.
 
+## Implementation notes (OpenDay)
+
+Data in `game/map/rules.*` (`AutomatedType` with the parsed properties),
+shared rules (target tests, bridge sites, clip names) in
+`game/battle/automated.*`, the server side in
+`game/battle/server_automated.cpp`, the computer player's calls in
+`game/battle/ai.cpp`, the client animation in `game/anim/battle_animations.*`
+and `battle_view.cpp`, the view in `app/battle_screen.cpp`.
+
+- Messages are OpenDay's own events: `AutomatedRequest`, `AutomatedArrived`
+  (`CTMMsgAutoUnit`), `UnitFiredAA`, `Repaired` (one event per tile with the
+  new armor of each object, instead of the single "last object" armor),
+  `BridgeBuilt`, `UnitTransported` (`CTMMsgUpdateUnit`), `MinesRevealed`,
+  `UnitAdded` (failed drop slots send nothing), `AutomatedUsed` (instead of
+  resending the usable list), `DeployBudget` (the cost). A refused request
+  is a `RequestRejected`.
+- The server repeats the target tests of 3.2 and refuses requests outside
+  the sender's turn, of types not in his usable list, with too few points or
+  with too little tactical resource; nothing is paid then.
+- `CombatOptions::faithfulAutomated` (off by default) switches on the
+  transport's shared AA candidate list (5.3) and the server-wide `DeployOnce`
+  set (2.4). Off: each AA pass has its own candidates (`acc` still adds up)
+  and only the caller loses a `DeployOnce` type.
+- Skirmish: the scenario's `One Off Automated Available`, human types only
+  (like the unit list); death match: the rule of 2.3; campaign: the city's
+  list, and in city battles filtered by the buildings still standing.
+- Drops: an armed mine on a slot goes off whether or not the slot would
+  have passed the placement test. Human drops use the player's tech level of
+  the dropped type (skirmish: the army screen's levels).
+- Damage records carry a `DamageCause` (attacker slot, automated type) as
+  the hook for the battle statistics (battle-flow.md 5.3); units lost with
+  a transport are removed without a cause.
+- Client: the clip is centred on the target (the view is centred when it
+  starts); the next clip starts after the previous one ends; the effect
+  records start at the action frame; AA units play their `T` clip at the AA
+  frame, facing the tile under the scaled aim point of a view centred on
+  the target (camera clamping ignored). The clip's own audio is played.
+- The list icon is `<facingsImageID>999` from `LISTBOX.DBI`; the stored
+  transport source is marked with `<H|T>TRANSPS` and a valid destination
+  with `<H|T>TRANSPD` in addition to the type's cursor.
+- `SecondExplain` is shown as stored (English).
+
 ## Open questions
 
 1. Exact use of the `CTARG` cursor (only when nothing is selected?).

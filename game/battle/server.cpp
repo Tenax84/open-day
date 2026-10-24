@@ -63,6 +63,9 @@ std::vector<Event> BattleServer::start() {
     // match at slot 1 or 2 at random (battle-flow.md 1.3).
     state_.turn = 1;
     state_.currentPlayer = state_.computerPlayer ? 0 : 1 + random(2);
+    // The computer player's automated-unit budget lasts for the whole
+    // battle; x 1.5 in a counter-attack (tactical-ai.md 6.1).
+    aiAutomatedBudget_ = state_.aiSupport.present ? state_.aiSupport.budget * (state_.counterAttack ? 3 : 2) / 2 : 0;
     // Whatever was not spent during deployment is lost (campaign.md 4.2).
     for (const int p : state_.players)
         if (p != 0 && state_.deployBudget[static_cast<std::size_t>(p)] != 0) emit(DeployBudget{p, 0});
@@ -186,6 +189,7 @@ std::vector<Event> BattleServer::handle(const Request& request) {
                           [&](const EndTurnRequest& r) { deploying ? emit(RequestRejected{"deployment"}) : handleEndTurn(r); },
                           [&](const DeployRequest& r) { handleDeploy(r); },
                           [&](const UndeployRequest& r) { handleUndeploy(r); },
+                          [&](const AutomatedRequest& r) { deploying ? emit(RequestRejected{"deployment"}) : handleAutomated(r); },
                           [&](const CheatRequest& r) {
                               // Kind 7 (counter-attack) ignores the flags.
                               if (state_.objective.kind == 7) return emit(RequestRejected{"not in a counter-attack"});
@@ -314,24 +318,25 @@ bool BattleServer::walk(int unitIndex, const std::vector<PathStep>& requested) {
     case Stop::None: return true;
     case Stop::Reaction: reactionFire(unitIndex); break;
     case Stop::Detection: emit(MinesRevealed{state_.unit(unitIndex).owner, detected}); break;
-    case Stop::Mine: {
-        const BattleMine mine = state_.mine(triggered);
-        const MineType& type = state_.rules().mines.at(mine.type);
-        emit(MineExploded{triggered});
-        damageTile(mine.pos, rollDamage(type.damageBase, type.damageRandom, false), type.apDamage);
-        const int owner = state_.unit(unitIndex).owner;
-        if (owner >= 0 && owner < kPlayerSlots) {
-            MinesRevealed seen{owner, {}};
-            for (const Point d : kStep) {
-                const int m = state_.mineAt({mine.pos.x + d.x, mine.pos.y + d.y});
-                if (m >= 0 && state_.mine(m).hidden[static_cast<std::size_t>(owner)]) seen.mines.push_back(m);
-            }
-            if (!seen.mines.empty()) emit(std::move(seen));
-        }
-        break;
-    }
+    case Stop::Mine: explodeMine(triggered, state_.unit(unitIndex).owner); break;
     }
     return false;
+}
+
+void BattleServer::explodeMine(int mineIndex, int revealFor) {
+    const BattleMine mine = state_.mine(mineIndex);
+    const MineType& type = state_.rules().mines.at(mine.type);
+    emit(MineExploded{mineIndex});
+    cause_ = {mine.owner, -1}; // the mine's owner gets the kill (battle-flow.md 5.3)
+    damageTile(mine.pos, rollDamage(type.damageBase, type.damageRandom, false), type.apDamage);
+    if (revealFor >= 0 && revealFor < kPlayerSlots) {
+        MinesRevealed seen{revealFor, {}};
+        for (const Point d : kStep) {
+            const int m = state_.mineAt({mine.pos.x + d.x, mine.pos.y + d.y});
+            if (m >= 0 && state_.mine(m).hidden[static_cast<std::size_t>(revealFor)]) seen.mines.push_back(m);
+        }
+        if (!seen.mines.empty()) emit(std::move(seen));
+    }
 }
 
 void BattleServer::reactionFire(int mover) {
@@ -431,6 +436,7 @@ void BattleServer::fire(int shooterIndex, Point aim) {
         if (state_.inside(p)) impact = p;
     }
     const int damage = rollDamage(t.damageBase, t.damageRandom, options_.aiDamage && s.owner == 0);
+    cause_ = {s.owner, -1};
     emit(UnitShot{shooterIndex, t.hasFacings ? facingToward(s.pos, aim) : s.facing, aim, impact, s.ap - t.shotAp});
     damageArea(impact, damage, t.damageArea, t.apDamage);
 }
@@ -532,13 +538,13 @@ void BattleServer::destroyUnit(int unitIndex) {
     const BattleUnit& u = state_.unit(unitIndex);
     std::string wreck = u.type->ruinImage;
     if (wreck == "UBRUIXXX" || state_.classAt(u.pos) != TerrainClass::Plain || state_.hasRuin(u.pos)) wreck.clear();
-    emit(UnitDestroyed{unitIndex, wreck});
+    emit(UnitDestroyed{unitIndex, wreck, cause_});
 }
 
 void BattleServer::destroyBuilding(int buildingIndex) {
     const BattleBuilding& b = state_.building(buildingIndex);
     const BuildingType& t = *b.type;
-    BuildingDestroyed e{buildingIndex, {}};
+    BuildingDestroyed e{buildingIndex, {}, cause_};
     std::vector<Point> footprint;
     for (int x = b.pos.x; x < b.pos.x + t.sizeX; ++x)
         for (int y = b.pos.y; y < b.pos.y + t.sizeY; ++y)

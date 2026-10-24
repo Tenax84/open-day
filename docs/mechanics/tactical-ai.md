@@ -693,8 +693,15 @@ move, shot and autofire code, and order changes reach the clients as
   action gets three cycles (section 1.4 says "about three").
 - The unit's own tile counts as a firing position with no steps, so a unit
   that is already in range fires without moving.
-- Not implemented yet: automated units (phases 2, 3, 6, 7 and 6.4), the
-  counter-attack rules (buildings, mines and walls as targets), the AI
+- Automated units: phases 2 and 7 (random calls), 3 (emergency drop), 6
+  (scheduled rows) and the counter-attack transport of 6.4 go through one
+  call routine with the race filter; the budget lives in the server for the
+  whole battle. The five emergency-drop types are the `UNIT TYPE ID LOOKUP`
+  ids 2, 56, 58, 8 and 9. Both campaign city battles (first attack and
+  counter-attack) count as counter-attack battles. When an emergency drop
+  finds no target, the budget keeps the cost it was raised by *(literal
+  reading of 6.3)*.
+- Not implemented yet: the counter-attack rules (buildings, mines and walls as targets), the AI
   variant of the path search (42 × 42 window, 7-round cap and the ignored
   random draw),
   so the random sequence differs from the original's.

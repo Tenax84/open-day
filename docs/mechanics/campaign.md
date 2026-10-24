@@ -340,7 +340,9 @@ battle preparation, save files) and the campaign screens of `app/`.
 - Single player only (one human player, share 100 %).
 - Saving and loading use OpenDay's own text format in the user's settings
   folder; a game can be saved in the strategic state.
-- Automated units are listed but cannot be called yet (as in skirmish).
+- Automated units: the player's usable list comes from his city (in city
+  battles it follows the buildings still standing); the computer player gets
+  the colony's chance, budget and list (automated-units.md, tactical-ai.md 6).
 
 ## Open questions
 
