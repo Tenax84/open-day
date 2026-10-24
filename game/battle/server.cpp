@@ -603,8 +603,7 @@ void BattleServer::handleDeploy(const DeployRequest& r) {
     if (reinforcement && r.player != state_.currentPlayer) return emit(RequestRejected{"not your turn"});
     const std::vector<int> offered = state_.buyable(r.player);
     int budget = state_.deployBudget[static_cast<std::size_t>(r.player)];
-    int nextId = 1;
-    for (const BattleUnit& u : state_.units()) nextId = std::max(nextId, u.id + 1);
+    int nextId = state_.nextObjectId();
     const int size = state_.size();
     bool placed = false;
     for (const DeployEntry& e : r.entries) {

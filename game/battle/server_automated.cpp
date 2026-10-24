@@ -204,8 +204,7 @@ void BattleServer::automatedDrop(AutomatedCall& call, Point target) {
     int n = t.dropCount;
     if (call.acc > 0) n /= 2;
     n = std::clamp(n, 0, static_cast<int>(t.dropSlots.size()));
-    int nextId = 1;
-    for (const BattleUnit& u : state_.units()) nextId = std::max(nextId, u.id + 1);
+    int nextId = state_.nextObjectId();
     for (int i = 0; i < n && !state_.over; ++i) {
         const DropSlot& slot = t.dropSlots[static_cast<std::size_t>(i)];
         const Point p{target.x + slot.dx, target.y + slot.dy};

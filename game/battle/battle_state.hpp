@@ -264,6 +264,11 @@ public:
     bool counterAttack = false; // the computer player attacks the player's city
     int oneOffDeployment = 0;   // Scenario Info.One Off Deployment (emergency drop, 6.3)
 
+    // An object id for a new unit (bought, dropped): above every unit and
+    // building id, every pending reinforcement and every objective id, so
+    // it never matches a scripted reinforcement or a listed object.
+    int nextObjectId() const;
+
     // Looks up a unit type at a tech level; with a negative `techLevel`,
     // the lowest level of that type. nullptr if unknown.
     const UnitType* unitType(int typeId, int techLevel) const;

@@ -195,6 +195,15 @@ std::vector<int> BattleState::usableAutomated(int player) const {
     return out;
 }
 
+int BattleState::nextObjectId() const {
+    int next = 1;
+    for (const BattleUnit& u : units_) next = std::max(next, u.id + 1);
+    for (const BattleBuilding& b : buildings_) next = std::max(next, b.id + 1);
+    for (const Reinforcement& r : reinforcements) next = std::max(next, r.unitId + 1);
+    for (const int id : objective.ids) next = std::max(next, id + 1);
+    return next;
+}
+
 bool BattleState::isBridgeSite(Point p) const {
     return std::any_of(bridgeSites.begin(), bridgeSites.end(), [&](Point s) { return s.x == p.x && s.y == p.y; });
 }

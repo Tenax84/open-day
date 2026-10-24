@@ -1,5 +1,6 @@
 #include "formats/inflate.hpp"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -55,7 +56,8 @@ struct Huffman {
 
 class Inflater {
 public:
-    Inflater(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out) : in_(in), out_(out) {}
+    Inflater(std::span<const std::uint8_t> in, std::vector<std::uint8_t>& out, std::size_t limit)
+        : in_(in), out_(out), limit_(limit) {}
 
     void run() {
         bool last = false;
@@ -73,9 +75,15 @@ public:
 private:
     std::span<const std::uint8_t> in_;
     std::vector<std::uint8_t>& out_;
+    std::size_t limit_;
     std::size_t pos_ = 0;
     std::uint32_t bitBuf_ = 0;
     int bitCount_ = 0;
+
+    // Refuses output beyond the limit (a damaged or hostile stream).
+    void room(std::size_t n) const {
+        if (n > limit_ - out_.size()) throw InflateError("output larger than expected");
+    }
 
     int bits(int need) {
         std::uint32_t v = bitBuf_;
@@ -125,6 +133,7 @@ private:
         pos_ += 4;
         if (len != (~nlen & 0xFFFFu)) throw InflateError("stored block length mismatch");
         if (pos_ + len > in_.size()) throw InflateError("unexpected end of compressed data");
+        room(len);
         out_.insert(out_.end(), in_.begin() + static_cast<std::ptrdiff_t>(pos_), in_.begin() + static_cast<std::ptrdiff_t>(pos_ + len));
         pos_ += len;
     }
@@ -142,6 +151,7 @@ private:
         for (;;) {
             int sym = decode(lit);
             if (sym < 256) {
+                room(1);
                 out_.push_back(static_cast<std::uint8_t>(sym));
                 continue;
             }
@@ -153,6 +163,7 @@ private:
             if (dsym >= 30) throw InflateError("invalid distance code");
             const std::size_t d = kDistBase[dsym] + static_cast<std::size_t>(bits(kDistExtra[dsym]));
             if (d > out_.size()) throw InflateError("distance too far back");
+            room(len);
             // Byte by byte: the source may overlap the bytes being written.
             std::size_t from = out_.size() - d;
             for (std::size_t i = 0; i < len; ++i) out_.push_back(out_[from++]);
@@ -216,10 +227,11 @@ private:
 
 } // namespace
 
-std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint) {
+std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint, std::size_t maxSize) {
     std::vector<std::uint8_t> out;
-    out.reserve(sizeHint);
-    Inflater(compressed, out).run();
+    // DEFLATE expands at most 1032:1; a larger hint is not trusted.
+    out.reserve(std::min({sizeHint, maxSize, compressed.size() * 1032 + 1024}));
+    Inflater(compressed, out, maxSize).run();
     return out;
 }
 

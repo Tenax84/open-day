@@ -85,7 +85,7 @@ std::vector<std::uint8_t> ZipArchive::read(const ZipEntry& e) const {
         out.assign(packed.begin(), packed.end());
     } else if (e.method == 8) {
         try {
-            out = inflate(packed, e.size);
+            out = inflate(packed, e.size, e.size);
         } catch (const InflateError& err) {
             throw ZipError(e.name + ": " + err.what());
         }

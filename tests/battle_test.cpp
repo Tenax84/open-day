@@ -834,6 +834,10 @@ void testDeployment() {
     s.purchasable = {kTank, kTrooper};
     s.deployBudget[1] = 110;
     s.deploying = true;
+    // A scripted reinforcement with the next free unit id: new units must
+    // not take it (UnitAdded drops the pending row of its id).
+    const int scriptedId = s.unit(0).id + 1;
+    s.reinforcements.push_back({scriptedId, kAlienTank, {7, 6}, 99, false});
     startBattle(s);
     const BattleState initial = s;
     BattleServer server(s, {}, 1);
@@ -856,6 +860,8 @@ void testDeployment() {
     const DeployBudget* budget = first<DeployBudget>(ev);
     CHECK(budget && budget->budget == 110 - tankCost - rules().units.at({kTrooper, 0}).cost);
     CHECK(server.state().unit(1).owner == 1 && server.state().unit(1).facing == 7);
+    CHECK(server.state().reinforcements.size() == 1 && server.state().unit(1).id > scriptedId &&
+          server.state().unit(2).id > scriptedId);
     // An occupied tile and an unknown type are skipped.
     ev = send(DeployRequest{1, {{kTank, -1, {0, 0}}, {kParalyzer, -1, {2, 0}}}});
     CHECK(count<UnitAdded>(ev) == 0);

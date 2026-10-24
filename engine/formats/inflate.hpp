@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <vector>
@@ -16,9 +17,11 @@ struct InflateError : std::runtime_error {
 };
 
 // Decompresses a raw DEFLATE stream (no zlib or gzip header). `sizeHint`
-// reserves the output buffer when the size is known. Throws InflateError on
-// malformed or truncated input.
-std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint = 0);
+// reserves the output buffer when the size is known; output beyond
+// `maxSize` bytes is refused. Throws InflateError on malformed or truncated
+// input.
+std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint = 0,
+                                  std::size_t maxSize = std::numeric_limits<std::size_t>::max());
 
 // CRC-32 (ISO-HDLC, as in ZIP and PNG). `crc` continues a running value.
 std::uint32_t crc32(std::span<const std::uint8_t> data, std::uint32_t crc = 0);
