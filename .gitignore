@@ -23,7 +23,8 @@
 *.BMP
 *.bmp
 *.INI
-savegame.*
+savegame.[0-9]*
+/SAVEGAME/
 /data/
 /gamedata/
 /extracted/

@@ -82,7 +82,7 @@ panel:
 | UPGRADE | (471, 400) | 110×17 | 162–165 | `T` (string 117) |
 | CONTINUE (skirmish) | (471, 428) | 110×17 | 158–161 | Enter |
 | BACK | (471, 428) | 110×17 | 168–171 | Esc |
-| encyclopedia | (496, 309) | 60×55 | 172–175 | F1 |
+| encyclopedia ([encyclopedia.md](encyclopedia.md) 3) | (496, 309) | 60×55 | 172–175 | F1 |
 | unit list: previous / up / down / next | (247, 280) / (269, 280) / (291, 280) / (313, 280) | 19×17 | 180 / 188 / 184 / 176 (+0…3) | |
 | automated list: previous / up / down / next | (185, 426) / (207, 426) / (229, 426) / (251, 426) | 19×17 | same | |
 | tech points | (474, 371)–(558, 388) | | | number, centred, white on black |
@@ -150,4 +150,5 @@ Implemented in `game/campaign/campaign.*` (levels, upgrade rules) and
 
 - The skirmish army screen and tech allotment (2.2) are used before skirmish
   battles; death match is not implemented.
-- The encyclopedia button is disabled.
+- The encyclopedia button is disabled (not implemented yet); specification:
+  [encyclopedia.md](encyclopedia.md) (opening rule for the army screens: 3).

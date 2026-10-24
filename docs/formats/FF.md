@@ -95,9 +95,16 @@ explosion, presumably building destruction *(?)*. Size 420–432 × 312–428.
 ### Large clips — `AUTOUNIT\CODEnn.SMK` (61 entries), `MINE\*.SMK` (2)
 
 `AUTOUNIT` clips are 900 × 788, 960 × 848 or 1024 × 768 pixels, with 11–131
-frames, in variants `01`–`03` (some also `11`–`13`). They show for example an
-aircraft dropping something onto the map (*?*: air strikes / air-delivered
-units). `MINE\MINE.SMK` and `MINE\GMINE.SMK` are 216 × 224, 9 frames.
+frames. They are the automated units (air strikes, drops, transports, …),
+named `<code><s><n>.SMK`: `<code>` = `Automated Units.facingsImageID`
+(18 codes), `<n>` = outcome (`1` OK, `2` damaged, `3` shot down), `<s>` =
+`0` for the first animation, `1` for the second animation (only the
+transports `HHTR` and `THTR` have `11`–`13`). That gives 60 entries; the
+61st, `AUTOUNIT\BZLN.SMK` (1024 × 768, 81 frames, no audio), is not
+referenced by the data *(?)*. All other clips have audio. The game plays
+each clip in full, centred on the target tile; see
+[automated-units.md](../mechanics/automated-units.md) 8.
+`MINE\MINE.SMK` and `MINE\GMINE.SMK` are 216 × 224, 9 frames.
 
 ## Observed Smacker properties
 

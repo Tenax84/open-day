@@ -230,10 +230,10 @@ viewport. Panel art: atlas frame **100**. Positions relative to the panel:
 
 | Control | Position, size | Frames | Key | Action |
 |---|---|---|---|---|
-| emblem | (5, 0) 44×43 | 143–146 | F1 | encyclopedia |
+| emblem | (5, 0) 44×43 | 143–146 | F1 | encyclopedia at the selected list entry ([encyclopedia.md](encyclopedia.md) 3.1) |
 | credit indicator | (64, 26)–(104, 40) | — | — | the player's credits |
 | minimap | (12, 49) 112×112 | — | — | as in battle (tactical-interface.md 2.6) |
-| MAP | (11, 171) 110×17 | 105–108 | F4 | the city overview map (strategic-interface.md 5) |
+| MAP | (11, 171) 110×17 | 105–108 | F4 | the city overview map (strategic-interface.md 4.2) |
 | Buildings | (12, 198) 19×19 | 109–114 | `B` | radio: list = buildings |
 | Defenses | (12, 222) 19×19 | 115–120 | `D` | radio: list = defenses (checked at start) |
 | structure list | (9, 247), 4 rows of 118×40 | — | — | 9.1 |
@@ -294,8 +294,10 @@ sound `INVALIDE`.
 Implemented in `game/campaign/city.*` (rules) and `app/campaign_city.cpp`
 (screen).
 
-- The MAP button (city overview map) is disabled.
-- The encyclopedia button is disabled (no encyclopedia yet).
+- The MAP button (city overview map) is disabled; the screen is specified in
+  strategic-interface.md 4.2.
+- The encyclopedia button is disabled (no encyclopedia yet); specification:
+  [encyclopedia.md](encyclopedia.md) (opening rule for this screen: 3.1).
 
 ## Open questions
 

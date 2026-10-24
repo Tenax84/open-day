@@ -314,8 +314,23 @@ Esc).
 ### In-game options dialog (`CMenuInterface`)
 
 Panel: frame **648**, 403×371 (title "OPTIONS" in the art). Opened from the
-game screens; three constructor flags enable or disable *Save*, *Restart
-scenario* and *Quit*.
+game screens (MENU button, `F2`); three constructor flags enable or disable
+*Save*, *Surrender* and *Quit*. A disabled button is only drawn greyed
+(control state "disabled"); there is no refusal message.
+
+Which screen passes which flags:
+
+| Screen | Save | Surrender | Quit |
+|---|---|---|---|
+| tactical view, your turn (`CTacticView`) | yes | **yes** | yes |
+| tactical waiting view, another participant's turn incl. the computer's (`CTacticWaitView`) | yes | no | **no** |
+| city screen (`CStratView`), continent screen (`CColonyView`) | yes | no | yes |
+| every other screen (deployment, reinforcement purchase, automated units, tactical and strategic map screens, continent win view, colony base view, …) | no | no | yes |
+
+*Save* is additionally forced off unless (1) the session is a campaign
+(game type 0 new campaign or 1 loaded campaign; skirmish and death match
+never save) and (2) this program instance hosts the server (in a network
+campaign only the host can save). See [savegame.md](savegame.md) 1.
 
 | Control | Position (panel) | Size | Frames | Notes |
 |---|---|---|---|---|
@@ -326,12 +341,74 @@ scenario* and *Quit*.
 | list previous / next | (280, 297) / (299, 297) | 19×17 | 685 / 681 | scroll the track list |
 | *Play* | (242, 297) | 19×17 | 671 | plays the selected track |
 | *Stop* | (261, 297) | 19×17 | 677 | stops the music |
-| *Restart scenario* | (10, 340) | 110×17 | 689 | |
-| *Save* | (132, 340) | 53×17 | 661 | hot key string 122 |
-| *Quit* | (197, 340) | 53×17 | 649 | hot key string 123 (confirmation probably string 819) |
-| *Back* | (336, 340) | 53×17 | 653 | Esc; closes the dialog |
+| *Surrender* | (10, 340) | 110×17 | 689 | no hot key; confirmation (see below) |
+| *Save* | (132, 340) | 53×17 | 661 | hot key string 122; opens the save dialog |
+| *Quit* | (197, 340) | 53×17 | 649 | hot key string 123; confirmation string 819 |
+| *Back* (resume) | (336, 340) | 53×17 | 653 | Esc; closes the dialog |
+
+(Earlier versions of this document called the button at (10, 340)
+*Restart scenario*; that was wrong — it is *Surrender*.)
 
 The CD-player controls are disabled when `[Fallen Haven II] audio=0`.
+
+**Surrender:** opens a two-button (yes / no) message box with string **818**
+("Do you really want to surrender?"). On *yes*: the box closes, the client
+sends the cheat-lose request (`CCheatLoseScenMsg`; there is no separate
+surrender message and no cheat gate on this path) and the options dialog
+closes. The result of the battle is described in
+[battle-flow.md](battle-flow.md) 3.1 and 5.6.
+
+**Quit:** yes / no box with string **819** ("Do you really want to quit the
+game?"). On *yes* the main window receives an application command that ends
+the game *(?: whether it exits the program or returns to the front end was
+not traced; exiting is assumed)*.
+
+**Save:** opens the save dialog (below). After a name has been chosen:
+
+1. the save dialog closes and a message box **without buttons** shows string
+   **816** ("...SAVING...");
+2. the save request (`CCampaignSaveMsg`: slot 1–10, name up to 31
+   characters in a 32-byte field) goes to the server;
+3. when the confirmation (`CConfirmSaveMsg`, one success flag) arrives, the
+   "...SAVING..." box is closed; on failure an OK box shows string **817**
+   ("A problem occured during saving. Please try again."). On success
+   nothing else is shown; the options dialog stays open *(?)*.
+
+### Save and load dialogs (`CInterfSave` / `CInterfLoad`)
+
+Both use the same geometry (details of the slot folders in
+[savegame.md](savegame.md)):
+
+- Panel 286×419 (save: frame **750**, load: frame **739**), centred: screen
+  (177, 30)–(463, 449) at 640×480.
+- Ten slot rows, row i = 0…9 (slot i + 1): x 53…266, y = 42 + 32·i, height
+  17 (panel coordinates). Standard font; the selected row is drawn black on
+  white, the others white on black.
+- Slot names are read when the dialog opens: the name of slot N is the file
+  title (name without extension) of the `*.dsc` file in the slot folder
+  `savegame.NN`; no such file → empty name.
+- Buttons: *Back* (55, 370) 100×24, Esc (save: frames 751, load: 740);
+  *Save* (155, 370) 100×24, frames 755, Enter / *Load* (155, 370) 100×24,
+  frames 744, Enter.
+
+Save dialog:
+
+- every slot can be chosen, empty or not; slot 1 is selected initially;
+- an edit box (max **31** characters) lies over the selected row, pre-filled
+  with that slot's current name; clicking another row moves the edit box
+  there and loads that row's name;
+- *Save*: the text is trimmed of leading and trailing blanks; if it is then
+  empty **nothing happens**; otherwise the save request above is made.
+
+Load dialog (front end, *Load campaign*, states 4 and 10):
+
+- only rows with a **non-empty** name can be selected; initially nothing is
+  selected;
+- *Load* with a selected slot: the session becomes "loaded campaign"
+  (game type 1, the slot number, game name = slot name, at most 71
+  characters; session info string 746 "Loaded campaign") and the front end
+  proceeds to loading picture 3;
+- there is no load from inside a running game.
 
 ## 5. Sounds and music
 
@@ -417,13 +494,14 @@ text boxes) and the game program `app/` (screens).
 - Exact rectangle of the in-game dialogs (options etc.): taken from a
   run-time rectangle, presumably centred like the menus.
 - Which view uses side panels 0, 41, 100 and 507 is inferred, not proven.
-- Where `TICK.SMK` is drawn (it is loaded by the animation engine; possibly a
-  hit/impact puff or only a timing source).
 - Whether the intro video can be skipped by key/mouse, and how 640×400
   videos are placed in 640×480 (probably centred with black bars).
 - Menu click sound: none found in the button code; verify at run time.
 - Slider of the new-campaign screen (frame 1047) and the side-selection
   frames 979–988 were not traced in detail.
 - The small 12 px font is created but apparently unused.
+- In-game *Quit*: whether the application command exits the program or
+  returns to the front end.
+- Whether the options dialog stays open after a successful save.
 - The hot-key letters 100–121, 124, 125 are not yet matched to their buttons
   (most belong to the strategic and tactical HUDs).

@@ -145,9 +145,31 @@ creates `negAP`.
 
 ### Keeping AP for a shot
 
-In one order mode *(?: probably the "move and shoot" cursor or the
-autofire option)*, units with `canOverwatch` that have at least
-`actionPointsShoot` available plan their move with that amount held back.
+The reserve is the human client's **Overwatch** option (the overwatch lamp
+of the tactical panel, `[User] Overwatch`, default on; tactical-interface.md
+2.2). Every human move planner — the two-click move (preview and send), MOVE
+ALL, and the path preview of a move-to-fire first click — uses this
+**movement budget** instead of the available AP:
+
+    budget = available AP
+    if the Overwatch option is on
+       and the unit type has canOverwatch
+       and actionPointsShoot ≤ available AP:
+        budget = available AP − actionPointsShoot
+    budget = max(budget, 0)
+
+The path is cut to the budget with the rules above. The server does not know
+the option: it re-prices the path and cuts it to the full available AP, so
+the reserve exists only because the client sends a shorter path. The shot
+request (move-to-fire, 3.7) does not use the reserve; it picks a firing tile
+whose cost leaves at least one shot. The computer player keeps a shot's
+worth of AP in its Goto orders (tactical-ai.md 4.4).
+
+Neither the Overwatch nor the Autofire option changes reaction fire on the
+server (section 5): reaction fire is fully automatic. The only effect of the
+Overwatch option is that units keep enough AP to be eligible for it later.
+The Autofire option only sets the autofire flag of a shot request
+(tactical-combat.md 2).
 
 ### Plausibility against the data
 
@@ -187,10 +209,29 @@ by AP or by distance. Crossable-only tiles take part as intermediate tiles.
 **There is no corner-cutting rule**: a diagonal step between two blocked
 orthogonal neighbors is allowed.
 
-AI variant: for maps of 72 or 96 tiles, an AI unit outside the central
-12 × 12 square limits the sweeps to a 41 × 41 window around itself (moved
-to stay inside the map) and to at most 7 rounds of sweeps. Boats always
-search the whole map.
+**AI variant.** The computer player's own path maps use a restricted search
+(the human client and the AI's Goto group move use the normal one). With an
+`n × n` map and the usable area `1 … n−2` in both axes:
+
+1. Boats (class 4) always use the normal search (no window, no round cap).
+2. If `n < 57`, the whole usable area is swept (so the window below
+   concerns the shipped maps of 72 and 96 tiles).
+3. If `n ≥ 57`: one random number is drawn and discarded (always, for every
+   AI path map on such a map — this matters for reproducing the random
+   sequence). The central square is the 12 × 12 tiles starting at
+   `((n − 12) div 2, (n − 12) div 2)`. If the unit's top-left tile is inside
+   it, the whole usable area is swept. Otherwise the sweep window is columns
+   `x − 20 … x + 21` and rows `y − 20 … y + 21` inclusive (**42 × 42**
+   tiles) around the unit's top-left tile (x, y). The window is pushed back
+   into the map without shrinking (top < 1 → move it down by `1 − top`;
+   bottom > n − 2 → move it up by the excess; the same for left / right) and
+   finally clipped to the usable area.
+4. **Round cap:** for every AI path map except boats, at most **7 rounds**
+   (forward sweep + backward sweep + border pass) are made, regardless of
+   map size and window, also on small maps.
+
+Correction: earlier versions of this document said 41 × 41 and limited the
+round cap to large maps.
 
 ### 3.2 Destination check
 
@@ -224,7 +265,7 @@ the full path is marked with one sprite:
 |---|---|---|
 | `PATH0000` | affordable, enterable | blue marker |
 | `PATH0001` | not affordable, enterable | blue marker with an X |
-| `PATH0002` | affordable, crossable-only | lighter marker *(drawn with an extra draw flag)* |
+| `PATH0002` | affordable, crossable-only | lighter marker *(drawn after all cells, on top: map-objects.md draw modes)* |
 | `PATH0003` | not affordable, crossable-only | lighter marker with an X *(same flag)* |
 | `PATH0004` | last step (destination), reachable this turn | red marker |
 | `PATH0005` | last step, not reachable this turn | red marker with an X |
@@ -234,20 +275,38 @@ the full path is marked with one sprite:
 
 ### 3.5 Group orders
 
-Up to 64 selected units can be sent in one order. They are processed one
-after the other on the client:
+Up to 64 selected units can be sent in one order (a 65th entry is
+skipped; a unit already in the order is skipped). The client keeps two
+lists while planning: the **claimed** tiles and the **start tiles** of the
+units planned so far. For each unit:
 
-- Tiles that earlier units of the group start from are treated as free
-  (those units will have left).
-- Destinations already claimed by earlier units become not enterable and
-  crossable only if their own fly-over mark allows it.
-- If the clicked tile is not enterable for a unit, or already claimed, the
-  8 tiles around it are tried, nearest first (Euclidean distance, so the
-  four orthogonal neighbors before the diagonals; equal distances in scan
-  order x ascending, then y ascending *(?)*). Only unclaimed, enterable
-  tiles qualify. If none qualifies the unit does not move.
-- Each unit's path is computed and cut to its own AP; units whose cut path
-  is empty are skipped.
+1. A fresh path map is built for the unit; claimed tiles are made not
+   enterable (keeping their fly-over mark); the start tiles of the earlier
+   members are made free (those units will have left); then the full-map
+   search runs.
+2. **Destination.** Human orders: if the clicked tile is not enterable for
+   this unit, the unit gets **no order**. If it is enterable but already
+   claimed, a replacement tile is searched (below). The computer player's
+   Goto group (tactical-ai.md 4.4) searches a replacement in **both** cases
+   (not enterable or claimed).
+3. **Replacement tile:** the 8 neighbors of the clicked tile (X, Y) that
+   are not claimed and enterable for the unit, ordered by squared Euclidean
+   distance to (X, Y), ties in the scan order "x from X−1 to X+1, inside
+   that y from Y−1 to Y+1". The resulting order is
+   (X−1, Y), (X, Y−1), (X, Y+1), (X+1, Y), then (X−1, Y−1), (X−1, Y+1),
+   (X+1, Y−1), (X+1, Y+1). The first one is taken; if none qualifies the
+   unit does not move.
+4. The path is computed and cut to the unit's movement budget (2, "Keeping
+   AP for a shot"); a unit whose cut path is empty is skipped.
+5. The **last tile of the cut path** (where the unit really stops this turn)
+   is added to the claimed list — not the clicked tile — and the unit's
+   current tile to the start tiles.
+
+**Repeat passes** (human two-click group move): the selected units are
+processed in selection order; units that got an order are removed and the
+whole pass is repeated over the remaining units as long as the previous
+pass gave at least one unit an order. (So a unit blocked by a member planned
+after it can still move.) MOVE ALL makes only **one** pass.
 
 ### 3.6 Teleport units
 
@@ -258,9 +317,26 @@ destination's tile cost (10), and the arrival facing is random (0–7).
 ### 3.7 "Move to fire" orders
 
 A second order type moves a unit to a tile from which it can shoot a chosen
-target: from a list of candidate tiles it takes the one with the lowest
-path cost that is strictly below the available AP and from which a shot is
-possible with the AP left. On equal cost the first candidate is kept *(?)*.
+target. The client chooses the firing tile:
+
+1. **Candidates:** the tiles of the target's footprint (a building's
+   rectangle, otherwise the target tile) grown by the shooter's
+   `weaponRange` on every side, **minus** the tiles of the footprint grown by
+   its `weaponMinimumRange`; enumerated with x as the outer loop and y as the
+   inner loop.
+2. The path map is a fresh full-map human search (no AI window); when the
+   order is sent for a group, with the claimed / start-tile lists of 3.5.
+3. A candidate qualifies if the unit can stop on it, a path exists, the path
+   cost (sum of step costs, without the diagonal +1) is **strictly below**
+   the available AP, and the full shot legality check (tactical-combat.md 1,
+   including "AP ≥ shot cost") passes from that tile with the path cost
+   counted as already spent.
+4. The qualifying candidate with the **lowest** path cost is taken; on equal
+   cost the first in enumeration order is kept.
+
+The unit's own tile is never a candidate (the unit itself blocks it). How
+the interface uses this (two-click "mark, then fire") is described in
+tactical-interface.md 3.2.
 
 ## 4. Turn structure of the tactical phase
 
@@ -307,8 +383,9 @@ everywhere.
 - Then the next player in the order becomes current. Before that the
   server checks whether the battle is over (objectives, see below); this
   check is also done after every move.
-- Reinforcements whose `turn` has been reached are placed at the start of
-  the AI's turns *(?)*.
+- Scripted reinforcements with `turn ≤ T` are placed at the **end** of the
+  computer player's turn, before the round counter step (battle-flow.md
+  4.1).
 
 ### Turn limit
 
@@ -328,11 +405,14 @@ the start tile) and after entering each tile it checks, in this order:
    lists enemy units that have `canOverwatch`, at least `actionPointsShoot`
    available AP, and whose zone covers the tile; the zone is the shooter's
    footprint enlarged by its `weaponRange` in every direction (a square).
-   The list is only built if the moving unit's type has `Jammer` > 0
-   *(?: in the shipped data this is true for ground vehicles (100) and grav
-   units (10) but not for troopers, air, underwater, teleport and grav-fly
-   units, which therefore never draw reaction fire; the column name
-   suggests the meaning is inverted)*. If any listed unit could fire at the
+   The list is only built if the moving unit's type has `Jammer` > 0.
+   `Jammer` is a per-cent multiplier on the chance of being hit by reaction
+   fire (tactical-combat.md 3.2), with 0 meaning "does not trigger overwatch
+   fire" (the manual's icon text): 100 = normal (most units), 10 = jamming
+   device (all grav units: Grav Bike, Light / Medium Grav, Paralyzer,
+   Seeker), 0 = never triggers reaction fire (Commando, Shocktrooper, Pack
+   Freak, Chopper, Submarine, Mind Warrior, Flyer). A watching unit must also
+   be an enemy of the mover. If any listed unit could fire at the
    moving unit on this tile (the normal shot check), the move **stops
    here**, and all eligible enemies fire, repeating rounds while someone
    fired and the target still exists. Because the check also runs on the
@@ -377,16 +457,22 @@ current player. For each unit in order it re-checks that every step is
 still enterable or crossable on the server's map, walks the path with the
 checks of section 5, places the unit, charges AP, and adds a movement
 record to one multi-message for all clients (`CTacticClientMMsg` holding
-`CTMMsgMovement` parts, template `tactic_mmsg_movement`): unit id, AP left
-after the move, and the list of tiles actually walked (x, y; room for about
-75 steps *(?)*), followed by records for any reaction fire, mine reveal or
-mine explosion. Processing stops at the first unit whose check fails or
+`CTMMsgMovement` parts, template `tactic_mmsg_movement`): unit id (32 bit),
+AP left after the move (16 bit), step count (16 bit) and room for **75**
+steps of (x, y) (16 bit each), followed by records for any reaction fire,
+mine reveal or mine explosion. The original copies the walked tiles without
+a bounds check; a walk of more than 75 tiles (possible in principle for a
+450-AP unit on high-tech roads *(?)*) would overrun the record. OpenDay
+simply allows longer lists. In the request the path arrays have no fixed
+length; only the number of units (64) is limited. Processing stops at the first unit whose check fails or
 whose move is interrupted, or when the battle is over. The clients play the
 move animations from these records (`CIsoAnimBegMove`,
 `CIsoAnimTranslateMove`, `CIsoAnimEndMove`, see
 [unit-animation.md](unit-animation.md)). `CUnitMoveFailedMsg` (no payload)
-is handled by the client tactic phase and view *(?: when the server sends
-it was not traced)*. The turn is ended with `CRequestEndTactTurnMsg`.
+is **never sent**: only the receiving side exists (if it arrived, the
+tactical view would leave its waiting state and play `INVALID`). OpenDay
+may drop it or use it for "request rejected". The turn is ended with
+`CRequestEndTactTurnMsg`.
 
 ## Notes for OpenDay
 
@@ -408,24 +494,21 @@ it was not traced)*. The turn is ended with `CRequestEndTactTurnMsg`.
   - The checks of section 5 are only made on tiles the unit can stop on, so
     a move never ends over a fly-over tile.
   - Group replacement tiles are tried orthogonal neighbors first, then the
-    diagonals, each in x-then-y order.
-  - The AI's 41 × 41 search window is not implemented yet (there is no AI).
+    diagonals, each in x-then-y order (now confirmed as the original order,
+    3.5).
+  - The AI's search window (42 × 42, 7-round cap, 3.1) is not implemented
+    yet.
   - The server re-prices the client's path itself and cuts it to the AP.
+- Apply the Overwatch reserve (2) in every human move planner; it is purely
+  client-side.
 
 ## Open questions
 
-- What the `Jammer` column really means and whether it is meant to exclude
-  troopers and aircraft from reaction fire.
-- Which order mode keeps AP back for a shot (3, "Keeping AP for a shot"),
-  and how the `Overwatch` / `Autofire` options of `LIBDAY.INI` change
-  reaction fire.
-- When the server sends `CUnitMoveFailedMsg`.
-- Which player moves first after deployment, and the exact AI-active flag
-  that makes slot 0 take part.
-- Exact capacity of the movement record (number of steps).
-- Tie order among equally near replacement tiles in group orders.
-- Exact reinforcement timing (`Reinforcement.turn` against the counter).
-- The extra draw flag of `PATH0002`/`PATH0003` (translucency or height?).
+- (Answered: `Jammer` meaning, 5; the Overwatch reserve and the options, 2;
+  `CUnitMoveFailedMsg` is never sent, 7; first player and the AI-active
+  flag, battle-flow.md 1.3; movement record capacity 75, 7; replacement-tile
+  order, 3.5; reinforcement timing, battle-flow.md 4.1.)
+- Whether a walk of more than 75 steps can actually occur in the original.
 - The trooper-in-forest flag mentioned in unit-animation.md is set for
   steps of a trooper (class 2) onto forest (class 5); it matches the
   forest standing pose of map-objects.md, but its effect during the move

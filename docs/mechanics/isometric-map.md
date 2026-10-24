@@ -50,6 +50,22 @@ Tiles are drawn back to front by depth `x + y`. Within one depth, the order
 does not matter, because tiles of the same depth never overlap. Tall
 sprites then correctly cover the ground of the tiles behind them.
 
+## Border outside the map
+
+The original also draws the cells up to **2 tiles outside the map** on
+every side, with the terrain sprite `BLACK`, so the map is framed by black
+diamonds when scrolled to its edge. A cell inside the map whose terrain is
+not set falls back to `BORE000`.
+
+## Overlapping terrain
+
+Each map cell keeps the `Terrain Types.Overlapping` flag of its terrain.
+It decides whether the terrain sprite has to be redrawn when animations
+are repaired for occlusion ([unit-animation.md](unit-animation.md) 8): only
+tall (overlapping) terrain can cover an animation. When a tile's terrain
+changes during a battle (burned terrain), the new sprite and its flag are
+written into the cell and the map is redrawn.
+
 ## Palette
 
 Sprites are composed in 8-bit palette indices. The final colors come from

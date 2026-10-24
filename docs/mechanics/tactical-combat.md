@@ -219,9 +219,21 @@ There is exactly **one** modifier:
   player whose turn it is**, `C = trunc(C × Jammer / 100)` with the target
   unit type's `Jammer`. In ordinary fire the target belongs to the
   non-moving side, so this only affects **reaction (overwatch) fire** at a
-  unit that moves in its own turn. `Jammer` is a percentage: 100 for most
-  vehicles, 10 for grav units, 0 for infantry specialists and flying units
-  (who are also never stopped by overwatch, §6.1).
+  unit that moves in its own turn. `Jammer` is a percentage on the chance
+  of being hit by reaction fire (the manual: "jamming device"): 100 =
+  normal (most units), 10 = all grav units (Grav Bike, Light / Medium Grav,
+  Paralyzer, Seeker), 0 = "does not trigger enemy overwatch fire"
+  (Commando, Shocktrooper, Pack Freak, Chopper, Submarine, Mind Warrior,
+  Flyer; these are never stopped by overwatch, §6.1, so the modifier never
+  applies to them). The product is computed in floating point and
+  truncated. Adjacent shots (§3.1) make no roll, so `Jammer` does not
+  matter there.
+
+`Jammer` is read only here, by the watch zones (§6.1), by the computer
+player's free-list order (tactical-ai.md 1.3) and by the ability icons of
+the info card and the encyclopedia (tactical-interface.md 2.7). It is
+**not** part of the shot legality check, the AI's firing-position test or
+target score, movement or visibility.
 
 Terrain, forest cover, facing, elevation, tech level and difficulty have
 **no** influence on the hit chance.
@@ -376,7 +388,9 @@ does 40–58 and kills an equal Main Tank in 1–2 hits.
 ### 5.1 Units
 
 - Removed from the map. Kill/loss statistics are recorded for both players
-  (shooter's owner, victim's owner, victim type).
+  (attacker slot, victim's owner, victim type); who gets the kill for each
+  damage source (shot, mine, automated unit, bridge collapse) and the
+  death-match rule are in battle-flow.md 5.3.
 - **Wreck**: if the type's `ruinImageID` is not empty (the placeholder value
   `UBRUIXXX` counts as empty), the tile's terrain class is **plain** and no
   ruin lies there yet, a ruin object with that sprite (`RUINS.DBI`) is placed
@@ -391,8 +405,8 @@ does 40–58 and kills an equal Main Tank in 1–2 hits.
 
 ### 5.2 Buildings
 
-- Removed from the map. Destroyer/loser statistics are recorded, the
-  building's `TechReward` is credited *(?: the field is read here; to whom
+- Removed from the map. Destroyer/loser statistics are recorded
+  (battle-flow.md 5.3), the building's `TechReward` is credited *(?: the field is read here; to whom
   and how is not traced)*.
 - **Rubble** (only if `hasRuin`): collect the footprint tiles whose terrain
   class is plain and that have no ruin yet, shuffle them, and place
@@ -445,32 +459,43 @@ Reaction fire is automatic. There is no "put unit on overwatch" order.
 ### 6.2 The "Overwatch" toggle (`LIBDAY.INI [User] Overwatch`)
 
 A purely **client-side** planning option. It does not change the server
-rules above. When it is on, the movement planner of the tactical screen
-holds back one shot's worth of AP for units with `canOverwatch` (if their
+rules above. When it is on, every human move planner of the tactical screen
+(two-click move, MOVE ALL, the path preview of a move-to-fire click) holds
+back one shot's worth of AP for units with `canOverwatch` (if their
 available AP is at least `actionPointsShoot`, the AP usable for movement is
-reduced by that amount). The unit therefore keeps enough AP to react during
-the enemy turn. The INI value only sets the initial state of the on-screen
-toggle. `Autofire` likewise sets the initial state of the autofire toggle
-(§2).
+reduced by that amount; exact rule in tactical-movement.md 2, "Keeping AP
+for a shot"). The unit therefore keeps enough AP to react during the enemy
+turn. The shot request itself (move-to-fire) does not use this reserve.
+The INI value is read at start-up and written back whenever the lamp is
+switched; it sets the lamp's state when a tactical view opens.
+
+`Autofire` (`[User] Autofire`) is stored the same way. It only sets the
+autofire flag of shot requests (§2); it does not change how the client
+chooses between a direct shot and move-to-fire, and it has no effect on
+reaction fire.
 
 ### 6.3 Anti-air fire against automated units
 
-Used when an automated unit (bomber, transport, …) flies in.
+Used when an automated unit (bomber, transport, …) is called in. The full
+rules are in [automated-units.md](automated-units.md) 5; in short:
 
 1. Candidates: units that are enemies of the automated unit's owner, have
    `IsAA`, `canOverwatch` and available AP ≥ `actionPointsShoot`, and whose
-   footprint grown by `weaponRange` contains the automated unit's AA point
-   *(?: the tile of the `AAPosX/AAPosY` / `FrameAA` interception point)*.
-2. Sort them by average weapon damage (ascending, weakest first), ties by
-   lower `actionPointsShoot` first.
+   footprint grown by `weaponRange` contains the call's **target tile**
+   (for a transport: once the source, once the destination).
+   `AAPosX/AAPosY` and `FrameAA` are purely visual (where the AA units aim
+   on screen, and when they fire).
+2. Sort them by average weapon damage `(lo + hi) div 2` (ascending, weakest
+   first), ties by lower `actionPointsShoot` first, then map order.
 3. Add `DamageAA` of the candidates in that order until the sum reaches the
-   automated unit's armor (from `Automated Units Infos`). Candidates after
-   that point do not fire. There is **no hit roll**.
-4. Outcome: sum 0 → unharmed, 0 < sum < armor → damaged,
-   sum ≥ armor → destroyed. These select the `AnimationOK…`,
-   `AnimationDamaged…`, `AnimationDestroyed…` frame ranges.
-5. Each unit that fired pays `actionPointsShoot`. One AA message per firing
-   unit reports it.
+   automated unit's `armor` property (`Automated Units Infos`). Candidates
+   after that point do not fire. There is **no hit roll**.
+4. Outcome: sum 0 → OK (1), 0 < sum < armor → damaged (2),
+   sum ≥ armor → destroyed (3). The outcome selects the clip
+   `AUTOUNIT\<code>0<outcome>` (the `Animation…_Begin/_Qty` columns are not
+   used), and a damaged automated unit has a reduced effect.
+5. Each unit that fired pays `actionPointsShoot`. One `CTMMsgUnitAA` per
+   firing unit reports it.
 
 ## 7. Mines
 
@@ -551,7 +576,8 @@ the resolution). Choices and differences:
 - Damage with a value of 0 or less is still applied (it changes nothing)
   and still burns the tile, as described.
 - Not implemented yet: anti-air fire against automated units (6.3), the
-  `TechReward` of destroyed buildings, statistics, objectives, damaged
+  `TechReward` of destroyed buildings, statistics (now specified in
+  battle-flow.md 5.3), objectives, damaged
   building sprites after a hit, mine explosion animations, "move to fire"
   orders of the AI.
 - Game options: `coop` true, AI damage scaling on, difficulty 5 (average)
@@ -567,11 +593,13 @@ the resolution). Choices and differences:
 - Rubble placement when a building has fewer qualifying plain tiles than
   `n`.
 - Whether `TechReward` of a destroyed building goes to the destroyer.
-- Exact interception tile for AA (`AAPosX`, `AAPosY`, `FrameAA`).
 - The unused columns: `Terrain Types.burned_min`, `Wall Types.BlockShots`,
   `Mine Types.affectUnit_*`, `Difficulty.DamageAvg`. Confirm in play that
   they really have no effect.
-- How the client shows hit chances (if at all) and which errors it reports.
-- Damage dealt by "destroy"-type automated units (bombers, nuke) uses the
-  same area/tile procedure (§4.3–4.4) with parameters from
-  `Automated Units Infos`. Their exact damage properties are not yet mapped.
+- How the client shows hit chances (if at all). (The errors are known: a
+  failed legality check is reported in the message strip for 5 s with
+  string 320 invalid target, 321 no weapon, 322 not enough AP, 323 out of
+  range, 325 too close, 324 no line of fire; tactical-interface.md 3.2.)
+- (Answered: AA is checked at the target tile, and the damage of
+  "destroy"-type automated units uses §4.3–4.4 with the properties of
+  `Automated Units Infos`; see automated-units.md 5 and 6.1.)

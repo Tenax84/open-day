@@ -136,29 +136,47 @@ block but no user was found *(?)*.
   instead *(?: visibility test inferred)*. Nothing happens without a
   selection.
 - **MOVE ALL** (`M`): issues the pending move orders of all own units at
-  once: every own unit that has more than 3 AP left and still has a
-  remembered destination (from an earlier two-click move, 3.3, that it could
-  not finish) is sent toward it, at most 64 units. If no unit qualifies, the
-  message strip shows string 579 (nothing to move) for 5 s *(?: the exact
-  qualification test was only partly traced)*.
+  once. It ignores the selection and goes over **all units of the battle**
+  in map list order, taking those owned by the local player whose available
+  AP is **greater than 3**. Each is planned with the group planner of
+  tactical-movement.md 3.5 toward its **remembered destination** (3.3),
+  with the Overwatch budget, in **one** pass (no repeat passes). A unit
+  gets no order if it has no remembered destination, the destination is
+  not reachable, its cut path is empty, or 64 units are already in the
+  order. If no unit got an order, the message strip shows string 579 ("No
+  units to move"), white, for 5 s. Otherwise all path previews are removed,
+  the view enters its waiting state and one `CRequestUnitMoveMsg` is sent.
+  MOVE ALL does **not** clear the remembered destinations.
 - **Overwatch lamp** (`O`): switches the user option *Overwatch* (the
-  `[User] Overwatch` INI key, see `interface.md`) and saves it; if a unit
-  with a planned path is selected, its path preview is recomputed (the
-  option changes how much AP a move keeps back for reaction fire,
-  tactical-movement.md "Keeping AP for a shot" *(?)*).
+  `[User] Overwatch` INI key, see `interface.md`) and saves it at once; if
+  a lead unit with a planned path is selected, its path preview is removed
+  and recomputed with the new budget. When on, every move planned in this
+  view keeps one shot's worth of AP for units with `canOverwatch`
+  (tactical-movement.md 2, "Keeping AP for a shot"). The lamp only affects
+  planning on this client; reaction fire itself is automatic.
 - **FIRE** toggle (`F`): fire mode. While on, every left click on the map is
   a shot request of the selected unit at the clicked tile (3.2) and the tile
   cursor shows the shot evaluation (3.4). Switching it on hides the path
   preview; switching it off shows the lead unit's planned path again. `Esc`
   switches it off. Selecting a unit also switches it off.
 - **Auto-fire lamp** (`X`): switches and saves the user option *Autofire*
-  (`[User] Autofire`).
+  (`[User] Autofire`). Its only effect is the autofire flag of the shot
+  requests sent from this view (tactical-combat.md 2).
+- **Enable states** (re-evaluated whenever the selection changes): with no
+  lead unit, CENTER, FIRE, the overwatch lamp and GUARD are disabled. With
+  a lead unit, CENTER and GUARD are enabled; FIRE and the overwatch lamp are
+  disabled if fewer than 2 units are selected and the lead unit's
+  available AP is below its shot cost, otherwise enabled. GROUP is always
+  enabled. A FIRE or GROUP toggle that ends up disabled is switched off; the
+  overwatch lamp keeps its state while disabled *(?: "enabled" inferred
+  from usage)*.
 - **Previous / next unit** (`P` / `Space`): select the previous / next own
   unit in the cycle (3.8) and centre the map on it. If the unit that was
   selected has 0 AP left it is first marked *done* (skipped by later
   cycling).
 - **GUARD** (no key): marks the selected unit *done* regardless of its AP
-  and selects the next unit (3.8).
+  and selects the next unit (3.8). The *done* mark is never cleared during
+  the battle (3.8).
 - **AUTOMATED UNITS** (`A`): if the player has no automated units available,
   a message box shows string 71 ("You don't have any automated units
   available"). Otherwise it leaves fire mode and switches to the automated
@@ -214,11 +232,16 @@ Box (95, 456)–(129, 475) in the bottom-right corner of the panel:
   objective for it);
 - if a second value of the same message is greater than 0, it is drawn
   left-aligned in the same box in red (RGB 200, 0, 0), and the `OBJECTIVE`
-  sound plays the first time it becomes non-zero in this view. The server
-  also takes it from the objective *(?: presumably the hold counter of Hold
-  Position or a similar progress value)*.
-- When the turns left drop below 3, the `TWOTURNS` sound plays once per
-  tactical view.
+  sound plays when the view's stored copy of it is still 0 (once per
+  tactical view, i.e. once at the start of each of your turns while the
+  value is non-zero). The value is the objective's **progress counter**:
+  for **Hold Position** the number of rounds the zone has been held so far
+  (battle-flow.md 2.3), sent only while T ≤ last held turn + 1 (or no last
+  held turn is set), otherwise 0. All other objective kinds always send 0,
+  so the red number appears only in Hold Position battles.
+- The turns left are `turn_qty − T + 1` (the counter-attack objective uses
+  its own count). When they drop below 3, the `TWOTURNS` sound plays once
+  per tactical view.
 
 ### 2.6 Minimap
 
@@ -289,17 +312,21 @@ height):
 - wall and road cards: line 1 the AR value, line 3 the owner's name;
 - owner name: the player's name, or string 65 (the computer player's name) for owner 0.
 - **Ability icons** (unit card only): a row of 25×25 bitmaps along the bottom
-  (top edge at box bottom − 28, starting at x = 3, one after another). They
-  are bitmap resources of the executable, shown when:
+  (top edge at box bottom − 28, the first at x = 3, each next one **30 px**
+  further right: 25 px icon + 5 px gap). Only the icons that apply are
+  drawn, in this order, without gaps. They are bitmap resources of the
+  executable, shown when:
 
-| Bitmap id | Shown when (unit type) | Picture |
-|---|---|---|
-| 185 | `IsAA` | crossed-out aircraft |
-| 184 | `MineDetectionRange` > 0 | detector |
-| 182 | `Movement` = 2 (trooper) | tree (can enter forest) |
-| 181 | `Jammer` ≤ 0 | figure |
-| 183 | `weaponType` = 1 (indirect) | arc |
-| 309 | 0 < `Jammer` < 100 | crossed tools |
+| Order | Bitmap id | Shown when (unit type) | Picture | Meaning (manual) |
+|---|---|---|---|---|
+| 1 | 185 | `IsAA` | crossed-out aircraft | has anti-aircraft defence |
+| 2 | 184 | `MineDetectionRange` > 0 | detector | detects adjacent mines |
+| 3 | 182 | `Movement` = 2 (trooper) | tree | can walk in forest / jungle |
+| 4 | 181 | `Jammer` ≤ 0 | figure | does not trigger enemy overwatch fire |
+| 5 | 183 | `weaponType` = 1 (indirect) | arc | can fire over obstacles |
+| 6 | 309 | 0 < `Jammer` < 100 | crossed tools | jamming device: harder to hit by overwatch fire |
+
+The encyclopedia's unit page shows the same icons with the same rules.
 
 (Pictures described loosely; OpenDay needs its own icons.)
 
@@ -312,7 +339,7 @@ height):
 | clock | (8, 6)–(48, 25) | fixed | `MM:SS`, white, standard font (2.9) |
 | message text | (64, 5)–(369, 25) | (64, 5)–(right − 135, 25) | one line, left-aligned, vertically centred, black background |
 | CHAT button | (384, 8), 53×17 | (right − 120, 8) | frames 499–502, `F3`; opens the chat window; disabled with fewer than 2 players |
-| MENU button | (444, 8), 53×17 | (right − 60, 8) | frames 693–696, `F2`; opens the in-game options menu (`CMenuInterface`, see `interface.md`); the tactical view enables all its options, the deployment, reinforcement and automated views disable two of them *(?: probably Save and Restart scenario)* |
+| MENU button | (444, 8), 53×17 | (right − 60, 8) | frames 693–696, `F2`; opens the in-game options menu (`CMenuInterface`, see `interface.md`): the tactical view (your turn) enables Save, Surrender and Quit; the waiting view only Save; the deployment, reinforcement, automated-unit and map views only Quit (Save also needs a campaign and the host role) |
 
 A message is shown with a colour (almost always white) and a lifetime
 (5 s for errors and hints, 2 s for turn notices, 10 s for automated-unit
@@ -322,18 +349,37 @@ reinforcements have arrived"), 897 (whose turn begins).
 
 ### 2.9 Clock and turn time limit
 
-Every view has an optional time limit, the session's *turn delay* in
-minutes (multiplayer setting, string 742) × 60 000 ms. Once per second the
-view updates the clock in the message strip:
+**Source.** The limit is the session's *turn time* in minutes
+(`Server Mode Info.Turn Time`, saved and loaded with `Difficulty`; string
+742 "turn delay" in the session info). The skirmish menus set it: single
+player **15** minutes, multiplayer 3 / 6 / 9 minutes by the radio buttons
+(`interface.md`); death match and campaign set it on their own path *(?:
+15 minutes was seen there too)*. When the battle starts the server sends
+`CTacticPhaseMsg` with:
+
+- the tactical limit = turn time,
+- the deployment limit = **2 × turn time**,
+- a "reinforcements allowed" flag: 1, except death match with objective
+  kind 10 → 0 (this flag creates the REINFORCEMENT button disabled, 2.2).
+
+The first-deployment view gets 2 × turn time, the tactical view and the
+waiting view get the turn time, each × 60 000 ms.
+
+**Clock.** Once per second the view updates the clock in the message strip:
 
 - **single player** (fewer than 2 players in the session): the clock shows
-  the time elapsed since the view was opened (counting up);
-- **multiplayer:** the clock shows the time left (counting down). During the
-  last 10 s the `TIMER` sound plays every second; at 0 the tactical view
-  ends the turn automatically (as END TURN, unless an animation is running)
-  and the deployment view accepts the deployment automatically (5.6).
+  the time elapsed since the view was opened (counting up); nothing else
+  happens — the limit has no effect in single player;
+- **multiplayer:** the clock shows the time left (`limit − elapsed`, not
+  below 0). Tactical view, after each tick: if the time left is ≤ 0, no
+  animation is playing and the view is not already waiting for the server,
+  it runs the END TURN action; while an animation plays it retries on the
+  next tick. While 0 < time left < 10 s the `TIMER` sound plays every
+  tick. The waiting view only shows the clock. The first-deployment view
+  accepts the deployment at 0 (5.6).
 
-Minutes are capped at 99.
+Minutes are capped at 99. Cheat keys (3.7): `Tab`+`T` restarts the clock,
+`Tab`+`O` sets it to one minute before the limit.
 
 ### 2.10 Map overlays used by the HUD
 
@@ -380,8 +426,13 @@ tile inverse of isometric-map.md) and then:
 2. Otherwise by what is on the tile (first match):
    - **a unit:**
      - it is the selected unit and it is selected alone → **turn it**: its
-       facing becomes `facing + 1` (7 wraps to 0), sent to the server as a
-       unit update;
+       facing becomes `facing + 1` (7 wraps to 0), only if its type's
+       `Facings` flag is true (not for the Crystal Tower, OutPost and
+       Platform). This changes **only the client's copy**: no message is
+       sent, no AP is spent, the server keeps the old facing until the
+       unit's next move. Facing has no game effect (tactical-combat.md
+       3.2), so it is purely cosmetic. The sprite is redrawn and the path
+       preview refreshed;
      - it is an own unit that may be selected (owned by you, not a convoy
        unit) → **select it** (or add it, GROUP on), play `SELECT`, centre
        the map on it, leave fire mode, show the path preview to its
@@ -389,15 +440,52 @@ tile inverse of isometric-map.md) and then:
      - otherwise, if a unit is selected and the clicked unit is an
        **enemy** (tactical-combat.md 1.1 relation) → shot request at it;
    - **a building** that is an enemy building of yours and a unit is
-     selected → shot request;
+     selected → shot request *(the building type must also pass a category
+     test, probably "can be targeted" (?))*;
    - **a mine visible to you** and a unit is selected → shot request;
    - **a wall** and a unit is selected → shot request;
    - **empty tile** (or anything else) and a unit is selected → movement,
      3.3.
 
-A "shot request" from the HUD becomes either a direct shot or a "move to
-fire" order (tactical-movement.md 3.7) according to the shot evaluation
-shown by the cursor (3.4) *(?: the decision code itself was not traced)*.
+**Shot request = two clicks, "mark, then fire".** It needs at least one
+selected unit; L = the lead unit, P = the clicked tile. Every unit has a
+*marked tile* (the pending shot target) and a *remembered destination*;
+both are "none" when unset.
+
+1. If P is not L's marked tile, L's remembered destination is cleared (and
+   its planned path dropped).
+2. The path preview is removed.
+3. The full shot legality check (tactical-combat.md 1, including AP and
+   side) is run for L against P. Let D be L's remembered destination at
+   this moment. If the check passed, L's remembered destination is set to
+   L's own tile.
+4. **First click** (D was none):
+   - legal: L's marked tile := P; the red `SU000` marker is drawn on layer
+     18 at P (2.10). Nothing is sent.
+   - not legal: the client looks for a move-to-fire tile for L
+     (tactical-movement.md 3.7). If there is none, the legality error is
+     shown for 5 s — string 320 invalid target, 321 no weapon, 322 not
+     enough AP, 323 out of range, 325 too close, 324 no line of fire — and
+     nothing else happens. Otherwise L's marked tile := P, L's remembered
+     destination := the firing tile, the red marker is drawn at P and the
+     path preview to the firing tile is shown (with the Overwatch budget,
+     tactical-movement.md 2).
+5. **Second click on the same tile** (D was set, which only happens when P
+   is L's marked tile after a successful first click): a
+   `CRequestUnitShootMsg` is built with the target P and the auto-fire
+   lamp state. For **each selected unit**, in selection order, a
+   move-to-fire path is computed with the group claims of
+   tactical-movement.md 3.5 and the unit is added with that path, which may
+   be empty. The request is sent; then L's remembered destination and
+   marked tile are cleared, FIRE is switched off, the view enters its
+   waiting state and redraws.
+
+The server then decides per unit: fire from the current tile if legal,
+otherwise walk the given path and check again (tactical-combat.md 2). The
+client never decides "direct shot or move-to-fire" for the other selected
+units; it always sends a candidate path. A shot click therefore discards a
+planned move of the lead unit. The marked tiles of all units are reset when
+your turn starts.
 
 ### 3.3 Two-click movement
 
@@ -422,7 +510,7 @@ placed at the hovered tile. Choice (first match):
 
 | # | Situation | Sprite |
 |---|---|---|
-| 1 | a unit is selected and the tile is its marked tile *(?)* | `CSELT` |
+| 1 | a unit is selected and the tile is the lead unit's marked tile (pending shot target, 3.2) | `CSELT` |
 | 2 | fire mode on, a unit selected | shot evaluation (below) |
 | 3 | an own selectable unit on the tile | `CSELC` (red tile outline) |
 | 4 | an enemy unit on the tile, a unit selected | shot evaluation |
@@ -438,8 +526,9 @@ unit and the tile):
 - legal → `CTARG`;
 - "invalid target" → `CINVA`;
 - any other failure (no weapon, not enough AP, out of range, too close, no
-  line of fire) → `CMVSH` ("move and shoot"); in fire mode, if the lead
-  unit is immobile (`Movement` 0 or 8) and selected alone, `CINVA` instead.
+  line of fire) → `CMVSH` ("move and shoot": a click plans a move-to-fire,
+  3.2); in fire mode, if the lead unit is immobile (`Movement` 0 or 8) and
+  selected alone, `CINVA` instead.
 
 "None" means no tile sprite (just the arrow pointer). The sprite is drawn in
 the special draw mode while one is active.
@@ -510,9 +599,16 @@ convoy units (`isConvoy`), sorted by unit `ID` ascending; the currently
 selected unit is excluded. *Next* takes the first candidate with an `ID`
 greater than the current one, wrapping to the smallest; *previous* the last
 candidate with a smaller `ID`, wrapping to the largest. AP is not checked
-(units with 0 AP become *done* only when you cycle away from them). The
-*done* marks are cleared at the start of each of your turns *(?)*. If there
+(units with 0 AP become *done* only when you cycle away from them). If there
 is no candidate, nothing happens.
+
+The *done* mark is a client-side flag. It is **never cleared during a
+battle** in the original: only GUARD and previous / next set it, the
+turn-start handling resets the marked tiles but not this flag, and server
+unit updates do not touch it. A GUARDed unit therefore stays out of the
+cycle for the rest of the battle (it can still be clicked). *(Original
+quirk; OpenDay may clear the marks at the start of each of your turns — to
+be listed as a deliberate change.)*
 
 ## 4. Turns, waiting and transitions
 
@@ -687,23 +783,124 @@ with these differences:
 
 ## 7. Tactical map screen (MAP)
 
-`CMapScreenTactic`, panel frame 41, emblem 88. It replaces the viewport by
-a large top-down map of the battle:
+A large top-down map of the whole battle that replaces the viewport while
+it is open (the manual's "Overview Map"). The city screen of the campaign
+has a sibling screen built on the same base (`CMapScreenStrat`, panel 578,
+[strategic-interface.md](strategic-interface.md) 4.2); 7.1 describes what
+both share.
 
-- the map image is a square of side `min(view_w, view_h)` (448 at 640×480)
-  centred in the viewport area, drawn like the minimap (2.6) at a larger
-  scale;
-- markers use small bitmaps of the executable: `SHADE` (213, 54×56), `OBJ00`
-  (152, 8×20, objective), `DEPL` flags 240–243 (16×25, one per colour 1–4:
-  blue, yellow, purple, green) for deployment zones, `LBULB` 305–308 (15×22)
-  for tech buildings *(?: exact use of each)*;
-- a player selector at (6, 53)–(127, 68) with one entry per player plus
-  "Alien" (string 65);
-- a list box at (12, 96)–(128, 426) with scroll buttons at (8, 431) and
-  (75, 431) *(?: content, probably the selected player's units)*;
-- a back button at (10, 458), 53×17, key `Esc`.
+### 7.1 Common layout of the map screens
 
-This screen was traced only superficially.
+Positions relative to the side panel (at (504, 0) / (840, 0)).
+
+| Element | Position, size | Frames | Key | Notes |
+|---|---|---|---|---|
+| panel | (0, 0) | tactical 41, city 578 | — | |
+| emblem | (5, 0), 44×43 | tactical 88, city 627 | `F1` | encyclopedia at the selected list row's type ([encyclopedia.md](encyclopedia.md) 3) |
+| resource indicator | (64, 26)–(104, 40) | — | — | tactical: the player's tactical resource, the same number as in the battle views (2.4); during the first deployment the remaining deployment budget *(?)*. City: the player's credits *(?)* |
+| name box | (6, 53)–(127, 68) | — | — | standard font: the selected item's name (player name, or "Alien") |
+| player selector | 19×19 radio items at (10, 73), (29, 73), (48, 73), (67, 73), (86, 73) | by colour, see below | — | |
+| list box | (12, 96)–(128, 426) | — | — | rows `"  <name> x<count>"` (two leading spaces) |
+| list up / down | (8, 431) / (75, 431), 53×17 | 13–16 / 17–20 | — | scroll |
+| close button | see 7.2 / strategic-interface.md 4.2 | | `Esc` | back to the view that opened the screen |
+
+**Player selector.** One item per player of the game in player-list
+order, then (tactical screen only, and not in a death match *(?)*) one
+"Alien" item (string 65) for owner 0. Each item is a six-frame toggle whose
+first frame depends on the item's colour number c (map-objects.md, *Color
+variant*): c = 0 (Alien) → **46**, 1 → **52**, 2 → **58**, 3 → **64**,
+4 → **70**. Each item remembers its colour, owner slot and name. When the
+screen opens, the local player's item is selected. Choosing another item
+refreshes the name box and the list.
+
+**Map square.** Side `min(view_w, view_h)`, centred horizontally in the
+viewport (448×448 at (28, 0) for 640×480; 728×728 at (56, 0) for 1024×768).
+In it:
+
+1. The scenario's overview picture `Scenario Info.mapScreen640` (396 px) or
+   `mapScreen1024` (656 px), by resolution, centred in the square. **No
+   terrain colours are drawn**; the picture replaces the minimap's terrain
+   layer.
+2. The whole map is shown: scale `s = picture width / map size` (floating
+   point), block `b = ceil(s)`.
+3. Object dots exactly as on the minimap (2.6, sizes `b + 1 + k`, colours
+   from `Colors`), in the order buildings, roads, walls, units.
+4. Markers (7.2, tactical only).
+5. The owning view's viewport frame (1-px black rectangle with a 1-px white
+   one inside), drawn over everything at every repaint.
+
+**Selection blink.** Selecting a list row stores its type. A timer
+(tactical **175 ms**, city **250 ms**) advances a phase 0 → 1 → 2 → 3 → 0.
+On every timer tick the dots of the objects of the selected type owned by
+the selected player are redrawn with a brightness offset: phase 0: −255
+(black), phase 2: +255 (white), phases 1 and 3: 0 (normal colour). The
+offset is added to R, G and B of the dot's palette colour, each clamped to
+0 … 255, and the result is mapped to the nearest palette entry. The other
+dots are drawn normally; the map is repainted after each tick.
+
+**Click on the map.** Only if the screen is *clickable* (7.2; the city
+screen always is), and only for a left-button press inside the picture: the
+point is converted to a tile, `tile = trunc((point − picture origin) / s)`
+for x and y, the owning view is centred on that tile and the map screen
+closes.
+
+### 7.2 Tactical map screen (`CMapScreenTactic`)
+
+Opened by MAP (`F4`) in the tactical, waiting, automated-unit and deployment
+views (close button BACK), and **once automatically** when the first
+deployment view opens (close button CONTINUE; a once-per-battle flag).
+
+- Panel frame **41**, emblem **88**.
+- Close button at (10, **458**), 53×17, `Esc`: BACK frames **84–87**, or
+  CONTINUE frames **700–703** when opened by the first deployment.
+- Clickable only when the client's active player is the local player
+  (your own turn or your deployment) *(?)*.
+- Player items: all players plus "Alien" (owner 0), except in a death match
+  *(?: game mode check)*.
+- **List**: for the selected owner, one row per unit **type** (`typeID`)
+  with the number of that owner's units of the type on the map, **convoys
+  excluded** (`isConvoy`): `"  <type name> x<count>"`, the name taken from
+  the (type, level 0) row. Order: first appearance in the scenario's unit
+  list *(?)*.
+- Selecting a row makes that owner's units of the type blink (175 ms).
+  Emblem: unit page of the selected row's type (no context), else the
+  encyclopedia's default page.
+
+**Markers.** Drawn into the map picture once, when the screen is created,
+using small bitmaps of `LIBDAY.EXE` (loaded with the game palette):
+
+1. **Deployment zone**: every tile of the scenario's deployment-zone list
+   whose `Turn` is ≤ the current turn value *(?: which value is compared;
+   the shipped `Deployment.Turn` is always 0)* gets the **`SHADE`** bitmap
+   (resource 213, 54×56, a red/black stipple with a colour key) **scaled
+   down to one block** (b×b) at the tile's scaled position
+   `(trunc(x·s), trunc(y·s))` relative to the picture. The shaded tiles are
+   then grouped into rectangles *(?: grouping rule not traced; contiguous
+   rectangular blocks)*, and at the centre tile of each rectangle a
+   **`DEPL` flag** is drawn: resources 240–243, 16×25, one per colour 1–4
+   (blue, yellow, purple, green); the flag of the **selected player item's
+   colour** at creation, i.e. the local player's colour. The Alien item
+   (colour 0) has no flag. The flag's top-left is at (scaled x − 10,
+   scaled y − 24), clamped to ≥ 0. *(?: whose zones the list holds;
+   probably the local player's.)*
+2. **Objective zone**: if the battle has an objective zone, its tiles get
+   `SHADE` the same way, and each rectangle centre gets **`OBJ00`**
+   (resource 152, 8×20) at (x − 6, y − 19).
+3. **Tech buildings**: the positions of all buildings on the map whose type
+   has `TechReward` > 0 are collected and grouped; a light bulb **`LBULB`**
+   (resources 305–308, 15×22) is drawn at each group centre at
+   (x − 2, y − 8). The bulb image is 305 + the blink phase, so the bulbs
+   animate with the 175 ms timer (redrawn on every tick when there is at
+   least one).
+
+Changing the selected player item does **not** redraw the deployment flags
+(they keep the colour of the initial item) *(?: no redraw found)*.
+
+**OpenDay:** the `SHADE`, `DEPL`, `OBJ00` and `LBULB` bitmaps are resources
+of the executable and must not be copied into the repository. Load them
+from the user's `LIBDAY.EXE` at run time or draw substitutes (a 50 %
+stipple of the zone tiles, small flag / marker / bulb shapes in the player
+colours).
 
 ## 8. Objectives dialog (briefing)
 
@@ -756,7 +953,10 @@ mode: `CAftermathCampgnInterface` (campaign), `CAftermathCAttInterface`
 
 ### 9.2 Layout
 
-Dialog art frame 365 (448×480) at screen rectangle **(45, 0)–(493, 478)**.
+Dialog art frame 365 (448×480) at screen rectangle **(45, 0)–(493, 478)**,
+set once; the report code makes no resolution-dependent change, so at
+1024×768 it appears at the same screen position *(?: unless the dialog
+layer itself is offset)*.
 Text area = the rectangle inset by 20 px (left, top, right) and 30 px
 (bottom); standard font, white, transparent background.
 
@@ -780,15 +980,19 @@ Text area = the rectangle inset by 20 px (left, top, right) and 30 px
    | 25 | PLAYER (180) | player name | — |
    | 115 | DESTROYED (512) | "%1!d! Units" (516): enemy units destroyed | "%1!d! Buildings" (517): enemy buildings destroyed |
    | 250 | LOST (515) | "%1!d! Units": own units lost | "%1!d! Buildings": own buildings lost |
-   | 360 | RANK (514) | the player's number from the result message (score or rank, battle-flow.md 5.1 *(?)*) | — |
+   | 360 | RANK (514) | the player's **score** from the result message (battle-flow.md 5.4), printed as an unsigned number | — |
 
    The first row starts two text lines below the header; each player takes
    two lines plus half a line of spacing (row step = 2.5 × font height).
-   One row per human player of the result message (slots in order).
-4. Won campaign province battles only (not counter-attacks or the first
-   city attack): string 518 ("New
-   technologies found : %1!d!") at y = 418, x = 25 from the text area's
-   left edge.
+   One row per **human** player of the result message, in slot order 1…n;
+   there is **no row for the computer player** (aliens), and the rows are
+   not sorted — "RANK" is only the score, no place (1st / 2nd) is computed.
+   The header is at absolute screen y = 185 (the dialog's top is at 0).
+4. Tech line: only the **campaign** report (`CAftermathCampgnInterface`)
+   and only on success: string 518 ("New technologies found : %1!d!") with
+   the tech points found, at y = 418, x = 25 from the text area's left
+   edge. The counter-attack, skirmish and death-match reports draw nothing
+   there (the value is in every result message but unused).
 5. CONTINUE button at (300, 419)–(410, 436) relative to the dialog, 110×17,
    frames 366–369, key `Enter`.
 
@@ -852,22 +1056,22 @@ views, objectives dialog, in-game options, battle report) on top of
 ## 12. Open questions
 
 - Frames 227–230 (66×9 red bars) of the tactical block: no user found.
-- The exact meaning of the lead unit's *marked tile* (`CSELT`, red `SU000`
-  triangle on layer 18) and how it relates to the remembered destination.
-- How a shot request becomes a direct shot or a move-to-fire order (the
-  `CMVSH` case), and whether auto-fire changes it.
-- MOVE ALL: the precise unit test (AP > 3 and a remembered destination was
-  inferred).
-- Whether *done* marks (GUARD, 0-AP units) are cleared every turn.
-- The second (red) number of the turn counter box.
+- The building category test made before a shot request from a building
+  click (3.2; probably "can be targeted").
+- The display flag toggled by `Tab`+`G` (assumed to be the isometric grid).
+- (Answered: the marked tile, `CSELT` and `CMVSH` — the two-click shot of
+  3.2, auto-fire only sets the request flag; the MOVE ALL test, 2.2; *done*
+  marks are never cleared, 3.8; the red number is the Hold Position
+  counter, 2.5; turning a unit is client-only, 3.2; the battle report's
+  RANK column is the score, 9.2.)
 - Scroll-button positions of the deployment and automated-unit list boxes;
   the first deployment view also creates a 450×250 surface from panel frame
   0 whose use was not found.
 - Reinforcement view: when the request is sent; whether the deployment
   zone is used (battle-flow.md 4.2 leaves this open too).
-- Tactical map screen (section 7): list box content, use of the `SHADE`,
-  `OBJ00`, `DEPL` and `LBULB` bitmaps.
-- Positions of the objectives dialog and the battle report at 1024×768.
+- Positions of the objectives dialog and the battle report at 1024×768
+  (the report code itself uses fixed coordinates, 9.2).
+- The turn time used by the campaign and death match (15 minutes seen).
 - Terrain → minimap colour conversion (assumed nearest palette entry of
   `Color_Red/Green/Blue`) and whether mines appear on the minimap.
 - (Answered in campaign.md 7 and strategic-interface.md 7: the closing

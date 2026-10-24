@@ -45,11 +45,12 @@ and a fixed `Unit Types` column that tells whether the clip exists:
 | 8 | `E` | unit explosion (destruction) | `ExplosionAnimation_Begin` | 1 |
 
 When a `…_Begin` column is `−1` the name is empty: no clip is opened, and
-the action runs without a picture (see *Missing clips*). On load, every
-`…_Begin` value other than `−1` is reduced by one (stored 0-based). The
-value is `1` for every shipped unit, so in practice it only acts as an
-"exists" flag *(?: whether a value other than 1 would select a start
-frame was not traced)*.
+the action runs without a picture. On load, every `…_Begin` value other
+than `−1` is reduced by one (stored 0-based), but afterwards the value is
+only ever tested for "−1 = no clip". Every clip is opened from its first
+frame to its last and played from frame 0, so **a `…_Begin` value other
+than 1 has no effect**; the column is purely an "exists" flag (it is 1 for
+every shipped clip). The same holds for buildings and mines.
 
 ### Name pattern
 
@@ -72,8 +73,8 @@ frame was not traced)*.
   3. Otherwise `c` = the color value.
 
   The color value is the same per-unit color that selects the static
-  `UB.DBI` sprite. How it is obtained from `playerOwner` is described in
-  [map-objects.md](map-objects.md) *(?: same table)*.
+  `UB.DBI` sprite: `colorTable[playerOwner]`, see
+  [map-objects.md](map-objects.md) *Color variant*.
 - The facing digit is the unit's current facing, or an explicit facing
   given by the action (move steps, shots). A facing computed toward a
   target is always 0 for unit types with `Facings` = false.
@@ -169,8 +170,10 @@ type's `ExplosionAnimation_Begin` is −1. The frame is centered on the
 - top = top edge of tile `(x0, y0)`, bottom = top edge of tile `(x1, y1)` + 56,
 
 with `x0 = PosX`, `x1 = PosX + SizeX − 1`, `y0 = PosY`,
-`y1 = PosY + SizeY − 1` *(?: the building's stored rectangle is assumed
-to be its footprint)*. Relative to the origin of the corner tile
+`y1 = PosY + SizeY − 1` (the building's footprint, the same rectangle that
+drives its per-tile sprites). The frame's top-left is
+`((left + right) div 2 − w div 2, (top + bottom) div 2 − h div 2)`.
+Relative to the origin of the corner tile
 `(PosX, PosY)` the center is
 
 ```
@@ -178,28 +181,60 @@ cx = 27 + 14 × (SizeX − SizeY)
 cy = 28 +  7 × (SizeX + SizeY − 2)
 ```
 
-e.g. (27, 42) for 2 × 2 and (27, 56) for 3 × 3. `ExplosionAnimation_Qty`
-(25 for all buildings, 8 for mines) is presumably the last frame index of
-the 26- or 9-frame clip *(?)*.
+e.g. (27, 42) for 2 × 2 and (27, 56) for 3 × 3. The building clips have
+26 frames (420–432 × 312–428 px), so they last 25 ticks.
+
+`ExplosionAnimation_Qty` (25 for all buildings, 8 for mines) is **never
+read** by the program. Its values equal "frame count − 1" of the clips; it
+is documentation inside the database only. Durations always come from the
+clip itself.
 
 ### Mine explosions
 
-Name: `Mine\` + `Mine Types.ImageID` (`Mine`, `Gmine`), centered on the
-mine's tile like a unit clip.
+Name: `Mine\` + `Mine Types.ImageID` (`Mine`, `Gmine`) + `.smk`; no clip
+if `Mine Types.ExplosionAnimation` is −1 (both shipped mines have 0, i.e. a
+clip; the value is only an "exists" flag). Clips `MINE\MINE.SMK` and
+`MINE\GMINE.SMK`: 216 × 224, **9 frames**, 15 fps, 22050 Hz 8-bit mono
+audio; duration 8 ticks. Centered on the mine's tile like a unit clip
+(frame top-left at tile origin + (−81, −70)).
 
 ## 4. Timing
 
 ### The clock
 
-All map animations share one counter of **ticks**. The counter advances
-by one each time a dedicated clock clip, `INTERF\TICK.SMK` (216 × 224,
-9 frames, 15 fps), advances a frame *(?: the link between the clock clip
-and the counter is strongly suggested but not traced in full)*. So one
-tick = 1/15 s = 66.7 ms. All unit clips also run at 15 fps.
+`INTERF\TICK.SMK` (216 × 224, 9 frames, 15 fps) is the **engine clock**.
+The application opens it once at start-up (failure: string 274) and never
+draws it. On every pump of the animation engine the clock clip is asked
+whether its next frame is due (Smacker frame timer, 15 fps); if so it
+advances, and the result "ticked: yes / no" is passed to every registered
+listener. So one tick = 1/15 s = 66.7 ms.
 
-Each clip additionally waits for its own Smacker frame timer before it
-shows its next frame. With equal frame rates this means **one frame per
-tick**.
+The animation list of a battle's animation phase is one such listener (a
+new list is created for each phase). Its tick counter starts at −1, so the
+first tick of a phase is tick 0.
+
+- **Not ticked**: every animation is called without a target surface;
+  clips may advance their own frame timers, nothing is drawn.
+- **Ticked**: the counter is increased by one, then in this order:
+  1. if the list was already empty at the beginning of this tick, the
+     animation phase ends;
+  2. sort the animations (8, *Draw order and occlusion*);
+  3. collect the screen rectangles of all animations and restore the map
+     under them;
+  4. for every animation: if tick = its start tick, run its start action
+     and compute its position;
+  5. on tick 0, request a full map redraw;
+  6. rebuild the map layers requested by the start actions
+     (map-objects.md, *Changes during an animation phase*);
+  7. draw every started animation, each followed by its occlusion repair
+     (8);
+  8. copy the changed rectangles to the screen;
+  9. for every animation: if tick = its end tick, run its end action and
+     remove it;
+  10. rebuild the layers requested by the end actions.
+
+All clips run at 15 fps and advance by their own Smacker timer, so in
+practice they show **one frame per tick**.
 
 ### Animation objects
 
@@ -210,15 +245,37 @@ Every scheduled animation has:
   number of slide positions − 1; for a projectile, the number of path
   points − 1; `0` if there is no clip.
 
-On every tick, for every animation in insertion order:
-
-1. When the tick equals the start tick: run its *start action* (below) and
-   compute its screen position.
-2. While start ≤ tick: draw the current frame (advancing it if due).
-3. When the tick equals the end tick: run its *end action*, then remove it.
+Per tick (see *The clock* for the full order): at the start tick the
+*start action* runs and the screen position is computed; while
+start ≤ tick the current frame is drawn; at the end tick the *end action*
+runs and the animation is removed.
 
 A clip that is not looped stops drawing after its last frame. Moves loop
 their clip.
+
+### Start ticks within a phase
+
+The server sends one animation phase as one message made of records. Each
+record has a **record id** (1, 2, 3, … in the order the server added them),
+the id of its **parent** record (or none) and an "extra" number. On the
+client a record is applied, then every record whose parent is that record,
+in turn (a tree).
+
+- **Movement**: the begin part starts at tick **`3 × (record id − 1)`**,
+  regardless of any parent. The translate starts at the end of the begin
+  part, the end part at the end of the translate. So the units of a group
+  order start sliding 3 ticks apart; the record ids also count the
+  reaction-fire and mine records inserted between the moves.
+- **Every other record** starts at the end tick of its parent (0 when it
+  has no parent). The end tick a parent offers:
+  - a movement: the end of its end part **+ 1**;
+  - a shooting record: the end of its impact number *extra*;
+  - damage, repair, bridge and similar records: the end of their single
+    animation;
+  - a mine explosion: its own end.
+- A **mine explosion record itself** starts at its parent's end **+ 1**
+  (the only record type with this +1).
+- Inside a shooting record the parts follow section 6.
 
 ### Static sprite while animating
 
@@ -236,9 +293,9 @@ One move order creates three animations:
 
 | Part | Clip | Facing | Start | Start action | End action |
 |---|---|---|---|---|---|
-| begin | `L` | unit's current facing | `3 × (k − 1)` *(?: k = index of the action within the phase)* | hide static sprite | – |
+| begin | `L` | unit's current facing | `3 × (record id − 1)` (*Start ticks within a phase*) | hide static sprite | – |
 | translate | `M`, all 8 facings loaded | per step | end of begin | – | – |
-| end | `N` | facing of the last step | end of translate | – | put the unit on the destination tile, set its facing to the last step's facing, show the static sprite |
+| end | `N` | facing of the last step | end of translate | – | put the unit on the last tile of the path (unchanged if the path is empty), set its AP to the value of the record, set its facing to the last step's facing (0 for an empty path; only for types with `Facings`), show the static sprite |
 
 Units without `L`/`N` clips simply get zero-length begin/end parts, so the
 translate starts immediately and the unit appears on the destination with
@@ -250,7 +307,7 @@ The translate part precomputes one screen position per tick:
 
 1. Take the path (start tile plus every step).
 2. Leading steps whose tiles are off-screen are dropped. If fewer than two
-   tiles remain, the move is not animated *(?)*.
+   tiles remain, there is no translate part.
 3. For each consecutive pair of tiles A → B:
    - P = top-left frame position for A, Q = for B (using the placement
      rule above and the size of the `M` frame).
@@ -274,15 +331,23 @@ destination facing is random.
 ### Per tick during the translate
 
 - The position is the next slide position.
-- The clip is the `M` clip of that position's facing. Changing the facing
-  switches clips, and each facing keeps its own frame counter.
+- The clip is the `M` clip of that position's facing. When the facing
+  differs from the previous tick's, the **previous facing's clip is rewound
+  to its first frame**. Since every clip that is not current has been
+  rewound, a new facing always starts its `M` clip **from frame 0**.
 - The `M` clip loops, independent of the distance moved. Ring frames make
   the loop seamless.
 - The `M` clips of the 8 facings are opened muted. For sound, a separate
   copy of the facing-0 `M` clip is opened and played, looped, without
   drawing, so the engine sound does not restart when the facing changes.
-- A per-step flag marks trooper steps into forest tiles (`Movement` = 2,
-  terrain class 5) *(?: its effect during the move was not traced)*.
+- Each slide position also stores a flag "this step is not a trooper step
+  into forest" (`Movement` = 2, terrain class 5). It is never read: it has
+  **no visible effect** during the slide (the `M` clips have no forest
+  variant). The forest pose only appears in the static sprite after the
+  move, when the end part shows the static sprite again (map-objects.md,
+  letters `A`–`H`).
+- The translate exists only if the `ShowMoveAnim` option is on **and** the
+  unit type has an `M` clip.
 
 ## 6. Shooting
 
@@ -357,48 +422,152 @@ again with that facing.
 
 ### Buildings
 
-- Clip `BUILDING\<ImageID>.SMK`, placed as in section 3.
-- Start action: hide the building *(?)*.
+- Clip `BUILDING\<ImageID>.SMK`, placed as in section 3; none if
+  `ExplosionAnimation_Begin` is −1 (the four towers).
+- Start action: if there is a clip, hide the building (its tiles disappear
+  from the map, the clip replaces them); rebuild the buildings layer.
 - End action: remove the building and place one ruin object on each tile
-  of a list sent with the message (tile + ruin name per entry).
+  of a list sent with the message (tile + ruin name per entry); rebuild
+  the ruins and buildings layers.
+- Without a clip (towers) nothing is hidden and the removal and the rubble
+  happen at the start tick (duration 0).
 
 ### Mines
 
-`MINE\<ImageID>.SMK` on the mine's tile; at its start the mine object is
-removed from the map *(?)*.
+Three records concern mines on the client:
+
+| Record | Animation | Effect |
+|---|---|---|
+| mine detected | none | at its start tick the mine is revealed for the given slot (map-objects.md, *Mines*), mines layer rebuilt |
+| mine explosion | mine clip | starts at its parent's end **+ 1** |
+| mine destroyed | mine clip + removal | the clip, and at the same start tick the mine is removed from the client's scenario, mines layer rebuilt |
+
+Mine clip (section 3, *Mine explosions*):
+
+- Start action: if there is a clip, remove the mine's sprite from its tile
+  (layer 4); request a mines-layer rebuild. End action: mines-layer rebuild.
+- Because a rebuild re-adds every mine still in the client's list, a mine
+  that only received an *explosion* record (without a *destroyed* record)
+  reappears at the end of the clip *(?)*.
+- Drawn on top of everything (draw-order group 1, no occlusion repair).
+- The clip's own audio track plays when game sound is on.
+
+A triggered mine: the server adds an explosion record and then applies the
+normal damage to the tile, which destroys the mine (a *destroyed* record).
+Whether the client therefore plays the clip twice depends on how the two
+records are linked *(?)*.
+
+### Wrecks and other effects
+
+- A unit's wreck appears at the **end** of its `E` clip (at its start tick
+  if it has no clip), section *Units* above.
+- Burned terrain, wall and road destruction, damage, repairs, new units,
+  bridges and tech markers have **no clip**: they are instant changes at
+  the record's start tick (map-objects.md, *Changes during an animation
+  phase*). There are no fire, smoke or damage overlays anywhere.
+- Automated units have their own clips (`AUTOUNIT`), not covered here.
 
 ## 8. Drawing, sound and options
 
 ### Draw order and occlusion
 
 Animations are **not** part of the depth-sorted cell pass of
-[map-objects.md](map-objects.md). After the map is drawn, every running
-animation is drawn on top of it in insertion order, with the same
-color-key transparency as in [FF.md](../formats/FF.md).
+[map-objects.md](map-objects.md). After the map is drawn, the running
+animations are drawn on top of it, with the same color-key transparency as
+in [FF.md](../formats/FF.md).
 
-To hide parts of the clip that should be behind objects in front of it,
-the program then **redraws parts of the cells in front of the animated
-tile**, clipped to fixed sub-rectangles of those cells. For each of these
-cells it redraws the terrain sprite only if the terrain is a tall
-(overlapping) one *(?: flag identity)*, and then all of the cell's
-features (roads, walls, buildings, units, …).
+**Sort order.** On every tick, before drawing, the animation list is
+sorted by
 
-For a unit animation at tile (x, y) the redrawn parts are (cell: sub-rectangle
-x, y, width, height in the cell's sprite):
+1. the draw-order group: 0 ("ground") before 1 ("floating");
+2. then the frame's top y (smaller first);
+3. then the frame's left x (smaller first).
 
-| Cell | Part |
+Group 0: the unit clips (begin / end move, begin fire, shots, end fire,
+anti-aircraft fire), the translate (move), and the animations without a
+clip. Group 1: projectiles, impacts, unit / building / mine explosions,
+automated-unit clips and the other free-floating clips.
+
+**Occlusion repair.** Each group-0 animation draws its frame and
+immediately afterwards **redraws parts of the map cells in front of it**
+(its *refresh list*); then the next animation is drawn. Group-1 animations
+have no refresh list, so they always appear on top of everything.
+
+A refresh entry is a cell (x, y) and a sub-rectangle (rx, ry, w, h) inside
+that cell's 54 × 56 sprite. For each entry whose cell is on the map:
+
+1. the terrain sprite is redrawn, clipped to the sub-rectangle, **only if
+   the cell's terrain is `Overlapping`** (`Terrain Types.Overlapping`);
+2. then every feature of the cell in layer order, clipped to the
+   sub-rectangle; features with draw-mode bit 16 are again deferred to
+   the end.
+
+Cells outside the map are skipped.
+
+**Unit clips at rest** (begin / end move, begin fire, shots, end fire,
+anti-aircraft fire). The list is built once, at the start tick, from the
+unit's tile A = (x, y) (its `PosX/PosY`):
+
+| Cell | rx, ry, w, h |
 |---|---|
-| (x, y + 1) | 28, 0, 27, 42 (right half, upper part) |
-| (x + 1, y) | 0, 0, 27, 42 (left half, upper part) |
-| (x + 1, y + 1) | 0, 0, 54, 28 (upper half) |
+| (x, y + 1) | 28, 0, 27, 42 |
+| (x + 1, y + 1) | 0, 0, 54, 28 |
 | (x + 1, y + 2) | 28, 0, 27, 14 |
+| (x + 1, y) | 0, 0, 27, 42 |
 | (x + 2, y + 1) | 0, 0, 27, 14 |
 
-During a move a similar set of seven parts is used around the tile being
-entered, chosen by facing pair (0/4, 1/5, 2/6, 3/7) *(?: exact tables not
-transcribed)*. A simpler approach for a reimplementation is to draw
-animations inside the depth-sorted pass, on the cell of the tile being
-entered.
+(The original lists the (x + 1, y + 1) part twice; once is enough.)
+
+**Translate (move).** Rebuilt every tick for the current slide position,
+from the tile being entered B = (Bx, By) and the step's facing. Each facing
+pair uses one table, expressed in terms of the two tiles of the step:
+
+*Facings 0 and 4* (steps along y). A = the tile of the step with the
+smaller y (facing 0: A = (Bx, By − 1); facing 4: A = B); A = (ax, ay):
+
+| Cell | rx, ry, w, h |
+|---|---|
+| (ax + 1, ay) | 0, 0, 27, 56 |
+| (ax, ay + 2) | 28, 0, 27, 42 |
+| (ax + 1, ay + 1) | 0, 0, 54, 42 |
+| (ax + 1, ay + 2) | 0, 0, 54, 28 |
+| (ax + 2, ay + 1) | 0, 0, 27, 28 |
+| (ax + 1, ay + 3) | 28, 0, 27, 14 |
+| (ax + 2, ay + 2) | 0, 0, 54, 14 |
+
+*Facings 2 and 6* (steps along x). F = the tile with the smaller x
+(facing 2: F = B; facing 6: F = (Bx − 1, By)); F = (fx, fy):
+
+| Cell | rx, ry, w, h |
+|---|---|
+| (fx, fy + 1) | 28, 0, 27, 56 |
+| (fx + 2, fy) | 0, 0, 27, 42 |
+| (fx + 1, fy + 1) | 0, 0, 54, 42 |
+| (fx + 2, fy + 1) | 0, 0, 54, 28 |
+| (fx + 1, fy + 2) | 28, 0, 27, 28 |
+| (fx + 3, fy + 1) | 0, 0, 27, 14 |
+| (fx + 2, fy + 2) | 0, 0, 54, 14 |
+
+(the mirror image of the 0 / 4 table: x and y swapped, rx mirrored.)
+
+*Facings 1 and 5* (screen-horizontal diagonal). C = the tile of the step
+with the smaller x (facing 1: C = B; facing 5: C = (Bx − 1, By + 1)); the
+other tile is (cx + 1, cy − 1). C = (cx, cy):
+
+| Cell | rx, ry, w, h |
+|---|---|
+| (cx, cy + 1) | 28, 0, 27, 42 |
+| (cx + 1, cy) | 0, 0, 54, 42 |
+| (cx + 2, cy − 1) | 0, 0, 27, 42 |
+| (cx + 1, cy + 1) | 0, 0, 54, 28 |
+| (cx + 2, cy) | 0, 0, 54, 28 |
+| (cx + 1, cy + 2) | 28, 0, 27, 14 |
+| (cx + 2, cy + 1) | 0, 0, 54, 14 |
+| (cx + 3, cy) | 0, 0, 27, 14 |
+
+*Facings 3 and 7* (screen-vertical diagonal). E = the tile of the step
+with the larger x and y (facing 3: E = (Bx + 1, By + 1); facing 7: E = B).
+The table is the at-rest table above applied to E.
 
 ### Palette
 
@@ -418,7 +587,7 @@ explosion clips play their own audio once.
 | Option | Section | Effect |
 |---|---|---|
 | `NoIsoAnim=1` | `[Fallen Haven II]` | No map animation is opened at all. Every animation has zero length and draws nothing, but the start and end actions still run (units jump, explosions just remove the unit and place the ruin). Any value other than 1 leaves animations on. |
-| `ShowMoveAnim=0` | `[User]` | The move clips (`M`) are not used: the translate part has zero length and the unit appears on the destination at the end of the move. *(?: whether `L`/`N` are also suppressed)* |
+| `ShowMoveAnim=0` | `[User]` | The move clips (`M`) are not used: there is no translate part and the unit appears on the destination at the end of the move. The `L` / `N` clips still play *(?: follows from the program structure, not seen in play)*. |
 
 ## Validation against the shipped data
 
@@ -447,7 +616,13 @@ Deliberate differences of the OpenDay implementation (`game/anim/`):
 - Animations are drawn inside the depth-sorted cell pass, on the cell of
   the tile being entered (moves) or of the clip's tile, instead of being
   drawn on top and repaired with the occlusion tables. Projectiles are
-  drawn on top of the map.
+  drawn on top of the map. (The original's sort order and refresh tables
+  in section 8 are complete now, should exact fidelity be wanted.)
+- The tick clock does not need `TICK.SMK`: a 15 Hz timer gives the same
+  ticks. Movement begin parts should still start at `3 × (record id − 1)`
+  so that group moves are staggered as in the original.
+- On a facing change during a slide the new facing's `M` clip restarts at
+  frame 0.
 - The parts of a sequence follow each other one tick apart when the
   earlier part showed frames, so no two parts of one unit are visible in
   the same tick.
@@ -455,11 +630,15 @@ Deliberate differences of the OpenDay implementation (`game/anim/`):
 
 ## Open questions
 
-- Exact link between `TICK.SMK` and the tick counter, and the start tick
-  of each action within an animation phase (`3 × (k − 1)` for moves).
-- Whether a `…_Begin` value other than 1 would select a start frame.
-- Effect of the forest flag on move steps.
-- Exact occlusion tables for moving units.
-- What `ExplosionAnimation_Qty` controls.
-- Exact color value → `P<c>` mapping for player slots 1–4 (shared with
-  the static sprites).
+- (Answered: `TICK.SMK` is the engine clock; movement start ticks are
+  `3 × (record id − 1)`; `…_Begin` is only an exists flag;
+  `ExplosionAnimation_Qty` is unused; the forest flag has no effect; the
+  occlusion tables and the color table are given above and in
+  map-objects.md.)
+- Whether a triggered mine shows two explosion clips (explosion and
+  destroyed records) or the record links make them coincide.
+- Whether `L` / `N` really still play with `ShowMoveAnim` = 0.
+- Root records (no parent) other than movements start at tick 0; the code
+  that schedules the root records was not located.
+- The full-redraw request on tick 0 and after burned terrain: presumably
+  it only forces a redraw of the whole map.

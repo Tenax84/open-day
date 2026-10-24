@@ -46,16 +46,22 @@ confirmed.
     unit's order is cleared to "no order" (and stays cleared). With 100 the
     order is never dropped. In the shipped data only units with an order have
     values below 100.
-  - `Turn`: a turn number attached to the order (values 0–16 and many 99).
-    Whether it is the turn from which, or until which, the order applies is
-    part of the AI behavior *(?, see tactical-ai.md)*.
-- `HQ on Map` gives one tile per human slot (1–4). It is loaded with the
-  scenario; its use (camera start, HQ placement in the campaign) was not
-  traced *(?)*. The death-match HQ rules (2.9, 2.10) do not use this table;
-  they look for buildings of type "Headquarters" (`H_Center_HQ`, type 130).
-- `Automated Units` rows are handed to the AI; `TurnArrival` (0–99) is the
-  turn in which the AI brings that automated unit in *(?: exact comparison
-  not traced; see tactical-ai.md)*.
+  - `Turn`: the **last turn of the order**: at the start of an AI turn the
+    order is cleared when `Turn` < T; 99 means "for the whole battle"
+    (tactical-ai.md 2.1–2.2).
+- `HQ on Map` gives one tile per human slot (1–4). Only the **campaign**
+  loads it into the battle and sends it to the clients (skirmish and death
+  match ignore the table); the clients only store it. No tactical rule reads
+  it; its use is the campaign city (HQ sites, campaign.md 2.1)
+  *(?: no other reader found)*. The death-match HQ rules (2.10) do not use
+  this table; they look for buildings of type "Headquarters"
+  (`H_Center_HQ`, type 130).
+- `Scenario Info.necessary_unit` (shipped values 1, 2 and 0) is loaded with
+  `turn_qty` by client and server, but no rule reading it was found
+  *(?)*. OpenDay ignores it.
+- `Automated Units` rows are handed to the AI; a row is called in during the
+  AI turn of the round with **T = `TurnArrival`** (exact equality,
+  tactical-ai.md 6.2).
 
 ### 1.2 Deployment
 
@@ -129,7 +135,9 @@ then the normal "begin next turn" step runs.
   reinforcements, 4.1). Both lead to: round counter step, then "begin next
   turn".
 - A battle restored from a save resumes at the saved current player and turn,
-  without moving the pointer and without the objective check in step 1.
+  without moving the pointer and without the objective check in step 1, and
+  without the start-of-turn effects of step 3 (no income, no AP refill, no
+  tech-building re-evaluation); see [savegame.md](savegame.md) 3.4.
 
 ## 2. Objectives
 
@@ -287,9 +295,9 @@ result message ignores it).
 
 | Kind | Name (lookup) | Files | Rule |
 |---|---|---|---|
-| 8 | 2 cities | `dmc*` | Player 1 has no "Headquarters" building → loser 1. Player 2 has none → loser 2 (if both, 2). Then the common rules: at the turn limit decided with loser 5 (no loser, a draw *(?)*). |
+| 8 | 2 cities | `dmc*` | Player 1 has no "Headquarters" building → loser 1. Player 2 has none → loser 2 (if both, 2). Then the common rules: at the turn limit decided with loser 5 (the kind presets loser 5 before its own test), shown as a draw with the scores (5.7). |
 | 9 | city + alien | `dma*` | Player 1 (the city, owner of all buildings) has no Headquarters → loser 1. Otherwise, if T > 0 and T > `turn_qty` → loser 2 (the city held out). |
-| 10 | slug fest | `dms*` | Player 1 has no unit → loser 1; otherwise player 2 has no unit → loser 2. At the turn limit: decided, loser 5; the winner is then the one with more points (score in 5.1). |
+| 10 | slug fest | `dms*` | Player 1 has no unit → loser 1; otherwise player 2 has no unit → loser 2. At the turn limit: decided, loser 5 (preset as in kind 8). There is no server-side winner by points: both players see string 521 and the RANK column (score, 5.4), and the reader compares the numbers (5.7). |
 
 "Has no Headquarters" means no building of type 130 owned by that player.
 N is not used. Briefings agree: `dma2-10` hold the HQ for 10 turns
@@ -301,10 +309,14 @@ most points".
 
 ### 3.1 Surrender and cheats
 
-- **Surrender** (surrender confirmation) sends the cheat-lose
-  request: the battle ends at the next check as a failure (loser 5).
+- **Surrender** (in-game options, string 818 confirmation; only in the
+  tactical view during your own turn) sends the cheat-lose request: the
+  battle ends at once as a failure (loser 5). Details and the effect per
+  mode: 5.6.
 - With cheats enabled, Tab+W / Tab+L send the win / lose requests (same
-  flags). Kind 7 ignores both flags.
+  flags). The requesting player's slot is ignored: the loser code is always
+  5. After either request the server runs the objective check immediately
+  and ends the battle if it is decided. Kind 7 ignores both flags.
 
 ### 3.2 No generic end rule
 
@@ -317,9 +329,9 @@ limit. *(OpenDay may add an early-out; the result would be the same.)*
 ### 3.3 A player leaving
 
 If a human player leaves during the battle, his slot leaves the cycle; if it
-was his turn, the turn passes on. In a death match a player leaving during
-the battle ends it at once (decided, loser code 1 *(?: the code does not
-depend on who left)*).
+was his turn, the turn passes on; the result is not changed. In a death
+match a player leaving during the battle ends it at once with loser code
+**1**, whoever left (5.7).
 
 ## 4. Reinforcements and counter-attack
 
@@ -371,32 +383,66 @@ the campaign. The details are in [campaign.md](campaign.md) 6.
 
 ### 4.4 Automated units
 
-Only the arrival timing belongs here: an `Automated Units` row comes into
-play in the AI turn of round `TurnArrival` *(?)*; flight, anti-air and effects
-are described in tactical-combat.md.
+Only the arrival timing belongs here: a scenario `Automated Units` row is
+called by the computer player in phase 6 of its turn when `TurnArrival`
+equals the turn counter `T` **exactly** (rows whose turn has passed are
+never called), with p1 = (`StartX`, `StartY`) and p2 = (`DestX`, `DestY`),
+no budget and no prerequisite (tactical-ai.md 6.2). Human players call
+automated units from the tactical screen at any time in their own turn,
+paid from the tactical resource. Usable lists, anti-air fire, effects and
+the objective re-check after each call are described in
+[automated-units.md](automated-units.md).
 
 ## 5. Battle result
 
 ### 5.1 Result message
 
-When the battle is decided, the server enters the "over" state (no further
-moves are accepted) and sends one result message to all clients:
+**When:** the battle end runs only while the battle is in the "running"
+state. It runs the objective check once more, stores success and loser
+code, enters the "over" state (no further requests are accepted) and sends
+**one** result message to all clients. The message is built once; the
+statistics and score are taken at this moment.
 
-- **success** (human side won; forced to true for death match),
-- per player slot: four counters summed over all types (units destroyed,
-  units lost, buildings destroyed, buildings lost *(?: order)*) and a
-  **score**: roughly the cost of destroyed enemy objects minus the cost of
-  own losses, buildings weighted more than units *(?: exact weights)*,
-- the **tech points found**: the sum of `TechReward` of all tech buildings
-  the human side holds at the end (5.2),
-- campaign: an **end-of-campaign** flag, set for the battle for colony 4's
-  alien capital (campaign.md 4.3, 7),
-- death match: the loser code.
+**Common part** (`CGoAftermathMsg`), in this order; every field is an
+unsigned 16-bit value unless noted (so counters and scores are taken modulo
+65 536 and printed as unsigned decimals):
 
-The client then shows the debriefing: `Scenario Info.Aftermath*` (in the
-selected language) on success, a generic failure
-text otherwise, and the number of new technologies. The campaign then
-pays `Province List.Credits` × C(d) / 100 and adds the tech points found
+| # | Field | Value |
+|---|---|---|
+| 1 | success | 0 / 1; human side won. Death match: forced to 1. |
+| 2 | n | number of human players in the battle (the server's player list) |
+| 3 | n × units destroyed | total of the player's "units destroyed" counter (5.3), slots in order 1…n |
+| 4 | n × buildings destroyed | total "buildings destroyed" |
+| 5 | n × units lost | total "units lost" |
+| 6 | n × buildings lost | total "buildings lost" |
+| 7 | n × score | 5.4 |
+| 8 | tech points found | sum of `TechReward` of the tech buildings held at the end (5.2; the held set is refreshed first). Computed in every mode; only the campaign report shows it. |
+
+There is no row for the computer player (slot 0): it has no statistics
+record.
+
+**Mode-specific tail:**
+
+| Message | Extra field after the common part |
+|---|---|
+| `CGoAftermathSkirmishMsg` | none |
+| `CGoAftermathCounterAttMsg` | none |
+| `CGoAftermathCampaignMsg` | 16-bit **end-of-campaign** flag: set for the battle for colony 4's `AlienCity` (campaign.md 4.3, 7) |
+| `CGoAftermathDeathMatchMsg` | 32-bit **loser code** (5.7) |
+
+**Client handling:**
+
+- skirmish and death match: the battle report opens at once; afterwards the
+  client returns to the front end;
+- campaign: the client stores success and the end-of-campaign flag;
+- counter-attack: the client sets the end-of-campaign flag to **not
+  success** (a lost counter-attack ends the campaign);
+- the common part is copied into the report (tactical-interface.md 9).
+
+The report shows `Scenario Info.Aftermath*` (in the selected language) on a
+campaign success, generic texts otherwise (tactical-interface.md 9.2), and
+in the campaign the number of new technologies. The campaign then pays
+`Province List.Credits` × C(d) / 100 and adds the tech points found
 (campaign.md 4.3, 5); `Scenario Info.Credits` and `Province List.Tech` are
 not used.
 
@@ -409,6 +455,168 @@ at the start of the battle, at the start of every turn, after moves and
 attacks and when the result is computed; a destroyed building
 leaves the set. Changes are sent to the clients as a tech record
 (`tactic_mmsg_tech`). The result message uses the set as it is at the end.
+
+### 5.3 Battle statistics (counters)
+
+Every **human** player of the battle has a statistics record with four
+**per-type counters** (a map type id → count, missing entries count 0):
+
+| Counter | Key | Meaning |
+|---|---|---|
+| units destroyed (U-D) | unit type id | units this player destroyed |
+| units lost (U-L) | unit type id | own units lost |
+| buildings destroyed (B-D) | building type id | buildings this player destroyed |
+| buildings lost (B-L) | building type id | own buildings lost |
+
+The key is the **type id only**; all tech levels of a type share one
+counter. The per-type values are used for the score (5.4) and are saved with
+a battle (savegame.md 2.4); only the four **totals** (sum over all types)
+are sent in the result message and added to the campaign (5.8). The
+computer player (slot 0) has no record.
+
+**Who gets the kill.** Every destruction of a unit or a building by damage
+carries an **attacker slot**:
+
+| Damage source | Attacker slot |
+|---|---|
+| a shot (normal shot, reaction fire, move-to-fire), including every tile of its area damage (own units in the blast too) | the shooter's owner |
+| a mine explosion (also when an automated drop unit triggers it) | the **mine's owner** |
+| an automated "destroy" unit (bomber etc.) | the automated unit's owner |
+| a bridge collapsing under a unit | the attacker of the damage that broke the bridge |
+
+**Unit destroyed** (owner o, attacker a):
+
+- campaign, counter-attack, skirmish: if o ≠ 0 → U-L[o] + 1; if a ≠ 0 →
+  U-D[a] + 1. There is **no same-side check**: a player who destroys his own
+  unit (area damage, his own mine) gets both one loss and one kill. Kills by
+  the computer player count only as the victim's loss, losses of the
+  computer player only as the attacker's kill.
+- death match: U-L[o] + 1 always; U-D[a] + 1 only if a ≠ o (friendly kills
+  are not credited).
+
+**Building destroyed** (owner o, attacker a), all modes: if o ≠ 0 →
+B-L[o] + 1; if a ≠ 0 → B-D[a] + 1 (no same-side check, also in death
+match). In the counter-attack and in death match the owner's deployable unit
+and automated-unit lists are then recomputed and sent to him (campaign.md
+6.4).
+
+**Not counted:** walls, roads and bridges, mines, ruins and terrain changes;
+automated (air) units shot down; units that disappear without being
+destroyed by damage *(?)*; units on a collapsing building *(?: they are only
+named in the event message; no counter update was found)*. Towers in city
+battles are units (campaign.md 6.1) and count as units.
+
+### 5.4 Score (the RANK number)
+
+The score is computed once per human player when the result message is
+built, with the same rule in every mode. It uses the global type tables:
+`Unit Types` (one row per type **and tech level**) and `Building Types`.
+
+**Intended formula** (what the program's structure aims at):
+
+    score = Σ over the rows b of Building Types:
+                B-D[type(b)] × Cost(b) − B-L[type(b)] × Cost(b)
+          + Σ over the rows u of Unit Types:
+                2 × U-D[type(u)] × Cost(u) − U-L[type(u)] × Cost(u)
+
+(`Cost` of the unit row is used at tech level 0, i.e. the plain `Cost`
+column.) Kills count double, losses and buildings once.
+
+**Actual result of the original (a bug):** in both sums the subtracted term
+reuses the first counter instead of the loss counter. The visible score is
+therefore
+
+    score = Σ over the rows u of Unit Types:  U-D[type(u)] × Cost(u)
+
+- buildings destroyed, buildings lost and units lost have **no effect**;
+- the score is never negative;
+- because a type has one `Unit Types` row per tech level (all with the same
+  `Cost`), a kill of type t is worth `Cost(t) × (number of rows of t)`.
+  Examples from the shipped data: alien types have one row (Shocktrooper 20,
+  alien main tank 100, Worm 250 per kill); human types have 6 or 11 rows
+  (Trooper 5 × 6 = 30, Commando 10 × 6 = 60, Buggy 20 × 11 = 220, human main
+  tank 50 × 11 = 550, Chopper 120 × 11 = 1320 per kill); towers and convoy
+  types one row;
+- friendly kills (outside death match) raise the score.
+
+The value is sent as an unsigned 16-bit number (modulo 65 536).
+
+**OpenDay** uses the **intended** formula, with one term per *type* (not per
+`Unit Types` row, i.e. the plain `Cost` of the type at tech level 0) and
+clamped to 0…65 535 for display; this is a deliberate fix, to be listed in
+the implementation notes. The original's value can be reproduced from the
+same counters if ever needed.
+
+**No ranking:** the RANK column prints this number as it is. Rows are in
+slot order; nothing is sorted and no "1st / 2nd" is computed anywhere.
+
+### 5.5 What the report shows
+
+The report (tactical-interface.md 9.2) shows one row per human player in
+slot order (no computer row): units / buildings destroyed, units /
+buildings lost and the score under the heading RANK. The rows are not
+sorted and no place is computed. The tech points found are printed only by
+the campaign report on success. What the campaign keeps afterwards is
+described in 5.8.
+
+### 5.6 Surrender
+
+- *Surrender* exists only in the in-game options of the tactical view during
+  the player's own turn (interface.md, "In-game options dialog"). After the
+  confirmation (string 818) the client sends the **cheat-lose request**
+  (`CCheatLoseScenMsg`); there is no separate surrender message and no
+  cheat gate on this path.
+- The server sets the objective's lose flag (loser code 5, the requesting
+  slot is ignored), runs the objective check immediately and ends the battle
+  (success 0, loser 5).
+- Effect by mode:
+  - skirmish: the battle is lost for every player (string 520);
+  - campaign province battle: lost — the failure path of campaign.md 4.3
+    (variant flip); the battle statistics are **not** added;
+  - city battles (first city attack, counter-attack): their objective is
+    kind 7, whose end test ignores the cheat flags (2.9), so surrender
+    appears to have **no effect** there *(?: not confirmed at run time; if
+    the flag were honoured the result would be a lost city battle and the
+    end of the campaign, campaign.md 6.7)*;
+  - death match: success is forced to 1 and loser 5 is sent, so **both**
+    players see string 521 (ranking) — the surrendering player is not
+    marked as the loser.
+
+### 5.7 Death-match loser codes
+
+| Loser code | Set by | Text shown (client) |
+|---|---|---|
+| 1 | kind 8/9/10 rule (player 1 lost), or **any player leaving** | player 1: 520, player 2: 519 |
+| 2 | kind 8/9/10 rule (player 2 lost), kind 9 at the turn limit | player 2: 520, player 1: 519 |
+| 5 | turn limit of kinds 8 and 10, surrender, cheat win / lose | everyone: 521 |
+
+Text rule of the client: loser 5 → string 521 ("battle ended, ranking for
+the participating players"); loser = the local player's slot → 520; any
+other value → 519. A turn-limit end of kinds 8 and 10 is therefore a draw in
+which the RANK numbers (5.4) are the only comparison.
+
+A player leaving a running death match sets the **win** flag with loser code
+**1** and ends the battle at once, regardless of who left; so if player 1 is
+the one who stays, he is told he lost. *(Original quirk; OpenDay should
+make the remaining player the winner: loser = the slot that left.)*
+
+### 5.8 Campaign statistics
+
+When a campaign battle (province battle or first city attack) or a
+counter-attack ends with **success**, for every human player:
+
+- `Player Campaign.Units Destroyed` += U-D total, `Units Lost` += U-L total,
+  `Buildings Destroyed` += B-D total, `Buildings Lost` += B-L total;
+- `Tech` += tech points found (counter-attack: + 0).
+
+Then the battle's statistics records are deleted. A **lost** battle adds
+nothing (campaign.md 4.3; a lost counter-attack ends the campaign). The
+score is not stored in the campaign.
+
+The four campaign columns are saved and loaded, but no screen showing them
+was found: there is no statistics screen in the strategic phase and no
+string for one, and the end of the campaign shows only the closing video
+*(?: not exhaustively searched)*.
 
 ## 6. Message classes
 
@@ -441,6 +649,12 @@ strategic results phase (`CStratResultPhaseMsg`) follows.
 - Kind 6's "destroying an exempt object loses" and the death-match start
   quirk (1.3) are original behavior; keep them unless a deliberate fix is
   documented.
+- Statistics (5.3): count exactly as described, including the missing
+  same-side check outside death match.
+- Score (5.4): use the intended formula (deliberate fix); the original's
+  visible number is "value of the units destroyed" only.
+- Death match, a player leaving (5.7): make the remaining player the winner
+  (deliberate fix of the fixed loser code 1).
 
 ## Implementation notes (OpenDay)
 
@@ -453,7 +667,7 @@ result travels to the clients in the `BattleOver` event (success, loser).
 - Deployment (1.2), bought reinforcements and the per-turn income (4.2),
   counter-attack battles (4.3, with the campaign), tech buildings (5.2) and
   the cheat requests are implemented. Not implemented yet: automated units,
-  the score (5.1), saving and restoring a battle, surrender.
+  the score (5.4), saving and restoring a battle, surrender.
 - Reinforcements use the lowest tech level of their type (the rows have no
   tech level column) and face the map center.
 - The computer player only plays when at least one human slot takes part;
@@ -461,9 +675,16 @@ result travels to the clients in the `BattleOver` event (success, loser).
 
 ## Open questions
 
-- Meaning of `Units On Map.Turn` (start or end turn of the order) and the
-  exact `TurnArrival` comparison (tactical-ai.md).
-- Use of `HQ on Map`, `necessary_unit`.
-- Exact score formula and the order of the four statistics counters.
-- The death-match loser code when a player leaves, and whether a turn-limit
-  result with loser 5 is shown as a draw (kinds 8 and 10).
+- `necessary_unit`: no reader found (it is reached through an accessor
+  shared by many classes, so a reader could have been missed).
+- `HQ on Map` in tactical battles: no reader found; presumably used by the
+  campaign city only.
+- Units destroyed by a collapsing building or removed without damage:
+  confirm that no counter changes (5.3).
+- Surrender in a city battle (kind 7 ignores the lose flag, 5.6): confirm at
+  run time.
+- Whether any screen reads the campaign statistics columns (5.8).
+- (Answered: `Units On Map.Turn` is the last turn of the order and
+  `TurnArrival` is compared for equality, 1.1 / tactical-ai.md; score
+  formula and counter order, 5.1 / 5.4; death-match loser codes and the
+  draw at the turn limit, 5.7.)

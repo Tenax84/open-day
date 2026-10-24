@@ -137,7 +137,15 @@ BACK (364, 250) relative to the dialog, 110 × 17, frames 558–561, Esc.
     description (turn heading and objective), 20 px gap, the `Objective` hint,
     20 px gap, the province's `Tech` value.
 
-## 4. Pre-battle overview map
+## 4. Overview maps
+
+Two screens share one base: the battle's overview map (4.1) and the city
+overview map (4.2). The common layout (player selector, list, map square,
+selection blink, click) is specified in
+[tactical-interface.md](tactical-interface.md) 7.1; the battle variant in
+detail in tactical-interface.md 7.2.
+
+### 4.1 Pre-battle overview map
 
 Shown when the deployment view first opens (the manual's "Overview Map
 screen"); the in-battle MAP button opens the same screen with BACK instead
@@ -161,9 +169,35 @@ of CONTINUE.
 - Selecting a list entry makes that type's dots blink. A click on the map
   closes the screen and centres the view there.
 
-The city screen's MAP opens a similar screen for the city (panel 578,
-emblem 627, credits, the player's building types, CONTINUE frames 623–626 at
-(10, 457)).
+### 4.2 City overview map (`CMapScreenStrat`)
+
+Opened by MAP (`F4`) on the city screen (city-building.md 9). The city
+screen's current build / recycle / move mode is reset first *(?)*. Layout
+and behaviour as in tactical-interface.md 7.1, with these differences:
+
+| Element | Position, size | Frames | Key | Notes |
+|---|---|---|---|---|
+| panel | (0, 0) | **578** | — | 136×480 / 184×768 |
+| emblem | (5, 0), 44×43 | **627** (4 frames) | `F1` | building page of the selected row's type (no context); no row → the encyclopedia's default page ([encyclopedia.md](encyclopedia.md) 3) |
+| resource indicator | (64, 26)–(104, 40) | — | — | the player's credits *(?)* |
+| CONTINUE | (10, **457**), **110×17** | **623–626** | `Esc` | closes the screen, back to the city screen |
+
+- Player items: one per player; **no "Alien" item**.
+- Always clickable: a left click on the picture centres the city view on
+  that tile and closes the screen.
+- **List**: for the selected player, one row per **building type** that
+  the player owns on the city map, with the number of buildings of that
+  type: `"  <building name> x<count>"` (`Name<lang>` of the type). Every
+  building of the city map counts, towers included; walls, roads and mines
+  are not buildings and are not listed. Row order: the order in which the
+  types are first met while walking the city's building list *(?)*.
+- Selecting a row makes the selected player's buildings of that type blink
+  (phase timer **250 ms**, tactical-interface.md 7.1).
+- No markers (no deployment, objective or tech-building bitmaps).
+- While open, the screen listens to the building, wall, road and mine
+  update messages *(?: presumably to redraw the dots if the city changes;
+  in single player the city cannot change while the screen is open)*.
+- Keys: only `Esc` and `F1`.
 
 ## 5. Campaign battle reports
 
@@ -232,11 +266,17 @@ Implemented in `app/campaign_*.cpp`.
 - The continent screen's deployment-point number shows the deployment
   points the city gives in a battle there (campaign.md 6.4) *(OpenDay: the
   original's source of this value was not identified)*.
-- The city overview map (panel 578) is not implemented; MAP is disabled on the
-  city screen.
+- The city overview map (panel 578) is not implemented yet (MAP is disabled
+  on the city screen); its specification is 4.2.
+- The encyclopedia (emblem buttons) is not implemented yet; specification:
+  [encyclopedia.md](encyclopedia.md).
 
 ## Open questions
 
 - Whether the resource numbers on the continent screen update while it is
   open.
-- How the deployment zones are filtered on the overview map.
+- How the deployment zones are filtered on the overview map (the
+  `Turn` ≤ current-turn test and whose zone list is shaded,
+  tactical-interface.md 7.2).
+- City overview map: what the screen does with the building / wall / road /
+  mine update messages it listens to, and the row order of its list.

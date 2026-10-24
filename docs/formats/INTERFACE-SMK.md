@@ -106,13 +106,27 @@ controls of the same screen (round 44×43 buttons, 66×9 tabs, 53×17 and
 | Panel frame | Size | User |
 |---|---|---|
 | 0 | 136×480 / 184×768 | the deployment and reinforcement views (`CFirstDeployView` / `CDeployView`, see `tactical-interface.md` 1.2) |
-| 41 | 136×480 / 184×768 | the overview map of a battle (`CMapScreenTactic`, strategic-interface.md 4) |
+| 41 | 136×480 / 184×768 | the overview map of a battle (`CMapScreenTactic`, tactical-interface.md 7, strategic-interface.md 4.1) |
 | 100 | 136×480 / 184×768 | the city view (`CStratView`, city-building.md 9) |
 | 192 | 136×480 / 184×768 | the continent screen (`CColonyBaseView`, strategic-interface.md 1) |
 | 226 | 136×480 / 184×768 | tactical view (`CTacticView`; has *Overwatch* / *Auto fire*) |
 | 310 | 136×480 / 184×768 | tactical waiting/deployment view (`CTacticWaitView`) |
 | 507 | 136×480 / 184×768 | a tactical-family view (likely `CAutomatView`) |
-| 578 | 136×480 / 184×768 | the city overview map (`CMapScreenStrat`) |
+| 578 | 136×480 / 184×768 | the city overview map (`CMapScreenStrat`, strategic-interface.md 4.2) |
+
+Pieces of the two overview-map screens (positions in
+`tactical-interface.md` 7):
+
+| Frames | Size | Element |
+|---|---|---|
+| 13–16 / 17–20 | 53×17 | list up / down (shared with the deployment view) |
+| 46–51 | 19×19 | player selector item, colour 0 (Alien), 6-frame toggle |
+| 52–57 / 58–63 / 64–69 / 70–75 | 19×19 | player selector items, colours 1 / 2 / 3 / 4 (blue, yellow, purple, green) |
+| 84–87 | 53×17 | *Back* (battle overview map opened by MAP) |
+| 88 | 44×43 | emblem of the battle overview map (push button, 4 frames) |
+| 623–626 | 110×17 | *Continue* of the city overview map |
+| 627 | 44×43 | emblem of the city overview map (push button, 4 frames) |
+| 700–703 | 53×17 | *Continue* (battle overview map opened by the first deployment) |
 
 Gaps (empty): 33–40, 92–99, 153–156, 166–167, 197, 206–209, 218–225,
 239–240, 257, 302–309, 357–364. The tactical pieces are detailed in
@@ -124,7 +138,7 @@ Gaps (empty): 33–40, 92–99, 153–156, 166–167, 197, 206–209, 218–225,
 |---|---|---|---|
 | 157 | 588×451 | `CArmyInterf` | army screen; 158–165, 168–171 110×17 buttons; 172–175 60×55; 176–191 19×17 |
 | 365 | 448×480 | `CAftermathInterface` | 366–369 110×17 button |
-| 382 | 540×415 | `CEncyclopInterface` | encyclopedia; 383–386 53×17; 387–394 19×17; 395–432 19×19 |
+| 382 | 540×415 | `CEncyclopInterface` | encyclopedia (`mechanics/encyclopedia.md`); 383–386 *Back* 53×17; 387–390 previous ◀ and 391–394 next ▶ 19×17; 395–400 the lamp toggle (19×19, red off / green on) used by all six lamps; 401–432 further 19×19 lamp sets, not used by the encyclopedia (no user found) |
 | 433 | 472×344 | `CChatInterface` | chat window |
 | 453–468 | 53×17 | | four small buttons |
 | 477 | 254×144 | `CWaitBox` and the message box | 478–481 *YES*, 482–485 *NO*, 486–489 *OK* (53×17) |
@@ -148,7 +162,8 @@ Gaps (empty): 33–40, 92–99, 153–156, 166–167, 197, 206–209, 218–225,
 | 681–684 | 19×17 | list *next* (▶▶\|) |
 | 685–688 | 19×17 | list *previous* (\|◀◀) |
 | 689–692 | 110×17 | *Restart scenario* |
-| 693–696, 700–703 | 53×17 | small buttons (not attributed) |
+| 693–696 | 53×17 | small button (not attributed) |
+| 700–703 | 53×17 | *Continue* of the battle overview map (first deployment, `tactical-interface.md` 7.2) |
 
 ### Front-end menus (710–1047)
 
@@ -242,8 +257,10 @@ convention as the unit animations in `FF.md`.
 
 The application opens it at start-up and hands it to the animation engine
 (`CAnimEngineImpl`); a failure shows string 274 ("Can't initialize
-smacker"). Where its frames are drawn is not yet known (see the open
-questions in `interface.md`).
+smacker"). It is **never drawn**: it is the engine's 15 fps clock. Every
+time its Smacker frame timer lets it advance a frame, the engine reports a
+tick to the map animations (`../mechanics/unit-animation.md` 4). A
+reimplementation can use any 15 Hz timer instead.
 
 ## Related files
 
@@ -258,5 +275,18 @@ questions in `interface.md`).
   addressed by the `EncyclopediaFrame` column of the type tables.
 - `LIBDAY.EXE` itself holds twenty small 8-bit bitmap resources (ids 147,
   152, 181–185, 195, 213, 240–243, 251, 252, 305–309; sizes 8×20 … 148×12,
-  two of them 54×56). They look like widget parts (scroll arrows, bars,
-  highlight tiles); their individual uses have not been mapped.
+  two of them 54×56). Known uses:
+
+  | Ids | Size | Name / look | Used by |
+  |---|---|---|---|
+  | 152 | 8×20 | `OBJ00`, objective marker | battle overview map (`tactical-interface.md` 7.2) |
+  | 181–185, 309 | 25×25 | ability icons (stealth, forest, detector, indirect fire, AA, jammer) | encyclopedia unit page (`encyclopedia.md` 5.1) |
+  | 195 / 251 / 252 | 148×12 / 148×12 / 78×14 | gauge bars: red, dark red, yellow background with border | encyclopedia gauges |
+  | 213 | 54×56 | `SHADE`, red/black stipple with a colour key | zone shading on the battle overview map |
+  | 240–243 | 16×25 | `DEPL` flags, colours 1–4 | battle overview map |
+  | 305–308 | 15×22 | `LBULB`, light bulb (4 animation frames) | tech buildings on the battle overview map |
+  | 147 | | not mapped | |
+
+  They are part of the program, not of the data files: OpenDay must not
+  ship them; it either reads them from the user's `LIBDAY.EXE` at run time
+  or draws its own substitutes.

@@ -124,11 +124,23 @@ unit already in the sorted list for which "a goes before b" holds.
 
   Result: towers, then AP-damage units, then the other units with
   `Jammer` > 0 by ascending range, and units with `Jammer` = 0 at the end.
-- **Free list:** a goes before b if a has an AP-damage weapon; not if b has;
-  a goes first if a's `Jammer` = 0; not if b's `Jammer` = 0; otherwise a
-  goes first if a's `weaponRange` is larger than b's. (The program meant to
-  compare the two `Jammer` values first, but compares b's with itself, so
-  only the range decides. Keep this for faithful ordering.)
+- **Free list:** "a goes before b" is decided by the first rule that
+  applies:
+  1. a has an AP-damage weapon (`damageType` "reduces AP") → yes;
+  2. b has one → no;
+  3. a's `Jammer` ≤ 0 → yes;
+  4. b's `Jammer` ≤ 0 → no;
+  5. a's `Jammer` < b's `Jammer` → yes;
+  6. (the intended "a's `Jammer` > b's → no" compares b's value with itself
+     and never applies);
+  7. otherwise yes exactly if a's `weaponRange` > b's.
+
+  So a lower `Jammer` does put a unit first when it is the unit being
+  inserted (a grav unit with 10 before a normal unit with 100), but the
+  reverse case falls through to the range test: a normal unit with a longer
+  range is inserted before a grav unit. (Correction: an earlier version of
+  this document said that only the range decides after rule 4.) Keep this
+  for faithful ordering.
 
 ### 1.4 Actions are small state machines
 
@@ -254,7 +266,7 @@ neighboring tiles (often 5–50 of them).
      first tile, scanning columns with x ascending and, inside a column, y
      ascending, that the unit can reach (stopping tile, path exists); walk
      there, cut to AP;
-   - counter-attack battle, AP > 10: possibly call a transport, 6.4.
+   - counter-attack battle, AP ≥ 10: possibly call a transport, 6.4.
    The action ends.
 4. Otherwise run the move-to-fire procedure (4.2) toward the chosen firing
    tile and fire (5.2). If the target was destroyed, go back to 2.
@@ -307,9 +319,15 @@ map.
 
 For every candidate the AI tries a set of tiles from which to shoot. A tile
 qualifies if it is inside the map, it is a stopping tile the unit can reach
-(a path exists, of any length; AP does not matter here) and a shot from it
-at the candidate is legal. Each qualifying tile is scored (3.3) and compared
-with the best so far (3.4); the path to the best tile is kept.
+(a path exists in the unit's path map, of any length; AP does not matter
+here) and the **range and line-of-fire part** of the shot check passes from
+it: for each aim tile of the target (a building's footprint column by
+column, otherwise the target tile) `weaponMinimumRange < d ≤ weaponRange`
+from the tile, and the line of fire (skipped for `weaponType` 1). Weapon
+presence, AP, side (relation) and `Jammer` are **not** checked here (AP is
+handled by the move-to-fire rules of 4.2). Each qualifying tile is scored
+(3.3) and compared with the best so far (3.4); the path to the best tile is
+kept.
 
 - **Unit:** rectangular rings around the target's footprint. With
   `R = weaponRange` and `m = max(1, weaponMinimumRange)` of the shooter, the
@@ -402,11 +420,16 @@ candidate C against the current best B (scores compared as integers):
 
 - The AI computes a fresh path map (tactical-movement.md 3.1) for a unit
   whenever it evaluates targets or destinations for it, with the **AI
-  variant** switched on: on maps of at least 57 tiles (the 72 and 96 maps),
-  for a unit outside the central 12 × 12 square, the sweeps are limited to
-  the 41 × 41 window around the unit and to 7 rounds; boats always search
-  the whole map. On those large maps each such computation also draws (and
-  ignores) one random number.
+  variant** switched on (tactical-movement.md 3.1): on maps of at least 57
+  tiles (the 72 and 96 maps), for a unit whose top-left tile is outside the
+  central 12 × 12 square, the sweeps are limited to the **42 × 42** window
+  `x − 20 … x + 21`, `y − 20 … y + 21` around the unit (pushed back into the
+  map without shrinking). Independently of map size and window, every AI
+  path map stops after **7 rounds** of sweeps. Boats always search the
+  whole map without a round cap. On maps of at least 57 tiles every AI path
+  map (unit inside or outside the centre) also draws and ignores one random
+  number. (Correction: earlier versions said 41 × 41 and limited the round
+  cap to large maps.)
 - Group moves of Goto/Goto Fast (4.4) use the normal full-map search.
 - The danger map the program allocates for the AI is never filled or read.
 
@@ -459,9 +482,12 @@ All units registered in phase 10 (or 11) are moved as one group, in list
 order, with the rules of a human group order (tactical-movement.md 3.5):
 
 - Destination: the unit's current waypoint. If it is not a stopping tile
-  for the unit or already claimed by an earlier member, the 8 neighbors are
-  tried, nearest first *(?: same distance order as for human group orders)*;
-  with none left the unit does not move.
+  for the unit **or** already claimed by an earlier member, the 8 neighbors
+  are tried in the order of tactical-movement.md 3.5 (orthogonal neighbors
+  (X−1, Y), (X, Y−1), (X, Y+1), (X+1, Y), then the diagonals (X−1, Y−1),
+  (X−1, Y+1), (X+1, Y−1), (X+1, Y+1)); with none left the unit does not
+  move. (Unlike a human order, a non-stopping waypoint also leads to the
+  neighbor search.)
 - Start tiles of earlier members count as free; their destinations as
   blocked (fly-over still allowed).
 - The path is cut to the unit's AP reduced by its shot cost, for Goto
@@ -509,6 +535,20 @@ otherwise the action ends.
 
 ## 6. Automated units called by the AI
 
+The automated units themselves (AA fire, effects, animation) are described
+in [automated-units.md](automated-units.md). Every AI call below goes
+through one **call routine**: it builds the same server object as a human
+request, with owner 0 and the two points p1, p2 given by the caller, and
+executes it like a human call (automated-units.md 4.1: effect, tech
+buildings, battle-over check, broadcast), **unless** the type's `Race`
+(the `Automated Units` column; it differs from the lookup table for type
+10) is 0 (human) and its `typeID` is not 4, 5 or 6. The call routine checks
+no cost (the callers handle the budget) and ignores `DeployOnce`. So every
+alien type arrives, including the destroy types 11, 12 and 13; human types
+other than the bombers and the nuke are silently dropped (this only
+matters for scheduled rows, 6.2). Units dropped by the AI have tech
+level 0.
+
 ### 6.1 Random calls (phases 2 and 7)
 
 Only with strategic AI info (not in skirmish).
@@ -525,30 +565,42 @@ Only with strategic AI info (not in skirmish).
 
    | type | target chosen |
    |---|---|
-   | 9 Tauran mine layer | counter-attack battles only. 50 % (`rand() mod 100 < 50`): the tile of the first mine the AI knows about (tile 0,0 if there is none); otherwise a random tile (`rand() mod width`, `rand() mod height`) |
+   | 9 Tauran mine detection (`T_Engineer_Mine`; it reveals mines, it lays none) | counter-attack battles only. 50 % (`rand() mod 100 < 50`): the tile of the first mine the AI knows about (tile 0,0 if there is none); otherwise a random tile (`rand() mod width`, `rand() mod height`) |
    | 10 Tauran medic | the AI unit (alien, mobile) with the largest `Armor − currentAR`; nothing if none is damaged |
-   | 11, 12, 13 fighters, gene bomb | the enemy unit with the highest `currentAR` (first one on ties) |
+   | 11, 12, 13 fighters, gene bomb | the top-left footprint tile of the enemy unit with the highest `currentAR` (strictly greater wins, so the first one on ties; the running maximum starts at 0) |
    | 14, 19–25 drops | starting at list position `rand() mod (number of units on the map)`, the first enemy unit further down the list (no wrap-around) with `currentAR` ≤ 30 and unit `Category` grav or ground |
    | others (7 transport, 8 bridge) | not called this way |
 
 5. A call needs `Cost` ≤ budget and lowers the budget by `Cost`. The
-   automated unit is then handled by the server as a player's call would
-   be (flight, anti-air fire, effect: tactical-combat.md 6.3).
-   *(?: the program builds the request but only submits it if the
-   automated category is not "destroy", or if the type is one of the human
-   bombers 4–6; read literally, the AI's fighters and gene bomb are
-   paid for but never arrive. To be confirmed in play.)*
+   target tile is passed as both p1 and p2 to the call routine (above), and
+   the automated unit is then handled by the server as a player's call
+   would be (anti-air fire at the target tile, effect:
+   automated-units.md 5–6). The fighters and the gene bomb do arrive (the
+   call routine filters by race, not by category).
 
 The **budget** starts at the colony's `AiAutoUnitRes` (× 1.5 in a
 counter-attack battle, truncated) and is spent over the whole battle.
 
 ### 6.2 Scheduled automated units (phase 6)
 
-Each `Automated Units` row of the scenario is called once, in the AI turn
-where `T` = `TurnArrival`, with its own start and destination tiles
-*(?: the tiles passed were not traced, the row's `StartX/Y`, `DestX/Y` are
-the obvious source)*, no budget and no prerequisite. Rows whose turn has passed without a match are
-never called.
+The scenario's `Automated Units` rows (`AutomatedType`, `StartX`,
+`StartY`, `DestX`, `DestY`, `TurnArrival`) are kept in a list. In phase 6
+of every AI turn, each row with `TurnArrival` **exactly equal** to `T` (the
+turn counter as read at the start of the AI turn) is passed to the call
+routine with **p1 = (`StartX`, `StartY`)** and **p2 = (`DestX`, `DestY`)**
+and removed from the list. No budget, no prerequisite. Rows whose turn has
+passed without a match are never called.
+
+- For non-transport types the target is (`StartX`, `StartY`); `Dest` is
+  ignored (in the data it always equals `Start`).
+- For transports `Start` is the tile of the unit to pick up (any owner) and
+  `Dest` the destination.
+- Shipped data: 312 rows in 67 scenario files, turns 1–11. By type: 14
+  (58 rows), 19 (58), 23 (49), 12 (25), 25 (23), 22 (20), 7 (18), 13 (16),
+  21 (11), 11 (10), 20 (7), 4 (6), 5 (5), 6 (4), 0 (2). The rows of the
+  human types 4, 5, 6 (`s4-18-*`, turn 1) are executed as **AI-owned**
+  strikes; the two type-0 rows (`s3-7-*`, human transport) are dropped by
+  the race rule.
 
 ### 6.3 Emergency drop (phase 3)
 
@@ -557,22 +609,41 @@ In every AI turn one `rand() mod 100` is drawn. If it is below 67 and
 Grenadier, Assault Trooper, LAV, Light Tank, by symbol), how many of them
 are of that type. For each of the five types whose share is above 60 %,
 while more than 30 enemy units are on the map, the automated type with
-`typeID` 19 is called 1–3 times, as a drop (6.1 table) at no net cost. The
-number of calls depends on a battle value *(?: not identified)*: 3 above
-1200, 2 above 700, 1 above 300, otherwise none.
+`typeID` 19 is called 1–3 times, as a drop (6.1 table) at no net cost
+(for each call the budget is first raised by the type's `Cost`, then the
+drop spends it again). The number of calls depends on the scenario's
+**`Scenario Info.One Off Deployment`** (shipped values 150–2300): 3 if it is
+above 1200, 2 above 700, 1 above 300, otherwise none.
+
+Details:
+
+- The enemy count is made by stepping an enemy-unit iterator over the map
+  unit list once per type pass, summing the steps over the five passes and
+  multiplying by 0.2. A pass whose list does not end with an enemy unit
+  counts one step too many (an artefact of the loop), so the count can be
+  "enemies + 1". Keep this for faithful behaviour.
+- Type 19 (`B_Zeppelin_G`, four Pyro Maniacs) is the element at position 19
+  of the full automated type list; with fewer than 20 types nothing is
+  called.
 
 ### 6.4 Transport in counter-attacks
 
 A hunting unit without any candidate (2.8 step 3) in a counter-attack
-battle, with AP > 10, that is neither a boat nor an underwater unit, may
-call the colony's transport (automated type 7, if it is in the colony's
-list). If the budget covers its `Cost`, the cost is deducted at once
-(even if no tile is found). Then, for the enemy units in list order: the
-tiles of the enemy's footprint enlarged by 10 are collected (row by row),
-shuffled (for each position i, swap with position `rand() mod n`), and the
-first one that is a stopping tile for this unit type is used as the
-transport's destination *(?: how the transported unit is attached to the
-call is not traced)*.
+battle (strategic AI info present), with available AP **≥ 10**, that is
+neither a boat (movement class 4) nor an underwater unit (6), may call the
+colony's transport (automated type 7, if it is in the colony's list). If
+the budget covers its `Cost`, the cost is deducted at once (even if no tile
+is found). Then, for the enemy units in list order: the tiles of the
+enemy's footprint enlarged by 10 are collected (row by row), shuffled (for
+each position i, swap with position `rand() mod n`), and the first one that
+passes the unit placement test for this unit's type (inside the map,
+enterable for its whole footprint, owner 0's mine knowledge) is used as the
+destination.
+
+The call is p1 = the hunting unit's own tile (the top-left tile of its
+footprint), p2 = that destination. This is how the unit is "attached": the
+transport picks up whatever unit stands on p1 (automated-units.md 6.6),
+flies it to p2 under AA fire and leaves it there with 0 AP.
 
 ## 7. Randomness and difficulty
 
@@ -601,8 +672,7 @@ setting is not read by the AI's decision rules; it only scales AI damage
 - Faithful-but-odd rules to keep (or to put behind a "fixes" switch): the
   building tile coordinates (3.2), the 2 × 2 mine block, the asymmetric
   escort/defend areas, the patrol path that may end one tile off the route,
-  the free-list comparator, rule 3 of 4.2, and the non-submitted fighter
-  calls (6.1).
+  the free-list comparator, and rule 3 of 4.2.
 - Use `steps` = 0 for stationary fire.
 - The time slicing of 1.1 is not needed.
 
@@ -625,24 +695,21 @@ move, shot and autofire code, and order changes reach the clients as
   that is already in range fires without moving.
 - Not implemented yet: automated units (phases 2, 3, 6, 7 and 6.4), the
   counter-attack rules (buildings, mines and walls as targets), the AI
-  variant of the path search (41 × 41 window and its ignored random draw),
+  variant of the path search (42 × 42 window, 7-round cap and the ignored
+  random draw),
   so the random sequence differs from the original's.
 
 ## Open questions
 
-- Whether "legal shot from tile X" for firing positions includes the
-  `Jammer`, AP and side checks or only range and line of fire.
+- (Answered in 3.2: the firing-position test checks only range and line of
+  fire, not weapon, AP, side or `Jammer`.)
 - What happens with an Escort/Defend/Attack id that refers to no object:
   the program's test for "neither a unit nor a building" reads a variable
   that also holds the AP value, so a missing object might not be removed.
-- Whether destroy-type automated units called by the AI (fighters, gene
-  bomb) really never arrive (6.1, step 5).
-- The battle value behind the 300 / 700 / 1200 thresholds of the emergency
-  drop (6.3), and why that drop always uses `typeID` 19.
-- How the transported unit is linked to an AI transport call (6.4) and what
-  the transport then does with it.
-- The exact replacement-tile order in the Goto group move (shared with the
-  open question of tactical-movement.md 3.5).
+- Why the emergency drop (6.3) always uses `typeID` 19 (answered: the
+  battle value is `One Off Deployment`; the AI's destroy calls do arrive;
+  the AI transport picks up the unit on p1).
+- (Answered in 4.4: the replacement-tile order of the Goto group move.)
 - The intended meaning of the unused per-unit priority bonus, of
   `DanyUnitValue` and of the danger map; they may be remains of a planned
   "unit value" evaluation.

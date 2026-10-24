@@ -302,13 +302,26 @@ When the battle report is closed:
 
 ## 8. Saving
 
-The original saves the campaign record (colony, state, tactical province, the
-players' credits / tech / statistics / tech maps), the city scenario, the
-colony state and, during a battle, the battle itself. A game can be resumed
-in states 1, 3, 4 and 6 (and 0, which restarts the colony intro). The
-strategic phase also saves the "built in this phase" lists
-([city-building.md](city-building.md) 6) so that recycling after loading
-still refunds the full cost.
+The full description is in [savegame.md](savegame.md). In short:
+
+- Only the campaign can be saved, only by the host, and only from the city
+  and continent screens (state 3) and from the tactical and waiting views of
+  a battle after deployment (states 1, 4, 6). States 0, 2, 5 and 7,
+  deployment, reinforcement purchase and the battle report cannot be saved.
+- The original saves the campaign record (colony, state, tactical province,
+  the players' credits / tech / statistics / tech maps, difficulty, turn
+  time), the terrain change list, the city scenario, the colony state and,
+  during a province battle, the battle scenario with the battle's turn,
+  current player and objective counters. The strategic phase also saves the
+  "built in this phase" lists ([city-building.md](city-building.md) 6) so
+  that recycling after loading still refunds the full cost.
+- A game is resumed in states 1, 3, 4 and 6 (0 would restart the colony
+  intro but cannot be saved). A battle resumes at the start of the saved
+  current player's turn with the units' saved AP. A city battle gets a fresh
+  kind-7 objective.
+- Wrecks and rubble made during the battle, the `order` flag of pending
+  reinforcements, the AI's private state and the random-number state are
+  lost on reload (savegame.md 4).
 
 ## Notes for OpenDay
 
@@ -335,4 +348,5 @@ battle preparation, save files) and the campaign screens of `app/`.
   limit for network games) and the {3, 6, 9} choice of the multiplayer
   new-campaign menu.
 - Whether destroyed roads and exploded mines of the city are ever restored.
-- Saving in states 2, 5 and 7 (no resume path in the original).
+- (Answered in savegame.md 1.2: saving is not offered in states 0, 2, 5 and
+  7; loading such a state would start nothing.)

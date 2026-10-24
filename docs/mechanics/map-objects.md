@@ -206,13 +206,33 @@ build or destroy *(?: exact trigger set not traced)*.
 
 ## Mines and ruins
 
-- **Mines** (`MINES.DBI`): name = `Mine Types.ImageID` in upper case +
-  `000` or `001`. A Boolean state of the mine selects the suffix. Most
-  likely it is `armed`, but the mapping is not confirmed *(?)*. A mine is
-  drawn only if it is not hidden from the viewing player. The flags
-  `hidden_AI`, `hidden_1` … `hidden_4` are indexed by the viewing
-  player's slot (0 = AI, 1–4).
-- **Ruins** (`RUINS.DBI`): name = `Ruin Types.id`, one tile, no variants.
+### Mines
+
+- **Sprite** (`MINES.DBI`, layer 4, offset (0, 0)): name =
+  `Mine Types.ImageID` in upper case + a suffix chosen by the mine's
+  **`armed`** flag: armed → `001`, not armed → `000`.
+- Every shipped mine placement (2,392) has `armed` = 1, so the shipped maps
+  always show `MINE001` / `GMINE001`. In `MINES.DBI` the `000` and `001`
+  images are pixel-identical, so the distinction is invisible in practice.
+- Draw mode: the mine's own mode value, 0 in battle; 1 (darkened) while the
+  mine is being moved on the city screen (*Draw mode* below).
+- **Visibility**: a mine is put on the visual map only if it is not hidden
+  from the **local player**: the flag `hidden_AI` (slot 0) or
+  `hidden_1` … `hidden_4` of the local player's slot must be false.
+- **Revealing** a mine for slot 0 clears only `hidden_AI`. Revealing it for
+  **any human slot clears all four human flags at once**: human players
+  share their knowledge of mines.
+- Disarming a mine (armed = 0) also reveals it to everybody. The client does
+  this when an update says the mine is no longer armed; no server rule that
+  disarms a mine was found *(?)*.
+- Mine detection and mine explosions on the map: see
+  [unit-animation.md](unit-animation.md) 7.
+
+### Ruins
+
+`RUINS.DBI`: name = `Ruin Types.id`, one tile, no variants. Wrecks of
+destroyed units and the rubble of destroyed buildings are ruin objects too
+(*Changes during an animation phase* below).
 
 ## Buildings
 
@@ -240,39 +260,97 @@ tile at `(PosX + i, PosY + j)` uses
 - `ImageID` = `Building Types.ImageID` (compare case-insensitively).
 - `c` = color variant (below).
 - `d` = `1` if `Building Types.DamagedImages` is true **and**
-  `currentAR ≤ 0.33 × Armor` (the type's armor *(?: field identity
-  inferred)*), otherwise `0`.
+  `currentAR ≤ 0.33 × Building Types.Armor` (floating-point comparison),
+  otherwise `0`. This is the only visible damage state: there is no smoke,
+  fire or flame overlay on damaged buildings (no such clips or sprites
+  exist). The digit is recomputed whenever the buildings layer is rebuilt,
+  so a hit that brings the armor to a third or below swaps the sprites
+  instantly at the scheduled tick (*Changes during an animation phase*).
+  Shipped data: 58 building types with `DamagedImages` = 1 (and an
+  explosion clip), 19 with 0; the four towers have 1 but never use it.
 - `i` = offset along PosX (`0 … SizeX−1`), `j` = offset along PosY
   (`0 … SizeY−1`), each written as a decimal digit.
 
 So the `<x><y>` digits of the sprite name are the offsets along PosX and
 PosY respectively.
 
-**Towers** (`TransformIntoUnit` ≠ 65535) use the unit naming scheme
-instead: `<ImageID><c><facing><i><j>`. Where the tower's facing comes from
-was not traced *(?)*.
+**Towers** (`TransformIntoUnit` ≠ 65535: building types 100 `HTLA`,
+101 `HROK`, 102 `HLAS`, 103 `Htaa`, which turn into unit types 37–40) use
+the unit naming scheme instead, with the **facing digit fixed to 0** and
+**no damage digit**: `<code><c>0<i><j>` (e.g. `HLAS1000`), where `code` is
+the tower unit type's `facingsImageID`. A tower *building* has no facing
+state and never shows a damaged sprite. Two shipped SCEN1 scenarios place
+towers as buildings.
+
+As a **unit** (city battles turn towers into units, campaign.md) a tower
+follows the ordinary unit rules: its unit type has `Facings` = 1 and only a
+`T` shot clip (plus `E` and `I`), so when it fires it turns toward the
+target, plays `T` in that facing and afterwards keeps the new facing in its
+static sprite `<code><c><f>00` (unit-animation.md 6). A newly created tower
+unit starts with the facing given by its creation (database row or
+message). Static tower-unit sprites exist for facings 0–7 in colours 1–4
+(`HTLA`, `HLAS`) and 0–4 (`HROK`, `HTAA`).
 
 ### Color variant
 
-The color digit is not `playerOwner` itself. The program looks it up in a
-per-game **player-slot → color** table: `c = colorTable[playerOwner]`.
-Observed in all shipped scenarios:
+The color digit is not `playerOwner` itself. Every owned object (unit,
+building, tower) keeps a **color value** that the client computes when the
+object enters its copy of the scenario: `c = colorTable[playerOwner]`. The
+value is not stored in any database and not sent by the server.
 
-- Tauran, Shubblar and Shadamar buildings are always owned by the AI
-  (`playerOwner` 0), and only color variant `0` exists for them. So the
-  AI slot maps to `0`.
-- Human buildings are always owned by player slots 1–4 and exist in
-  variants `1`–`4` (some also in `0`).
+**The table is built per client** at the start of every game:
 
-How slots 1–4 map to colors was not traced. Most likely each slot uses the
-color the player chose in the user list, and by default slot *n* uses
-color *n* *(?)*. Until this is confirmed, `c = playerOwner` is a safe
-choice for slot ≥ 1, and `c = 0` for the AI slot.
+1. Start with the identity: `colorTable = [0, 1, 2, 3, 4]` (slot 0 = AI,
+   slots 1–4 = humans).
+2. Take the **local** player's slot `s` and the color `k` that player chose
+   (1–4, see below).
+3. Swap the entries `s` and `k`: `colorTable[s] = k`, `colorTable[k] = s`.
+
+Consequences:
+
+- The AI (slot 0) always gets color 0 (no player can choose 0).
+- The local player always sees himself in his chosen color; the player
+  whose slot number equals that color is shown in the local player's slot
+  color; everybody else keeps color = slot number. Only the local player's
+  choice is honoured, so two clients of the same game may show the same
+  player in different colors.
+- **Single player** (campaign, skirmish): the local player is slot 1 with
+  color 1, so the table is the identity (slot *n* → color *n*).
+
+Color numbers: 1 blue, 2 yellow, 3 purple, 4 green; 0 = the AI / race
+default (red in the interface lamps and selection triangles). The color is
+chosen in the multiplayer player set-up menu (`CMenuPlayerMulti`): four
+19×19 radio toggles at (35, 152), (70, 152), (105, 152), (140, 152), frames
+989, 995, 1001, 1007; the chosen color is the radio index + 1. It is stored
+per user as `User Color` in the `User List` of `GAMEINFO.MDB` (the program
+accepts 0–5 there, the menu produces 1–4). For a new game the server numbers
+the players in join order (slot = index + 1); a loaded game keeps its slots.
+
+The `Color Player Lookup` table of `GLOBAL.MDB` is never used by the
+program.
+
+Where the color value is used:
+
+| Use | Rule |
+|---|---|
+| static unit sprite (`UB.DBI`) | `<facingsImageID><c><facing or A–H><i><j>`, `c` = color value as is (0 stays 0) |
+| unit clip folder `P<c>` | unit-animation.md 1 |
+| static building sprite | `<ImageID><c><d><i><j>` |
+| tower building sprite | `<code><c>0<i><j>` (above) |
+| selection triangles `SU00c` (layer 17) | `c` = the unit's color value; the "marked tile" triangle (layer 18) always uses `SU000` |
+| deployment markers `DEPL<c><nn>` (layer 3) | `c` = `colorTable[local slot]`, the local player's own color |
+| minimap / overview-map dots | `Colors` rows by color value; owner 0 by race (tactical-interface.md 2.6) |
+
+Shipped sprites: Tauran, Shubblar and Shadamar buildings are always owned by
+the AI and exist only in color 0. Human buildings exist in colors 1–4 (some
+also in 0). Some human units and towers have no color-0 static sprite
+(e.g. `HTLA0…`, `HLAS0…` are missing; `HROK0…`, `HTAA0…` exist); the
+original then draws nothing for such an object *(?)*.
 
 ## Units (for reference)
 
 - Name: `<facingsImageID><c><f><i><j>`. `c` comes from the same color
-  lookup as for buildings *(?)*, `f` = facing digit `0`–`7`, and `i`, `j`
+  lookup as for buildings, `f` = facing digit `0`–`7`, and `i`, `j`
   = tile offsets inside the footprint (`0 0` for 1 × 1 units). Each
   footprint tile is drawn on its own cell, like buildings.
 - **Infantry in forest:** if the unit type's `Movement` is 2 (trooper)
@@ -340,18 +418,79 @@ Consequences:
 
 ### Draw mode
 
-Each feature carries a mode value. Bit 4 (16) selects a special drawing
-path that the UI markers use (`OBJT`, `LILBULB`, selection) *(?:
-probably translucent/blinking)*. The low 4 bits select one of several
-blit routines. Roads, walls, mines and buildings pass a per-object field
-that is normally 0. Units pass 0 or 1 depending on their state *(?)*.
-For a first implementation, draw everything with mode 0 (plain
-transparent blit).
+Each feature carries a mode byte: the **low 4 bits** select the blit, **bit
+4 (value 16)** defers the feature.
+
+| Low bits | Visual effect | Rule |
+|---|---|---|
+| 0 | normal | plain color-keyed copy |
+| 1 | 50 % darkened | checkerboard: opaque sprite pixels whose (column + row) is even keep their color, the other opaque pixels are written as palette index **0** (black) |
+| 2 | 50 % see-through | checkerboard with holes: only the even-parity opaque pixels are written, the others keep the background |
+| 3 | red stipple | like 1 with index **249** (red) |
+| 4 | green stipple | like 1 with index **250** (green) |
+| 5 | stipple in color 79 | like 1 with index **79** |
+
+Parity is per sprite pixel: (column, row) counted inside the sprite, not on
+the screen. Transparent (color-key) pixels are never written.
+
+**Bit 4 (16) — drawn on top**: the feature is not drawn in the cell pass.
+It is queued and drawn after all cells of the current redraw region, with
+its low-bits blit, so it is never covered by objects of cells in front.
+Used by the objective targets `OBJT001` / `OBJT002`, the tech marker
+`LILBULB`, the selection triangles, and the path markers **`PATH0002` /
+`PATH0003`** (the "crossable only" markers stay visible over the unit or
+building they cross; every other `PATH` sprite uses mode 0,
+tactical-movement.md).
+
+Who uses which mode:
+
+- **Units**: the unit's explicit mode if it is non-zero (1 for a unit
+  placed in the deployment view); otherwise **1 (darkened) when the unit's
+  usable AP (`currentAP − negAP`, at least 0) is below both its type's
+  `actionPointsShoot` and 4**, else 0. So units that can no longer fire this
+  turn are drawn darkened. The mode is recomputed whenever the units layer is
+  rebuilt (e.g. after a move or a hit that costs AP).
+- **Buildings, walls, mines**: their own mode, 0 in battle; the city screen
+  sets 1 on the object being moved.
+- Modes 2–5 were not seen on map objects; they are presumably used by
+  interface overlays (layer 8, cursor images) *(?)*. The city screen's
+  build cursor uses the 249 / 250 stipple (city-building.md 9.3), which
+  matches modes 3 / 4.
+
+## Changes during an animation phase
+
+Map objects change at fixed ticks of the animation phase
+(unit-animation.md 4). Every change is applied to the client's scenario copy
+and then the affected layer is **rebuilt** (all sprites of that layer are
+recomputed: variants, damage digits, colors, draw modes). Layers: roads,
+mines, ruins, buildings, walls, units; burned terrain forces a full
+redraw.
+
+| Event | When | Change |
+|---|---|---|
+| unit damaged | start tick of its record | AP and AR written, units rebuilt (may switch the unit to mode 1) |
+| unit destroyed | **end** of the unit's `E` clip (start tick if it has no clip) | unit removed; if the message carries a wreck name, a ruin object with that sprite is added on the unit's tile; ruins and units rebuilt |
+| building damaged / repaired | start tick | AR written, buildings rebuilt (damage digit recomputed, instant swap) |
+| building destroyed | start and end of its clip (26 frames, 25 ticks) | start: the building is **hidden** (its tiles are no longer drawn), buildings rebuilt; end: building removed, one ruin object per (tile, ruin name) pair of the message added, ruins and buildings rebuilt. Clip placement: unit-animation.md 3 |
+| tower building destroyed | start tick (towers have no clip) | nothing is hidden first; removal and rubble at once |
+| wall damaged | start tick | AR written, walls rebuilt (damage digit) |
+| wall destroyed | start tick (no clip) | the four orthogonal neighbors get their broken-end flag (*Walls*), the wall is removed, walls rebuilt |
+| road destroyed | start tick (no clip) | road removed, roads rebuilt |
+| bridge built, new unit, unit updated | start tick (no clip) | data change, layer rebuilt |
+| terrain burned | start tick (no clip), after the impact that caused it | the tile's terrain type is replaced, the new terrain sprite and its `Overlapping` flag are written into the cell, full redraw. An **instant sprite swap**: there is no fire or smoke animation |
+| tech building taken / lost | start tick (no clip) | `LILBULB` (layer 16, mode 16) added or removed; when added, the interface sound `TECH` plays |
+| mine detected | start tick | the mine is revealed for the detecting slot (*Mines*), mines rebuilt |
+| mine exploded / destroyed | clip start: the mine's feature is removed; end: mines rebuilt | unit-animation.md 7 |
+
+A hidden building is kept by a hide counter that starts at 0; its tile
+features are put on the map only while the counter is ≥ 0. The destruction
+clip's start lowers it by one.
 
 ## Deployment markers (bonus)
 
-`DEPL<p><nn>` (`SYMBOLS.DBI`, layer 3): `p` = player slot, `nn` = two
-digits from the neighbor mask above. The neighbor test was not traced.
+`DEPL<p><nn>` (`SYMBOLS.DBI`, layer 3): `p` = the **local player's color**
+(`colorTable[local slot]`, *Color variant*), `nn` = two digits from the
+neighbor mask above. The neighbor test was not traced.
 It presumably checks whether the neighbor tile is in the same player's
 deployment zone *(?)*. This table differs from the road/wall table:
 
@@ -359,12 +498,29 @@ deployment zone *(?)*. This table differs from the road/wall table:
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | `nn` | 0 | 13 | 15 | 14 | 10 | 1 | 7 | 4 | 12 | 3 | 9 | 6 | 11 | 2 | 8 | 5 |
 
+## Notes for OpenDay
+
+- Build the color table per client as described (identity, then swap the
+  local player's slot and chosen color). Single player needs nothing but
+  the identity.
+- Implement draw modes 0, 1 (units without enough AP to fire, deployment
+  units, moved city objects) and the deferred bit 16; modes 3 / 4 can share
+  the code of the city build cursor.
+- Use the mine's `armed` flag for the suffix even though the two images are
+  identical, so that modded data behaves as in the original.
+- Mine visibility is evaluated for the local player only; when a human
+  player detects a mine, clear all four human flags.
+
 ## Open questions
 
-- Content of the player-slot → color table for slots 1–4 (user-chosen
-  colors).
-- Which mine state selects `…001`.
-- Facing source for tower buildings; meaning of the draw-mode values.
+- (Answered: the player-slot → color table, the mine suffix (`armed`),
+  the tower-building facing (always 0) and the draw-mode values, see the
+  sections above.)
+- Whether any server rule disarms a mine (which would show the `000`
+  sprite); none was found.
+- Who uses draw modes 2–5 (presumably interface overlays and cursors).
+- What the original shows for an object whose color-0 static sprite does
+  not exist (probably nothing).
 - Exact events that trigger wall recomputation, and whether the quirk
   with repeated recomputation of broken isolated walls is visible in
   practice.

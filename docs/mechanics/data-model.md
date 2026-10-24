@@ -29,7 +29,7 @@ installation at run time.
   a lower-case letter, and the order of the three varies). The `LIBDAY.INI`
   `Language=` key selects the language. Text is Windows-1252.
 - **`Encyclopedia*`**: encyclopedia text. **`EncyclopediaFrame`**: frame
-  number of the matching picture, presumably in `ENCYCL\ENCYCL.SMK` *(?)*.
+  number (0-based) of the matching picture in `ENCYCL\ENCYCL.SMK` (encyclopedia.md).
 - **`Color_Red/Green/Blue`** on terrain, ruin, road, wall and mine types:
   one RGB color per tile type, most likely for the overview minimap *(?)*.
 - **Coordinates:** `PosX`/`PosY` are tile coordinates on the square
@@ -118,23 +118,28 @@ graphic can serve several building variants.
 transport, bridge builder, mine layer/detector, medic, bombers, nuke,
 paratroopers, Zeppelin, fighters, …). They are not placed as normal units.
 
-`Automated Units` (one row per `typeID`): `Race`, `Category` (→ automated
+`Automated Units` (one row per `typeID`): `Race` (authoritative; it differs
+from `AUTOMATED TYPE ID LOOKUP` for type 10), `Category` (→ automated
 category), `Cost`, `Prerequisite` (building `TypeID`), `DeployOnce`,
-`facingsImageID` (code of the animation in `ANMSUNIT.FF\AUTOUNIT`),
+`facingsImageID` (clip code in `ANMSUNIT.FF\AUTOUNIT`),
 `cursorID` (targeting cursor in `SYMBOLS.DBI`, e.g. `UATRANSP`), `Explain*`
 (the one-line instruction shown while targeting), the encyclopedia columns,
-and animation timing: `AnimationOK_Begin/Qty`, `AnimationDamaged_Begin/Qty`,
-`AnimationDestroyed_Begin/Qty` (frame ranges inside one animation for the
-three outcomes *(?)*), `FrameAction` (frame in which the effect happens),
-`FrameAA`, `AAPosX`, `AAPosY` (frame and screen position where anti-air fire
-can hit it *(?)*).
+and animation timing: `FrameAction` (1-based clip frame at which the effect
+is shown), `FrameAA` (1-based clip frame at which the AA units fire),
+`AAPosX`, `AAPosY` (screen point, in 1024-wide coordinates, at which the AA
+units aim; purely visual). `AnimationOK_Begin/Qty`,
+`AnimationDamaged_Begin/Qty`, `AnimationDestroyed_Begin/Qty` are loaded but
+not used: each outcome has its own clip.
 
 `Automated Units Infos` is an **entity–attribute–value** table:
 (`typeID`, `Property` → `Automated Units Properties.Enum`, `Value` as text).
-The properties hold per-type parameters such as armor, damage, damage type
-and area, mine detection range, the unit type / tech level / count / tile
-offsets of dropped units (up to five), and a second animation set
-(`Secondanim…`). Values must be parsed as integers by property.
+The properties hold per-type parameters such as armor (against AA fire),
+damage, damage type and area, mine detection range, repair amounts, the
+unit type / count / tile offsets / facings of dropped units (up to five;
+the tech-level property is not used), and the timing of a second animation
+(`Secondanim…`, transports). Values are parsed as integers by property (a
+missing property counts as 0). The full list of properties, their use and
+the shipped values are in [automated-units.md](automated-units.md) 1.
 
 ### Other rule tables
 
@@ -300,11 +305,12 @@ unit row, except that two units have projectile files while their rows say
 Special folders: `BUILDING\<ImageID>.SMK` (one animation per building type,
 probably the destruction/explosion sequence, cf. `ExplosionAnimation_*`
 *(?)*), `MINE\MINE.SMK` / `GMINE.SMK` (mine explosions), and
-`AUTOUNIT\<code><s><n>.SMK` for automated units, with `<n>` = `1`–`3` and
-`<s>` = `0` for the main animation and `1` for the second animation set
-that some types define via `Secondanim…` properties *(?)*. The automated
-units' `…_Begin/_Qty` frame ranges point into these files *(?)*. The meaning
-of `1`–`3` is open: perhaps a resolution or zoom level.
+`AUTOUNIT\<code><s><n>.SMK` for automated units, with `<n>` = the outcome
+(`1` OK, `2` damaged by AA fire, `3` shot down) and `<s>` = `0` for the
+first animation and `1` for the second one (the delivery leg of the
+transports `HHTR`, `THTR`, timed by the `Secondanim…` properties). The
+whole clip is played; the `…_Begin/_Qty` columns are not used
+(automated-units.md 8).
 
 ### Other DBI files
 
@@ -323,8 +329,8 @@ of `1`–`3` is open: perhaps a resolution or zoom level.
 - Which of the saved queries (if any) the original program executes.
 - Exact semantics of `Units On Map.Turn` / `Probability` / `EnemyUnitType`,
   `negAP`, `necessary_unit`, `burned_min`.
-- Meaning of the numbers in death-match file names and of the `1`–`3` suffix
-  of automated-unit animations.
+- Meaning of the numbers in death-match file names. (The `1`–`3` suffix of
+  automated-unit animations is the outcome, see above.)
 - Where the objective icons (`OBJ000`…) are stored (not in any `.DBI`;
   `SYMBOLS.DBI` has similar `OBJT…` names).
 - How `GAMEINFO.MDB` is copied/used at run time (`CACHE\` folder).
