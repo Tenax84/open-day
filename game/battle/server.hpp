@@ -40,6 +40,8 @@ private:
     void handleMove(const MoveRequest& r);
     void handleShoot(const ShootRequest& r);
     void handleEndTurn(const EndTurnRequest& r);
+    void handleDeploy(const DeployRequest& r);
+    void handleUndeploy(const UndeployRequest& r);
     // Runs the objective check; ends the battle when it is decided.
     bool checkEnd();
     // battle-flow.md 1.3: objective check, next participant, new turn.
@@ -66,6 +68,7 @@ private:
     CombatOptions options_;
     std::mt19937 rng_;
     std::vector<Event> out_;
+    std::vector<int> deployed_; // units placed during deployment (may be taken back)
 };
 
 } // namespace openday::game

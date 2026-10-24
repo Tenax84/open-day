@@ -170,9 +170,9 @@ counts as gone when neither a unit nor a building with that id exists.
 - The zone is used for things that have no id: mine fields and road/bridge
   sections. Walls and other objects on zone tiles do not count.
 
-Shipped examples: `s1-2-1` ("Destroy the two Shubblar Claptraps", two AI
-units in the ID list), `s1-5-1` ("Destroy the enemy mine field", 18 zone
-tiles, all mines), `s4-17-1` ("Destroy all the bridge sections", 18 zone
+Shipped examples: `s1-2-1` (two Shubblar units to destroy, two AI
+units in the ID list), `s1-5-1` (a mine field to clear, 18 zone
+tiles, all mines), `s4-17-1` (bridge sections to destroy, 18 zone
 tiles, all road tiles). N (10–20) is not used.
 
 ### 2.3 Kind 1 — Hold Position
@@ -217,7 +217,7 @@ alive. The owner does not matter for the rule.
 
 ### 2.5 Kind 3 — Protect (zone)
 
-"The zone must be cleared of enemy presence at the end of the mission."
+The zone has to be free of enemies when the mission ends.
 
 - **Win:** T > `turn_qty` (checked first).
 - **Loss:** only while **T = `turn_qty`** (the last round): if at any check
@@ -250,7 +250,7 @@ listed three times; duplicates are harmless).
 
 The turn limit is a *win* here. Shipped examples: `s2-9-1` ("Protect the
 building from destruction for 10 turns", one building owned by slot 0),
-`s4-7-1` ("Protect the ruins").
+`s4-7-1` (ruins to protect).
 
 ### 2.8 Kind 6 — Destroy All Except
 
@@ -262,8 +262,8 @@ The ID list holds the exempt objects.
 - Otherwise common rules (turn limit → loss).
 
 So destroying an exempt object loses the battle. Shipped examples: `s1-6-1`
-and the capital maps `s<n>-1-1` (no ids: "Destroy all enemy units"),
-`s3-5-1` ("Destroy all units except towers": ten Crystal Towers exempt;
+and the capital maps `s<n>-1-1` (no ids: destroy every enemy unit),
+`s3-5-1` (destroy every unit but the towers: ten Crystal Towers exempt;
 destroying one of them ends the battle as a defeat). N is not used.
 
 ### 2.9 Kind 7 — Counter-attack
@@ -289,8 +289,8 @@ result message ignores it).
 | 10 | slug fest | `dms*` | Player 1 has no unit → loser 1; otherwise player 2 has no unit → loser 2. At the turn limit: decided, loser 5; the winner is then the one with more points (score in 5.1). |
 
 "Has no Headquarters" means no building of type 130 owned by that player.
-N is not used. Briefings agree: `dma2-10` "Defend [the HQ] for 10 turns"
-(`turn_qty` 10), `dmc3-6` "Destroy the enemy Headquarter", `dms1-4`
+N is not used. Briefings agree: `dma2-10` hold the HQ for 10 turns
+(`turn_qty` 10), `dmc3-6` destroy the enemy HQ, `dms1-4`
 "Destroy as many enemy units as you can. The winner will be the one with the
 most points".
 
@@ -298,7 +298,7 @@ most points".
 
 ### 3.1 Surrender and cheats
 
-- **Surrender** ("Do you really want to surrender?") sends the cheat-lose
+- **Surrender** (surrender confirmation) sends the cheat-lose
   request: the battle ends at the next check as a failure (loser 5).
 - With cheats enabled, Tab+W / Tab+L send the win / lose requests (same
   flags). Kind 7 ignores both flags.
@@ -392,8 +392,8 @@ moves are accepted) and sends one result message to all clients:
 - death match: the loser code.
 
 The client then shows the debriefing: `Scenario Info.Aftermath*` (in the
-selected language) on success, a generic "You have failed this scenario"
-text otherwise, and "New technologies found: n". Province rewards
+selected language) on success, a generic failure
+text otherwise, and the number of new technologies. Province rewards
 (`Province List.Credits` / `.Tech`) and `Scenario Info.Credits` are applied
 by the campaign layer after the debriefing *(?: not traced in detail)*.
 

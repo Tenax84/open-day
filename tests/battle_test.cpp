@@ -67,8 +67,12 @@ GlobalRules makeRules() {
     r.damageEasy = 70;
     r.damageHard = 130;
     r.units[{kTank, 0}] = armed(1, 100, 50, 6, 30, 30, 10);
+    r.units[{kTank, 0}].cost = 50;
+    r.units[{kTank, 0}].typeId = kTank;
     UnitType trooper = armed(2, 80, 5, 4, 40, 3, 1);
     trooper.mineDetectionRange = 1;
+    trooper.cost = 20;
+    trooper.typeId = kTrooper;
     r.units[{kTrooper, 0}] = trooper;
     r.units[{kChopper, 0}] = armed(5, 200, 20, 5, 50, 10, 5);
     r.units[{kBoat, 0}] = armed(4, 200, 40, 6, 50, 20, 5);
@@ -764,6 +768,49 @@ void testAi() {
     CHECK(first<TurnStarted>(ev) && first<TurnStarted>(ev)->player == 0 && !s6.state().over);
 }
 
+void testDeployment() {
+    BattleState s = world(open(8));
+    add(s, kAlienTank, 0, {7, 7});
+    s.deployZone[1] = {{0, 0}, {1, 0}, {2, 0}, {0, 1}};
+    s.purchasable = {kTank, kTrooper};
+    s.deployBudget[1] = 110;
+    s.deploying = true;
+    startBattle(s);
+    const BattleState initial = s;
+    BattleServer server(s, {}, 1);
+    std::vector<Event> all;
+    auto send = [&](const Request& r) {
+        std::vector<Event> e = server.handle(r);
+        all.insert(all.end(), e.begin(), e.end());
+        return e;
+    };
+    const int tankCost = rules().units.at({kTank, 0}).cost;
+    // Orders are refused while deploying, and the computer player waits.
+    std::vector<Event> ev = send(EndTurnRequest{0});
+    CHECK(count<RequestRejected>(ev) == 1 && count<UnitMoved>(ev) == 0);
+    // Outside the zone: refused.
+    ev = send(DeployRequest{1, {{kTank, -1, {5, 5}}}});
+    CHECK(count<RequestRejected>(ev) == 1 && count<UnitAdded>(ev) == 0);
+    // Inside: placed, facing the map centre, paid for.
+    ev = send(DeployRequest{1, {{kTank, -1, {0, 0}}, {kTrooper, -1, {1, 0}}}});
+    CHECK(count<UnitAdded>(ev) == 2);
+    const DeployBudget* budget = first<DeployBudget>(ev);
+    CHECK(budget && budget->budget == 110 - tankCost - rules().units.at({kTrooper, 0}).cost);
+    CHECK(server.state().unit(1).owner == 1 && server.state().unit(1).facing == 7);
+    // An occupied tile and an unknown type are skipped.
+    ev = send(DeployRequest{1, {{kTank, -1, {0, 0}}, {kParalyzer, -1, {2, 0}}}});
+    CHECK(count<UnitAdded>(ev) == 0);
+    // Taken back: refunded. Scenario units cannot be taken back.
+    ev = send(UndeployRequest{1, 1});
+    CHECK(count<UnitRemoved>(ev) == 1 && server.state().deployBudget[1] == 110 - rules().units.at({kTrooper, 0}).cost);
+    CHECK(count<RequestRejected>(send(UndeployRequest{1, 0})) == 1);
+    // Starting the battle ends the deployment.
+    std::vector<Event> start = server.start();
+    all.insert(all.end(), start.begin(), start.end());
+    CHECK(!server.state().deploying && count<RequestRejected>(send(DeployRequest{1, {{kTank, -1, {2, 0}}}})) == 1);
+    checkReplica(initial, all, server.state());
+}
+
 void testSides() {
     UnitType convoyAlien, convoyHuman, plain;
     convoyAlien.isConvoy = convoyHuman.isConvoy = true;
@@ -790,6 +837,7 @@ int main() {
     testObjectives();
     testReinforcements();
     testAi();
+    testDeployment();
     testSides();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

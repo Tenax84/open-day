@@ -1,6 +1,7 @@
 add_library(openday_game
     anim/animator.cpp
     anim/battle_animations.cpp
+    anim/battle_session.cpp
     anim/battle_view.cpp
     anim/unit_animation.cpp
     battle/ai.cpp

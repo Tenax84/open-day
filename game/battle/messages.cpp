@@ -62,6 +62,7 @@ void applyEvent(BattleState& s, const Event& event) {
                    [&](const TurnStarted& e) {
                        s.currentPlayer = e.player;
                        s.turn = e.turn;
+                       s.deploying = false;
                        refillAp(s, e.player);
                    },
                    [&](const BattleOver& e) {
@@ -85,6 +86,10 @@ void applyEvent(BattleState& s, const Event& event) {
                        std::erase_if(s.reinforcements, [&](const Reinforcement& r) { return r.unitId == e.id; });
                    },
                    [&](const OrderChanged& e) { s.unit(e.unit).order = e.order; },
+                   [&](const DeployBudget& e) {
+                       if (e.player >= 0 && e.player < kPlayerSlots) s.deployBudget[static_cast<std::size_t>(e.player)] = e.budget;
+                   },
+                   [&](const UnitRemoved& e) { s.removeUnit(e.unit); },
                    [&](const RequestRejected&) {},
                },
                event);

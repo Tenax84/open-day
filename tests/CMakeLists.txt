@@ -38,3 +38,7 @@ add_test(NAME anim_test COMMAND anim_test)
 add_executable(battle_test battle_test.cpp)
 target_link_libraries(battle_test PRIVATE openday_game openday_warnings)
 add_test(NAME battle_test COMMAND battle_test)
+
+add_executable(ui_test ui_test.cpp)
+target_link_libraries(ui_test PRIVATE openday_ui openday_warnings)
+add_test(NAME ui_test COMMAND ui_test)

@@ -14,8 +14,8 @@
 namespace openday::game {
 
 // The DBI archive a sprite comes from.
-enum class SpriteSet { Terrain, Roads, Walls, Mines, Ruins, UnitsBuildings, Symbols };
-inline constexpr std::size_t kSpriteSetCount = 7;
+enum class SpriteSet { Terrain, Roads, Walls, Mines, Ruins, UnitsBuildings, Symbols, ListBox };
+inline constexpr std::size_t kSpriteSetCount = 8;
 
 // Draw order of objects on the same tile, after the terrain
 // (docs/mechanics/map-objects.md, "Drawing").

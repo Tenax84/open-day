@@ -77,6 +77,7 @@ void BattleView::apply(const std::vector<Event>& events) {
                            if (const UnitType* t = state_.unitType(e.typeId, e.techLevel))
                                anim_.addUnit({t, e.owner, e.facing, e.pos.x, e.pos.y, true});
                        },
+                       [&](const UnitRemoved& e) { anim_.removeUnit(e.unit); },
                        [&](const TerrainBurned& e) {
                            anim_.schedule([this, e] { scene_.setTerrain(e.tile.x, e.tile.y, e.terrain); });
                        },

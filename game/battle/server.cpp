@@ -138,8 +138,17 @@ std::vector<Event> BattleServer::handle(const Request& request) {
         out_.push_back(RequestRejected{"the battle is over"});
         return std::move(out_);
     }
-    std::visit(Overloaded{[&](const MoveRequest& r) { handleMove(r); }, [&](const ShootRequest& r) { handleShoot(r); },
-                          [&](const EndTurnRequest& r) { handleEndTurn(r); }},
+    const bool deploying = state_.deploying;
+    std::visit(Overloaded{[&](const MoveRequest& r) { deploying ? emit(RequestRejected{"deployment"}) : handleMove(r); },
+                          [&](const ShootRequest& r) { deploying ? emit(RequestRejected{"deployment"}) : handleShoot(r); },
+                          [&](const EndTurnRequest& r) { deploying ? emit(RequestRejected{"deployment"}) : handleEndTurn(r); },
+                          [&](const DeployRequest& r) { handleDeploy(r); },
+                          [&](const UndeployRequest& r) { handleUndeploy(r); },
+                          [&](const CheatRequest& r) {
+                              // Kind 7 (counter-attack) ignores the flags.
+                              if (state_.objective.kind == 7) return emit(RequestRejected{"not in a counter-attack"});
+                              emit(BattleOver{state_.turn, r.win, 5});
+                          }},
                request);
     runComputerTurns();
     return std::move(out_);
@@ -358,7 +367,7 @@ bool BattleServer::fireAt(int shooter, Point target, bool repeat) {
 }
 
 void BattleServer::runComputerTurns() {
-    if (!options_.computerAi || !state_.computerPlayer) return;
+    if (!options_.computerAi || !state_.computerPlayer || state_.deploying || state_.turn < 1) return;
     // Without a human participant the computer player would play alone forever.
     const bool humans = std::any_of(state_.players.begin(), state_.players.end(), [](int p) { return p != 0; });
     for (int guard = 0; humans && guard < 100 && !state_.over && state_.currentPlayer == 0; ++guard) {
@@ -506,6 +515,44 @@ void BattleServer::destroyBuilding(int buildingIndex) {
     }
     emit(std::move(e));
     for (const Point p : footprint) burn(p);
+}
+
+void BattleServer::handleDeploy(const DeployRequest& r) {
+    if (!state_.deploying) return emit(RequestRejected{"the battle has started"});
+    if (r.player < 1 || r.player >= kPlayerSlots) return emit(RequestRejected{"invalid player"});
+    int budget = state_.deployBudget[static_cast<std::size_t>(r.player)];
+    int nextId = 1;
+    for (const BattleUnit& u : state_.units()) nextId = std::max(nextId, u.id + 1);
+    const int size = state_.size();
+    bool placed = false;
+    for (const DeployEntry& e : r.entries) {
+        const UnitType* type = state_.unitType(e.typeId, e.techLevel);
+        // Skipped: unknown or not offered, too expensive, outside the zone,
+        // or a tile the unit cannot stand on.
+        if (!type || std::find(state_.purchasable.begin(), state_.purchasable.end(), e.typeId) == state_.purchasable.end())
+            continue;
+        if (type->cost > budget || !state_.inDeployZone(r.player, e.pos)) continue;
+        BattleUnit probe;
+        probe.type = type;
+        probe.owner = r.player;
+        if (!evaluateTile(state_, probe, e.pos).enterable) continue;
+        budget -= type->cost;
+        deployed_.push_back(static_cast<int>(state_.units().size()));
+        emit(UnitAdded{nextId++, e.typeId, e.techLevel, r.player, e.pos, facingToward(e.pos, {size / 2, size / 2}), {}});
+        placed = true;
+    }
+    if (placed) emit(DeployBudget{r.player, budget});
+    else emit(RequestRejected{"cannot deploy there"});
+}
+
+void BattleServer::handleUndeploy(const UndeployRequest& r) {
+    if (!state_.deploying) return emit(RequestRejected{"the battle has started"});
+    if (std::find(deployed_.begin(), deployed_.end(), r.unit) == deployed_.end() || !state_.unit(r.unit).alive ||
+        state_.unit(r.unit).owner != r.player)
+        return emit(RequestRejected{"not a deployed unit"});
+    const int refund = state_.unit(r.unit).type->cost;
+    emit(UnitRemoved{r.unit});
+    emit(DeployBudget{r.player, state_.deployBudget[static_cast<std::size_t>(r.player)] + refund});
 }
 
 void BattleServer::handleEndTurn(const EndTurnRequest& r) {

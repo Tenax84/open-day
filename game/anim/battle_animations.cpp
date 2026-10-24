@@ -51,6 +51,13 @@ int BattleAnimations::addUnit(MapUnit unit) {
     return index;
 }
 
+void BattleAnimations::removeUnit(int unit) {
+    schedule([this, unit] {
+        entities_.units[static_cast<std::size_t>(unit)].alive = false;
+        refreshUnit(unit);
+    });
+}
+
 void BattleAnimations::hideUnit(int unit) { ++unitHidden_[static_cast<std::size_t>(unit)]; }
 
 void BattleAnimations::showUnit(int unit) {

@@ -26,6 +26,9 @@ struct BuildingType {
     bool hasRuin = false;
     int id = 0; // TypeID; 130 = Headquarters
     int aiCategory = 9; // AI Category Lookup
+    std::string name;   // NameEnglish
+    int techReward = 0;
+    int category = 0;   // Building Category Lookup (1 = ruin)
 };
 
 // Unit actions with their own animation clip, in the program's order
@@ -67,6 +70,8 @@ struct UnitType {
     int typeId = 0;
     int cost = 0;
     int aiCategory = 0; // AI Category Lookup
+    std::string name;   // NameEnglish
+    int techLevel = 0;  // unitTechLevel of this row
 };
 
 struct WallType {
@@ -86,10 +91,15 @@ struct MineType {
     int damageRandom = 0;
 };
 
+struct Rgb {
+    int r = 0, g = 0, b = 0;
+};
+
 struct TerrainType {
     TerrainClass cls = TerrainClass::Unknown;
     bool canFireThrough = true;
     std::string burned; // TERRAINS.DBI name after burning; empty = cannot burn
+    Rgb color{};        // minimap color
 };
 
 struct RuinType {
@@ -108,6 +118,7 @@ struct GlobalRules {
     std::array<int, 2> ranges{3, 6};                      // Ranges: Short, Medium
     int damageEasy = 100, damageHard = 100;               // Difficulty, percent
     std::array<std::array<int, 12>, 12> aiPriority{};     // AI Priority [source][target] category
+    std::map<std::pair<int, int>, Rgb> colors;            // Colors: (Type, Enum) -> minimap color
 
     TerrainClass classOf(const std::string& terrainName) const;
     const TerrainType* terrainType(const std::string& terrainName) const;

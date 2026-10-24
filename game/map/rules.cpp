@@ -40,7 +40,7 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                    "ShootProjectileAnimation_Begin, ShootImpactAnimation_Begin, ExplosionAnimation_Begin, "
                    "actionPoints, SizeX, SizeY, MineDetectionRange, Armor, UnitHasWeapon, weaponType, weaponRange, "
                    "weaponMinimumRange, HitShortRange, HitMediumRange, HitLongRange, actionPointsShoot, damageType, "
-                   "damageBase, damageRandom, DamageArea, canOverwatch, Jammer, Cost, AIcategory "
+                   "damageBase, damageRandom, DamageArea, canOverwatch, Jammer, Cost, AIcategory, NameEnglish "
                    "FROM \"Unit Types\"",
                    [&](const data::Row& row) {
                        UnitType u;
@@ -76,16 +76,19 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                        u.cost = toInt(row, 41);
                        u.aiCategory = toInt(row, 42);
                        u.typeId = toInt(row, 0);
+                       u.techLevel = toInt(row, 1);
+                       u.name = row.isNull(43) ? std::string() : row.text(43);
                        r.units[{toInt(row, 0), toInt(row, 1)}] = std::move(u);
                    });
     global.forEach("SELECT TypeID, ImageID, SizeX, SizeY, Armor, DamagedImages, ExplosionAnimation_Begin, Race, "
-                   "isDestructible, hasRuin, AIcategory FROM \"Building Types\"",
+                   "isDestructible, hasRuin, AIcategory, NameEnglish, TechReward, BuildingCat FROM \"Building Types\"",
                    [&](const data::Row& row) {
                        r.buildings[toInt(row, 0)] =
                            BuildingType{toUpper(row.text(1)), toInt(row, 2),         toInt(row, 3),
                                         toInt(row, 4),        row.integer(5) != 0,   row.integer(6) != -1,
                                         toInt(row, 7),        row.integer(8) != 0,   row.integer(9) != 0,
-                                        toInt(row, 0),        toInt(row, 10)};
+                                        toInt(row, 0),        toInt(row, 10),        row.isNull(11) ? std::string() : row.text(11),
+                                        toInt(row, 12),       toInt(row, 13)};
                    });
     global.forEach("SELECT RoadType, img_id, ar FROM \"Road Types\"", [&](const data::Row& row) {
         r.roads[toInt(row, 0)] = RoadType{toUpper(row.text(1)), toInt(row, 2)};
@@ -98,10 +101,17 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                        r.mines[toInt(row, 0)] =
                            MineType{toUpper(row.text(1)), toInt(row, 2) == 1, toInt(row, 3), toInt(row, 4)};
                    });
-    global.forEach("SELECT id, type, can_fire_through, burned_id FROM \"Terrain Types\"", [&](const data::Row& row) {
-        r.terrain[toUpper(row.text(0))] = TerrainType{static_cast<TerrainClass>(toInt(row, 1)), row.integer(2) != 0,
-                                                       row.isNull(3) ? std::string() : toUpper(row.text(3))};
-    });
+    global.forEach("SELECT id, type, can_fire_through, burned_id, Color_Red, Color_Green, Color_Blue FROM \"Terrain Types\"",
+                   [&](const data::Row& row) {
+                       r.terrain[toUpper(row.text(0))] =
+                           TerrainType{static_cast<TerrainClass>(toInt(row, 1)), row.integer(2) != 0,
+                                       row.isNull(3) ? std::string() : toUpper(row.text(3)),
+                                       Rgb{toInt(row, 4), toInt(row, 5), toInt(row, 6)}};
+                   });
+    if (global.hasTable("Colors"))
+        global.forEach("SELECT Type, Enum, Color_Red, Color_Green, Color_Blue FROM \"Colors\"", [&](const data::Row& row) {
+            r.colors[{toInt(row, 0), toInt(row, 1)}] = Rgb{toInt(row, 2), toInt(row, 3), toInt(row, 4)};
+        });
     global.forEach("SELECT Short, Medium FROM \"Ranges\"",
                    [&](const data::Row& row) { r.ranges = {toInt(row, 0), toInt(row, 1)}; });
     if (global.hasTable("AI Priority"))

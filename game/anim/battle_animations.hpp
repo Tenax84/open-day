@@ -41,6 +41,8 @@ public:
     // Adds a unit that appears when the actions scheduled so far have
     // played. Returns its entity index.
     int addUnit(MapUnit unit);
+    // Removes a unit without an explosion (taken back during deployment).
+    void removeUnit(int unit);
     // Runs `fn` when the actions scheduled so far have played.
     void schedule(std::function<void()> fn);
 

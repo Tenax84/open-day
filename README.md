@@ -84,8 +84,28 @@ graphics of your installation.
   sends orders first and prints the server's events, and `--ticks N`
   captures an animation in progress.
 
+- `openday` — the game program (work in progress): intro video, main menu,
+  skirmish battles with deployment, the original tactical interface (side
+  panel, minimap, unit information, path preview, objectives dialog,
+  options), the computer player, and the battle report. Campaign, saving
+  and multiplayer are not there yet.
+
+  ```
+  openday --game-dir "<game dir>" --data ~/openday-data
+  ```
+
+  `--no-intro` skips the intro, `--mute` starts without sound and music,
+  `--scale N` sets the window size, `--cheats` enables Tab + W / L in
+  battle. The resolution of the battle screens (640×480 or 1024×768) is
+  chosen in the main menu.
+
 Everything these tools produce comes from your own game data; do not
 redistribute it.
+
+## Third-party components
+
+See [THIRD_PARTY.md](THIRD_PARTY.md): SDL3, SQLite, stb_truetype, stb_vorbis
+and the Liberation Sans font, all fetched at build time.
 
 ## Clean-room policy
 

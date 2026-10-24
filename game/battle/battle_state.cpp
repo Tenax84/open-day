@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <set>
+#include <tuple>
 
 namespace openday::game {
 namespace {
@@ -143,6 +144,12 @@ const UnitType* BattleState::unitType(int typeId, int techLevel) const {
     return it != rules_->units.end() && it->first.first == typeId ? &it->second : nullptr;
 }
 
+bool BattleState::inDeployZone(int player, Point p) const {
+    if (player < 0 || player >= kPlayerSlots) return false;
+    const auto& zone = deployZone[static_cast<std::size_t>(player)];
+    return std::any_of(zone.begin(), zone.end(), [&](Point z) { return z.x == p.x && z.y == p.y; });
+}
+
 int BattleState::roadTypeAt(Point p) const {
     const int r = roadAt(p);
     return r < 0 ? -1 : roads_[static_cast<std::size_t>(r)].type;
@@ -231,6 +238,22 @@ BattleState loadBattle(const data::SqliteDb& scenario, const GlobalRules& rules,
             scenario.forEach("SELECT PosX, PosY FROM \"Objectives Pos List\"",
                              [&](const data::Row& r) { s.objective.zone.push_back({toInt(r, 0), toInt(r, 1)}); });
     }
+    // Deployment zones: a tile listed for several players belongs to the
+    // lowest slot only.
+    if (scenario.hasTable("Deployment")) {
+        std::set<std::pair<int, int>> taken;
+        std::vector<std::tuple<int, int, int>> rows;
+        scenario.forEach("SELECT player, PosX, PosY FROM \"Deployment\"", [&](const data::Row& r) {
+            rows.emplace_back(toInt(r, 0), toInt(r, 1), toInt(r, 2));
+        });
+        std::sort(rows.begin(), rows.end());
+        for (const auto& [player, x, y] : rows)
+            if (player >= 1 && player < kPlayerSlots && s.inside({x, y}) && taken.insert({x, y}).second)
+                s.deployZone[static_cast<std::size_t>(player)].push_back({x, y});
+    }
+    if (scenario.hasTable("One Off Units Available"))
+        scenario.forEach("SELECT Enum FROM \"One Off Units Available\" WHERE Available <> 0 ORDER BY Counter",
+                         [&](const data::Row& r) { s.purchasable.push_back(toInt(r, 0)); });
     // Death match (objective kinds 8-10) has no computer player.
     s.computerPlayer = s.objective.kind < 8 || s.objective.kind > 10;
     if (scenario.hasTable("Reinforcement"))

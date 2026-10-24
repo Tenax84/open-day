@@ -47,7 +47,7 @@ SpriteLibrary SpriteLibrary::fromGameDir(const std::filesystem::path& gameDir) {
     static constexpr std::pair<SpriteSet, const char*> kFiles[] = {
         {SpriteSet::Terrain, "TERRAINS.DBI"}, {SpriteSet::Roads, "ROADS.DBI"}, {SpriteSet::Walls, "WALLS.DBI"},
         {SpriteSet::Mines, "MINES.DBI"},      {SpriteSet::Ruins, "RUINS.DBI"}, {SpriteSet::UnitsBuildings, "UB.DBI"},
-        {SpriteSet::Symbols, "SYMBOLS.DBI"},
+        {SpriteSet::Symbols, "SYMBOLS.DBI"}, {SpriteSet::ListBox, "LISTBOX.DBI"},
     };
     SpriteLibrary lib;
     for (const auto& [set, file] : kFiles)

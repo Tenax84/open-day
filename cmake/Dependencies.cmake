@@ -36,3 +36,21 @@ if(OPENDAY_BUILD_VIEWER)
         FetchContent_MakeAvailable(SDL3)
     endif()
 endif()
+
+# stb_truetype (public domain / MIT): rasterizes the user-interface font.
+FetchContent_Declare(stb
+    URL https://github.com/nothings/stb/archive/31c1ad37456438565541f4919958214b6e762fb4.tar.gz
+    URL_HASH SHA256=e4e3bba9c572a4a4148373a914d88ea0f0d11de8cc2c66739926e7eca0223319
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(stb)
+
+# Liberation Sans (SIL Open Font License 1.1): metric-compatible substitute
+# for the Arial text the original draws with Windows GDI
+# (docs/mechanics/interface.md). Embedded into the program.
+FetchContent_Declare(liberation_fonts
+    URL https://github.com/liberationfonts/liberation-fonts/files/7261482/liberation-fonts-ttf-2.1.5.tar.gz
+    URL_HASH SHA256=7191c669bf38899f73a2094ed00f7b800553364f90e2637010a69c0e268f25d0
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(liberation_fonts)

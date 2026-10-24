@@ -167,6 +167,14 @@ public:
 
     Objective objective;
     std::vector<Reinforcement> reinforcements; // not yet placed
+
+    // Deployment (battle-flow.md 1.2): while `deploying`, human players
+    // place units bought from their budget on their zone tiles.
+    bool deploying = false;
+    std::array<std::vector<Point>, kPlayerSlots> deployZone{};
+    std::array<int, kPlayerSlots> deployBudget{};
+    std::vector<int> purchasable; // One Off Units Available: unit typeIDs
+    bool inDeployZone(int player, Point p) const;
     // Hold Position bookkeeping (battle-flow.md 2.3); server only.
     int holdCount = 0;
     int lastHeldTurn = -1;

@@ -33,8 +33,7 @@
 // selection, Enter ends the turn. The window title shows the turn, the
 // player, the selected unit and the hit chance at the tile under the mouse.
 
-#include "anim/battle_animations.hpp"
-#include "anim/battle_view.hpp"
+#include "anim/battle_session.hpp"
 #include "battle/combat.hpp"
 #include "battle/movement.hpp"
 #include "battle/objectives.hpp"
@@ -127,82 +126,20 @@ struct Palettes {
 
 std::string describe(const game::BattleState& s, const game::Event& event);
 
-// A loaded scenario with its battle: the server holds the authoritative
-// state, the view the client's copy. Heap-allocated as a whole: the
-// animations refer to the scene and the entities.
-struct LoadedMap {
-    std::string name;
-    game::MapEntities entities;
-    game::MapScene scene;
-    game::BattleAnimations battle;
-    game::BattleServer server;
-    game::BattleView view;
-    std::function<void(const game::Event&)> log; // optional
-
-    LoadedMap(std::string n, game::TerrainMap terrain, std::vector<game::MapSprite> objects, game::MapEntities ent,
-              game::BattleState state, const game::GlobalRules& rules, render::AnimationCache* clips, std::uint32_t seed,
-              game::CombatOptions options)
-        : name(std::move(n)), entities(std::move(ent)), scene(std::move(terrain), std::move(objects)),
-          battle(scene, entities, rules, clips), server(state, options, seed),
-          view(std::move(state), scene, battle) {
-        view.apply(server.start());
-    }
-
-    // Sends a request and plays the answer. Returns the refusal, if any.
-    std::string send(const game::Request& r) {
-        const std::vector<game::Event> events = server.handle(r);
-        if (log)
-            for (const game::Event& e : events) log(e);
-        view.apply(events);
-        std::string refused;
-        for (const game::Event& e : events)
-            if (const auto* rej = std::get_if<game::RequestRejected>(&e)) refused = rej->reason;
-        return refused;
-    }
-};
+using LoadedMap = game::BattleSession;
 
 std::unique_ptr<LoadedMap> loadMap(const fs::path& path, const game::GlobalRules& rules, render::AnimationCache* clips,
                                    std::uint32_t seed, bool ai) {
-    const data::SqliteDb db(path);
-    game::TerrainMap terrain = game::loadTerrainMap(db);
-    game::MapEntities entities;
-    std::vector<game::MapSprite> objects = game::loadMapObjects(db, rules, terrain, &entities);
-    game::BattleState state = game::loadBattle(db, rules, terrain);
-    game::startBattle(state);
     game::CombatOptions options;
     options.computerAi = ai;
-    return std::make_unique<LoadedMap>(path.stem().string(), std::move(terrain), std::move(objects), std::move(entities),
-                                       std::move(state), rules, clips, seed, options);
+    auto map = game::BattleSession::load(path, rules, clips, seed, options);
+    map->begin();
+    return map;
 }
 
-// Requests built from the client's state.
-game::MoveRequest moveOrder(const game::BattleState& s, const std::vector<int>& units, game::Point target) {
-    game::MoveRequest r{s.currentPlayer, {}};
-    for (const game::PlannedMove& m : game::planGroupMove(s, units, target)) {
-        game::UnitOrder o{m.unit, m.path};
-        o.path.resize(static_cast<std::size_t>(m.affordable));
-        r.orders.push_back(std::move(o));
-    }
-    return r;
-}
-
-game::ShootRequest shootOrder(const game::BattleState& s, const std::vector<int>& units, game::Point target, bool autofire) {
-    game::ShootRequest r{s.currentPlayer, {}, target, autofire};
-    for (const int u : units) r.orders.push_back({u, {}});
-    return r;
-}
-
-// Should a right click on this tile fire rather than move? True for enemy
-// units and buildings of the player whose turn it is.
-bool isEnemyTarget(const game::BattleState& s, game::Point t) {
-    const int player = s.currentPlayer;
-    if (const int b = s.buildingAt(t); b >= 0) return game::buildingSide(player, s.building(b), true) == game::Side::Enemy;
-    const int u = s.unitAt(t);
-    if (u < 0) return false;
-    for (const game::BattleUnit& mine : s.units())
-        if (mine.alive && mine.owner == player) return game::unitSide(mine, s.unit(u), true) == game::Side::Enemy;
-    return s.unit(u).owner != player;
-}
+using game::isEnemyTarget;
+using game::moveOrder;
+using game::shootOrder;
 
 int usage() {
     std::fprintf(stderr, "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N] [--mute] [--seed N] [--no-ai]\n"
@@ -256,6 +193,10 @@ std::string describe(const game::BattleState& s, const game::Event& event) {
                                                                         : "defeat");
             else if constexpr (std::is_same_v<T, game::UnitAdded>)
                 return "reinforcement #" + std::to_string(e.id) + " arrives at " + tileText(e.pos);
+            else if constexpr (std::is_same_v<T, game::RequestRejected>) return "refused: " + e.reason;
+            else if constexpr (std::is_same_v<T, game::DeployBudget>)
+                return "player " + std::to_string(e.player) + " budget " + std::to_string(e.budget);
+            else if constexpr (std::is_same_v<T, game::UnitRemoved>) return unit(e.unit) + " taken back";
             else if constexpr (std::is_same_v<T, game::OrderChanged>)
                 return unit(e.unit) + " order now " + std::to_string(e.order.order);
             else return "refused: " + e.reason;
@@ -272,7 +213,7 @@ void startAction(LoadedMap& map, const std::string& spec) {
         if (colon == std::string::npos) break;
         start = colon + 1;
     }
-    const game::BattleState& s = map.view.state();
+    const game::BattleState& s = map.state();
     std::string refused;
     if (parts[0] == "end") {
         refused = map.send(game::EndTurnRequest{s.currentPlayer});
@@ -290,36 +231,36 @@ void startAction(LoadedMap& map, const std::string& spec) {
 
 void drawScene(const LoadedMap& map, render::IndexedSurface& surface, const game::Rect& view, game::SpriteLibrary& sprites,
                bool objects, game::RenderStats* statsOut = nullptr, const std::vector<game::Overlay>& markers = {}) {
-    game::SceneExtras extras = map.battle.extras();
+    game::SceneExtras extras = map.animations().extras();
     extras.overlays.insert(extras.overlays.end(), markers.begin(), markers.end());
-    const game::RenderStats stats = map.scene.draw(surface, view, sprites, objects, &extras);
+    const game::RenderStats stats = map.scene().draw(surface, view, sprites, objects, &extras);
     if (statsOut) *statsOut = stats;
 }
 
 int screenshot(LoadedMap& map, game::SpriteLibrary& sprites, const Palettes& palettes, const Options& opt) {
-    map.log = [&map](const game::Event& e) { std::printf("  %s\n", describe(map.server.state(), e).c_str()); };
+    map.log = [&map](const game::Event& e) { std::printf("  %s\n", describe(map.server().state(), e).c_str()); };
     for (const std::string& a : opt.actions) {
-        for (int i = 0; i < 100000 && map.battle.busy(); ++i) map.battle.tick();
+        for (int i = 0; i < 100000 && map.animations().busy(); ++i) map.animations().tick();
         startAction(map, a);
     }
     if (opt.ticks >= 0)
-        for (int i = 0; i < opt.ticks; ++i) map.battle.tick();
+        for (int i = 0; i < opt.ticks; ++i) map.animations().tick();
     else
-        for (int i = 0; i < 100000 && map.battle.busy(); ++i) map.battle.tick();
+        for (int i = 0; i < 100000 && map.animations().busy(); ++i) map.animations().tick();
 
-    const int size = map.scene.terrain().size;
+    const int size = map.scene().terrain().size;
     const game::Rect bounds = game::iso::mapBounds(size);
     render::IndexedSurface surface(bounds.w, bounds.h, 0);
     game::RenderStats stats;
     drawScene(map, surface, bounds, sprites, opt.objects, &stats);
     formats::writePngRgba(opt.screenshot, surface.width(), surface.height(), surface.toRgba(palettes.at(0, false)));
     std::printf("%s: %dx%d tiles, %d drawn, %zu objects, %zu animation frames, %d missing sprites -> %s (%d x %d)\n",
-                map.name.c_str(), size, size, stats.tilesDrawn, opt.objects ? map.scene.objects().size() : std::size_t{0},
-                map.battle.animator().overlays().size(), stats.missingSprites, opt.screenshot.string().c_str(),
+                map.name().c_str(), size, size, stats.tilesDrawn, opt.objects ? map.scene().objects().size() : std::size_t{0},
+                map.animations().animator().overlays().size(), stats.missingSprites, opt.screenshot.string().c_str(),
                 surface.width(), surface.height());
     if (opt.objects && stats.missingSprites > 0) {
         std::set<std::string> missing;
-        for (const game::MapSprite& o : map.scene.objects())
+        for (const game::MapSprite& o : map.scene().objects())
             if (!sprites.get(o.set, o.name)) missing.insert(o.name);
         for (const std::string& name : missing) std::printf("  missing: %s\n", name.c_str());
     }
@@ -427,8 +368,8 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
         std::string message; // last refusal, shown in the title
         auto open = [&](std::size_t index) {
             map = loadMap(scenarios[index], rules, clips, opt.seed, opt.ai);
-            map->battle.animator().playSound = [&sound](const render::Animation& a) { sound.play(a.audio); };
-            bounds = game::iso::mapBounds(map->scene.terrain().size);
+            map->animations().animator().playSound = [&sound](const render::Animation& a) { sound.play(a.audio); };
+            bounds = game::iso::mapBounds(map->scene().terrain().size);
             selection.clear();
             message.clear();
         };
@@ -443,7 +384,7 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
         auto send = [&](const game::Request& r) {
             message = map->send(r);
             ++eventCount;
-            const game::BattleState& s = map->view.state();
+            const game::BattleState& s = map->state();
             std::erase_if(selection, [&](int u) { return !s.unit(u).alive || s.unit(u).owner != s.currentPlayer; });
         };
 
@@ -462,7 +403,7 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
         auto tileUnderMouse = [&] {
             const int px = static_cast<int>(camX + mouseX / static_cast<float>(scale));
             const int py = static_cast<int>(camY + mouseY / static_cast<float>(scale));
-            return game::iso::tileAt(px, py, map->scene.terrain().size);
+            return game::iso::tileAt(px, py, map->scene().terrain().size);
         };
 
         for (bool running = true; running;) {
@@ -479,8 +420,8 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
                     if (ev.key.key == SDLK_M) sound.enabled = !sound.enabled;
                     if (ev.key.key == SDLK_SPACE) selection.clear();
                     if (ev.key.key == SDLK_F) autofire = !autofire;
-                    if ((ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) && !map->battle.busy()) {
-                        send(game::EndTurnRequest{map->view.state().currentPlayer});
+                    if ((ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) && !map->animations().busy()) {
+                        send(game::EndTurnRequest{map->state().currentPlayer});
                         selection.clear();
                     }
                     if (ev.key.key >= SDLK_1 && ev.key.key <= SDLK_4) scale = static_cast<int>(ev.key.key - SDLK_1) + 1;
@@ -495,9 +436,9 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
                     dragged = 0;
                     break;
                 case SDL_EVENT_MOUSE_BUTTON_UP:
-                    if (dragged > 4 || map->battle.busy()) break;
+                    if (dragged > 4 || map->animations().busy()) break;
                     {
-                        const game::BattleState& s = map->view.state();
+                        const game::BattleState& s = map->state();
                         const game::Point t = tileUnderMouse();
                         const SDL_Keymod mods = SDL_GetModState();
                         if (ev.button.button == SDL_BUTTON_LEFT) {
@@ -537,7 +478,7 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
             last = now;
             // Animation clock: 15 ticks per second; skip ahead after a stall.
             if (tickClock > 10 * tickMs) tickClock = tickMs;
-            for (; tickClock >= tickMs; tickClock -= tickMs) map->battle.tick();
+            for (; tickClock >= tickMs; tickClock -= tickMs) map->animations().tick();
             sound.collect();
 
             const bool* keys = SDL_GetKeyboardState(nullptr);
@@ -569,10 +510,10 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
 
             surface.fill(0);
             const game::Rect view{static_cast<int>(camX), static_cast<int>(camY), viewW, viewH};
-            const game::BattleState& state = map->view.state();
-            const int n = map->scene.terrain().size;
+            const game::BattleState& state = map->state();
+            const int n = map->scene().terrain().size;
             const game::Point hover = tileUnderMouse();
-            const bool idle = !map->battle.busy();
+            const bool idle = !map->animations().busy();
             const bool aiming = !selection.empty() && state.inside(hover) &&
                                 ((SDL_GetModState() & SDL_KMOD_CTRL) || isEnemyTarget(state, hover));
 
@@ -604,7 +545,7 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
                     if (state.unit(u).alive) drawTileMarker(surface, state.unit(u).pos, n, view, markerColor);
 
             // Title: battle status.
-            std::string title = "OpenDay - " + map->name + " - turn " + std::to_string(state.turn);
+            std::string title = "OpenDay - " + map->name() + " - turn " + std::to_string(state.turn);
             if (state.turnLimit > 0) title += "/" + std::to_string(state.turnLimit);
             title += " - " + std::string(game::objectiveName(state.objective.kind));
             if (state.over)

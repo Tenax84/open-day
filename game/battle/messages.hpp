@@ -39,7 +39,31 @@ struct EndTurnRequest {
     int player = 0;
 };
 
-using Request = std::variant<MoveRequest, ShootRequest, EndTurnRequest>;
+// Units bought and placed during deployment (battle-flow.md 1.2).
+struct DeployEntry {
+    int typeId = 0;
+    int techLevel = -1; // -1 = lowest level of the type
+    Point pos;
+};
+
+struct DeployRequest {
+    int player = 0;
+    std::vector<DeployEntry> entries;
+};
+
+// Takes back a unit this player placed during deployment, with a refund.
+struct UndeployRequest {
+    int player = 0;
+    int unit = -1;
+};
+
+// The cheat win / lose requests (and surrender = lose), battle-flow.md 3.1.
+struct CheatRequest {
+    int player = 0;
+    bool win = false;
+};
+
+using Request = std::variant<MoveRequest, ShootRequest, EndTurnRequest, DeployRequest, UndeployRequest, CheatRequest>;
 
 // --- Events (server -> clients) ---
 
@@ -133,6 +157,17 @@ struct UnitAdded {
     ScriptedOrder order;
 };
 
+// A player's remaining deployment budget.
+struct DeployBudget {
+    int player = 0;
+    int budget = 0;
+};
+
+// A unit taken back during deployment.
+struct UnitRemoved {
+    int unit = -1;
+};
+
 // A unit's scripted order changed (for example dropped by its Probability).
 struct OrderChanged {
     int unit = -1;
@@ -146,7 +181,8 @@ struct RequestRejected {
 
 using Event = std::variant<UnitMoved, UnitShot, UnitDamaged, BuildingDamaged, WallDamaged, UnitDestroyed,
                            BuildingDestroyed, WallDestroyed, RoadDestroyed, MineDestroyed, MineExploded, MinesRevealed,
-                           TerrainBurned, TurnStarted, BattleOver, UnitAdded, OrderChanged, RequestRejected>;
+                           TerrainBurned, TurnStarted, BattleOver, UnitAdded, OrderChanged, DeployBudget, UnitRemoved,
+                           RequestRejected>;
 
 // Applies an event to a state. The server changes its own state only
 // through this function, so client copies stay identical.
