@@ -667,9 +667,11 @@ result travels to the clients in the `BattleOver` event (success, loser).
 - Deployment (1.2), bought reinforcements and the per-turn income (4.2),
   counter-attack battles (4.3, with the campaign), tech buildings (5.2) and
   the cheat requests are implemented. Automated units (4.4) are implemented
-  (automated-units.md); objectives are checked after each call. Not
-  implemented yet: saving and restoring a battle, a player leaving (3.3;
-  there is no network game).
+  (automated-units.md); objectives are checked after each call. Saving and
+  restoring a battle is implemented (savegame.md, "Implementation notes":
+  resume without the start-of-turn effects, the random-number state and the
+  AI budget kept). Not implemented yet: a player leaving (3.3; there is no
+  network game).
 - Cheat win / lose and surrender set flags that the objective check reads
   as common rules 1 and 2 (after the kind's own rule, also for kinds 3 and
   5); the server runs the check at once. Kind 7 refuses the request.

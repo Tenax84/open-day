@@ -460,6 +460,25 @@ void realData(const fs::path& dataDir, const fs::path& savePath) {
     session = BattleSession::load(b.database, rules, nullptr, 7, b.options, b.prepare);
     CHECK(session->state().deployBudget[1] > 0 && !session->state().purchasable.empty());
     std::printf("province %d: %s, budget %d\n", target, b.title.c_str(), session->state().deployBudget[1]);
+    // The battle in progress (deployment skipped) saves and restores with
+    // the map objects built from the saved state.
+    session->begin();
+    BattleHeader header;
+    header.scenario = b.scenario;
+    header.title = b.title;
+    header.options = b.options;
+    const std::string battleText = saveBattle(session->server(), header);
+    const Campaign withBattle = loadCampaign(saveCampaign(c, "battle", battleText), res);
+    CHECK(withBattle.savedBattle != nullptr);
+    if (withBattle.savedBattle) {
+        auto restored = BattleSession::restore(*withBattle.savedBattle, rules, nullptr);
+        CHECK(restored->state().units().size() <= session->state().units().size());
+        CHECK(restored->state().terrain().tiles == session->state().terrain().tiles);
+        restored->begin();
+        CHECK(restored->state().currentPlayer == session->state().currentPlayer &&
+              restored->state().turn == session->state().turn);
+        CHECK(saveBattle(restored->server(), header) == battleText);
+    }
     // Save and load.
     const std::string text = saveCampaign(c, "test");
     const Campaign back = loadCampaign(text, res);

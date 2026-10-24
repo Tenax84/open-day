@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -343,6 +344,20 @@ std::array<std::vector<Point>, kPlayerSlots> cityZones(const City& city, const G
 
 CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng) {
     const GlobalRules& r = *res.rules;
+    if (state == CampaignState::Tactic) {
+        std::string name = provinceScenario(battleProvince);
+        std::filesystem::path path = res.scenario(name);
+        if (path.empty()) { // a missing variant falls back to variant 1
+            name = "s" + std::to_string(colonyNumber) + "-" + std::to_string(battleProvince) + "-1";
+            path = res.scenario(name);
+        }
+        if (path.empty()) throw std::runtime_error("scenario " + name + " not found");
+        return provinceBattle(path, name, r);
+    }
+    return cityBattle(res, rng);
+}
+
+CampaignBattle Campaign::provinceBattle(const std::filesystem::path& path, const std::string& name, const GlobalRules& r) {
     CampaignBattle b;
     b.options.aiDamage = true; // campaign battles only (campaign.md 4.1)
     b.options.difficulty = difficulty;
@@ -353,15 +368,7 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
     // from the colony (campaign.md 4.1 steps 4-5).
     const std::vector<int> automated = automatedTypes(r);
     BattleState::AiSupport aiSupport{true, colony.aiAutoChance, colony.aiAutoBudget, colony.aiAutomated};
-
-    if (state == CampaignState::Tactic) {
-        std::string name = provinceScenario(battleProvince);
-        std::filesystem::path path = res.scenario(name);
-        if (path.empty()) { // a missing variant falls back to variant 1
-            name = "s" + std::to_string(colonyNumber) + "-" + std::to_string(battleProvince) + "-1";
-            path = res.scenario(name);
-        }
-        if (path.empty()) throw std::runtime_error("scenario " + name + " not found");
+    {
         const data::SqliteDb db(path);
         const ScenarioText text = readScenarioInfo(db);
         counterAttack = text.counterAttack;
@@ -378,6 +385,7 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
         const int budget = scalePercent(text.oneOff, multiplier);
         const int income = scalePercent(text.reinf + text.reinf * 2 * deployCentres / 100, multiplier);
         b.database = path;
+        b.scenario = name;
         b.province = battleProvince;
         b.title = text.title;
         b.provinceName = text.province;
@@ -412,9 +420,51 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
         };
         return b;
     }
+}
 
+CampaignBattle Campaign::cityBattleSetup(const GlobalRules& r) const {
     if (state != CampaignState::FirstCityAttack && state != CampaignState::CounterAttack)
         throw std::runtime_error("no battle in this campaign state");
+    CampaignBattle b;
+    b.options.aiDamage = true; // campaign battles only (campaign.md 4.1)
+    b.options.difficulty = difficulty;
+    const std::vector<int> deployable = deployableTypes(r);
+    const std::map<int, int> levels = player.techLevels;
+    const int multiplier = deployMultiplier();
+    const std::vector<int> automated = automatedTypes(r);
+    BattleState::AiSupport aiSupport{true, colony.aiAutoChance, colony.aiAutoBudget, colony.aiAutomated};
+    b.scenario = city.scenario;
+    b.city = true;
+    b.province = state == CampaignState::FirstCityAttack ? colony.playerCity : battleProvince;
+    const int budget = cityBudget(r);
+    const int deployType = colonyDeployCentre(colonyNumber);
+    BattleState::CityIncome ci;
+    ci.deployType = deployType;
+    if (const auto t = r.buildings.find(deployType); t != r.buildings.end()) ci.deployProduction = t->second.resProduction;
+    if (const auto t = r.buildings.find(kHeadquarters); t != r.buildings.end()) ci.hqProduction = t->second.resProduction;
+    ci.multiplier = multiplier;
+    b.prepare = [deployable, levels, budget, ci, automated, aiSupport](BattleState& s) {
+        s.players = {0, kCampaignPlayer};
+        s.purchasable = deployable;
+        s.deployNeedsBuildings = true;
+        s.techLevels[kCampaignPlayer] = levels;
+        s.deployBudget[kCampaignPlayer] = budget;
+        s.cityIncome = ci;
+        // The usable list follows the buildings still standing (campaign.md 6.4).
+        s.automated = {};
+        s.automated[kCampaignPlayer] = automated;
+        s.automatedNeedsBuildings = {};
+        s.automatedNeedsBuildings[kCampaignPlayer] = true;
+        s.aiSupport = aiSupport;
+        s.counterAttack = true; // the aliens attack the player's city
+        s.deploying = !s.deployZone[kCampaignPlayer].empty();
+    };
+    return b;
+}
+
+CampaignBattle Campaign::cityBattle(const CampaignResources& res, std::mt19937& rng) {
+    const GlobalRules& r = *res.rules;
+    CampaignBattle b = cityBattleSetup(r);
 
     // A battle on the city (campaign.md 6): the city is written into a copy
     // of its scenario database.
@@ -534,39 +584,22 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
         b.aftermath = text.aftermath;
     }
     b.database = path;
-    b.city = true;
-    b.province = state == CampaignState::FirstCityAttack ? colony.playerCity : battleProvince;
-    const int budget = cityBudget(r);
-    const int deployType = colonyDeployCentre(colonyNumber);
-    BattleState::CityIncome ci;
-    ci.deployType = deployType;
-    if (const auto t = r.buildings.find(deployType); t != r.buildings.end()) ci.deployProduction = t->second.resProduction;
-    if (const auto t = r.buildings.find(kHeadquarters); t != r.buildings.end()) ci.hqProduction = t->second.resProduction;
-    ci.multiplier = multiplier;
-    b.prepare = [deployable, levels, budget, ci, automated, aiSupport](BattleState& s) {
-        s.players = {0, kCampaignPlayer};
-        s.purchasable = deployable;
-        s.deployNeedsBuildings = true;
-        s.techLevels[kCampaignPlayer] = levels;
-        s.deployBudget[kCampaignPlayer] = budget;
-        s.cityIncome = ci;
-        // The usable list follows the buildings still standing (campaign.md 6.4).
-        s.automated = {};
-        s.automated[kCampaignPlayer] = automated;
-        s.automatedNeedsBuildings = {};
-        s.automatedNeedsBuildings[kCampaignPlayer] = true;
-        s.aiSupport = aiSupport;
-        s.counterAttack = true; // the aliens attack the player's city
-        s.deploying = !s.deployZone[kCampaignPlayer].empty();
-    };
     return b;
+}
+
+void readScenarioTexts(const data::SqliteDb& db, CampaignBattle& b) {
+    const ScenarioText text = readScenarioInfo(db);
+    b.title = text.title;
+    b.provinceName = text.province;
+    b.description = text.description;
+    b.aftermath = text.aftermath;
 }
 
 // --- Saving -------------------------------------------------------------------------
 
-std::string saveCampaign(const Campaign& c, const std::string& description) {
+std::string saveCampaign(const Campaign& c, const std::string& description, const std::string& battleSection) {
     std::ostringstream o;
-    o << "OPENDAY-CAMPAIGN 1\n";
+    o << "OPENDAY-CAMPAIGN " << kCampaignSaveVersion << "\n";
     o << "description " << description << "\n";
     o << "name " << c.playerName << "\n";
     o << "difficulty " << c.difficulty << "\n";
@@ -597,8 +630,43 @@ std::string saveCampaign(const Campaign& c, const std::string& description) {
     for (const auto& [x, y] : c.built.roads) o << "built-road " << x << " " << y << "\n";
     for (const auto& [x, y] : c.built.walls) o << "built-wall " << x << " " << y << "\n";
     for (const auto& [x, y] : c.built.mines) o << "built-mine " << x << " " << y << "\n";
+    // The province battle's counter-attack (read when the battle starts).
+    o << "counter-attack " << (c.counterAttack ? 1 : 0) << "\n";
+    for (const AttackRow& a : c.pendingAttack)
+        o << "attack " << a.unitId << " " << a.type << " " << a.pos.x << " " << a.pos.y << " " << a.turn << " "
+          << (a.order ? 1 : 0) << "\n";
+    if (!battleSection.empty()) {
+        if (c.state != CampaignState::FirstCityAttack && c.state != CampaignState::Tactic &&
+            c.state != CampaignState::CounterAttack)
+            throw std::runtime_error("a battle can only be saved in a battle state");
+        o << battleSection;
+        if (battleSection.back() != '\n') o << "\n";
+    }
     o << "end\n";
     return o.str();
+}
+
+void writeSaveFile(const std::filesystem::path& file, const std::string& text) {
+    std::filesystem::path tmp = file;
+    tmp += ".tmp";
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) throw std::runtime_error("cannot write " + tmp.string());
+        f << text;
+        f.flush();
+        if (!f) {
+            f.close();
+            std::error_code ec;
+            std::filesystem::remove(tmp, ec);
+            throw std::runtime_error("cannot write " + tmp.string());
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, file, ec); // replaces an existing file
+    if (ec) {
+        std::filesystem::remove(tmp, ec);
+        throw std::runtime_error("cannot replace " + file.string());
+    }
 }
 
 std::string saveDescription(const std::string& text) {
@@ -614,7 +682,15 @@ Campaign loadCampaign(const std::string& text, const CampaignResources& res, std
     std::istringstream in(text);
     std::string line;
     if (!std::getline(in, line) || line.rfind("OPENDAY-CAMPAIGN", 0) != 0) throw std::runtime_error("not an OpenDay save");
+    {
+        int version = 0;
+        std::istringstream v(line.substr(16));
+        v >> version;
+        if (version < 1) throw std::runtime_error("not an OpenDay save");
+        if (version > kCampaignSaveVersion) throw std::runtime_error("the save was made by a newer OpenDay");
+    }
     Campaign c;
+    std::string battleSection;
     c.rules = res.rules;
     std::string cityName;
     std::vector<CityBuilding> buildings;
@@ -699,11 +775,40 @@ Campaign loadCampaign(const std::string& text, const CampaignResources& res, std
             int x = 0, y = 0;
             v >> x >> y;
             (key == "built-road" ? c.built.roads : key == "built-wall" ? c.built.walls : c.built.mines).insert({x, y});
+        } else if (key == "counter-attack") {
+            int x = 0;
+            v >> x;
+            c.counterAttack = x != 0;
+        } else if (key == "attack") {
+            AttackRow a;
+            int order = 0;
+            v >> a.unitId >> a.type >> a.pos.x >> a.pos.y >> a.turn >> order;
+            a.order = order != 0;
+            c.pendingAttack.push_back(a);
+        } else if (key == "battle") {
+            // The battle section, kept whole for loadBattleSave.
+            battleSection = line + "\n";
+            bool closed = false;
+            while (std::getline(in, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                battleSection += line + "\n";
+                if (line == "battle-end") {
+                    closed = true;
+                    break;
+                }
+            }
+            if (!closed) throw std::runtime_error("the save file is incomplete");
         } else if (key == "end") {
             ended = true;
         }
     }
     if (!ended || cityName.empty()) throw std::runtime_error("the save file is incomplete");
+    if (!battleSection.empty()) {
+        if (c.state != CampaignState::FirstCityAttack && c.state != CampaignState::Tactic &&
+            c.state != CampaignState::CounterAttack)
+            throw std::runtime_error("the save has a battle outside a battle state");
+        c.savedBattle = std::make_shared<const SavedBattle>(loadBattleSave(battleSection, *res.rules));
+    }
     c.reloadColony(res);
     if (c.provinces.size() != c.colony.provinces.size()) throw std::runtime_error("the save does not match the colony");
     const std::filesystem::path cityPath = res.scenario(cityName);

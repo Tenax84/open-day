@@ -37,7 +37,9 @@ std::unique_ptr<Screen> makeCityScreen(App& app, CampaignPtr ctx);
 std::unique_ptr<Screen> makeContinentScreen(App& app, CampaignPtr ctx, ContinentMode mode);
 std::unique_ptr<Screen> makeIntelDialog(App& app, CampaignPtr ctx, int province);
 void openCampaignArmy(App& app, CampaignPtr ctx);
-std::unique_ptr<Screen> makeSaveMenu(App& app, CampaignPtr ctx);
+// The save dialog; `battle` gives the battle section of a battle in
+// progress (game::saveBattle), empty between battles.
+std::unique_ptr<Screen> makeSaveMenu(App& app, CampaignPtr ctx, std::function<std::string()> battle = {});
 // The in-game options of the strategic screens (with SAVE).
 std::unique_ptr<Screen> makeCampaignOptions(App& app, CampaignPtr ctx, int resolution);
 

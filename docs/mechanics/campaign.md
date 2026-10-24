@@ -339,7 +339,16 @@ battle preparation, save files) and the campaign screens of `app/`.
 
 - Single player only (one human player, share 100 %).
 - Saving and loading use OpenDay's own text format in the user's settings
-  folder; a game can be saved in the strategic state.
+  folder (`saveCampaign` / `loadCampaign`, file `campaign.NN`, format version
+  2; version 1 files without a battle still load). A game can be saved in
+  the strategic state and in a battle after deployment (states 1, 4, 6); the
+  battle in progress is a section of the same file (`game/battle/battle_save.*`,
+  see savegame.md, "Implementation notes"). The province battle's
+  counter-attack flag and attacker rows are saved too (they are read when the
+  battle starts and needed when it ends). A loaded battle resumes once; the
+  next battle is prepared normally.
+- Original save slots (`SAVEGAME\savegame.NN`) can be imported from the load
+  dialog (savegame.md, "Implementation notes").
 - Automated units: the player's usable list comes from his city (in city
   battles it follows the buildings still standing); the computer player gets
   the colony's chance, budget and list (automated-units.md, tactical-ai.md 6).

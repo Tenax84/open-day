@@ -489,8 +489,15 @@ text boxes) and the game program `app/` (screens).
 - In-game options of the battle views: Save / Surrender / Quit are enabled
   by the table above (Save also needs a campaign battle). *Surrender* asks
   with string 818 and sends the cheat-lose request; *Quit* asks with string
-  819 and returns to the main menu *(OpenDay choice)*. Saving during a
-  battle is not available yet: the button only shows its enable state.
+  819 and returns to the main menu *(OpenDay choice)*. *Save* opens the save
+  dialog and saves the battle in progress (savegame.md, "Implementation
+  notes"); it stays disabled after the battle has ended.
+- Save dialog: clicking a slot puts its name (or "<player> - <colony>" for
+  an empty slot) into an edit box of up to 31 characters over the slot;
+  *Save* trims it (empty: nothing), shows string 816 while writing and
+  string 817 under the panel on failure. The load dialog has an extra
+  *Original game saves* toggle above the panel when the game folder has
+  original save slots (import, savegame.md).
 - Not implemented yet: CD-player track list, credits, the multiplayer
   menus.
 
@@ -512,6 +519,7 @@ text boxes) and the game program `app/` (screens).
 - The small 12 px font is created but apparently unused.
 - In-game *Quit*: whether the application command exits the program or
   returns to the front end.
-- Whether the options dialog stays open after a successful save.
+- Whether the options dialog stays open after a successful save (OpenDay:
+  it does).
 - The hot-key letters 100–121, 124, 125 are not yet matched to their buttons
   (most belong to the strategic and tactical HUDs).

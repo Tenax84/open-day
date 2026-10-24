@@ -712,6 +712,11 @@ move, shot and autofire code, and order changes reach the clients as
   of 1.3 including the one-sided `Jammer` comparison.
 - Not implemented yet: the counter-attack rules (buildings, mines and walls
   as targets), so the random sequence still differs from the original's.
+- Saved games (savegame.md, "Implementation notes"): the AI keeps no state
+  between turns besides the unit orders, which are saved; OpenDay also saves
+  its remaining automated-unit budget and the random-number state (the
+  original restarts with the full budget). A battle saved on slot 0's turn
+  makes the AI play that turn from phase 0 again.
 
 ## Open questions
 

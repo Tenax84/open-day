@@ -7,10 +7,12 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <random>
 #include <string>
 #include <vector>
 
+#include "battle/battle_save.hpp"
 #include "battle/combat.hpp"
 #include "campaign/city.hpp"
 #include "campaign/colony.hpp"
@@ -55,6 +57,7 @@ struct CampaignResources {
 // What a campaign battle needs to start.
 struct CampaignBattle {
     std::filesystem::path database;
+    std::string scenario; // scenario name ("s1-2-1"), kept in a save of the battle
     std::function<void(BattleState&)> prepare;
     CombatOptions options;
     bool city = false; // fought on the player's city
@@ -84,6 +87,10 @@ public:
     BuiltThisPhase built;
     bool counterAttack = false;           // the battle just won has a counter-attack
     std::vector<AttackRow> pendingAttack; // its attackers
+    // A battle in progress read from a save (states 1, 4, 6): the battle of
+    // the current state resumes it instead of starting anew. Taken (and
+    // cleared) by whoever starts the battle (savegame.md 3.1 step 5).
+    std::shared_ptr<const SavedBattle> savedBattle;
 
     // Loaded with the colony.
     Colony colony;
@@ -129,11 +136,22 @@ public:
 
     // Prepares the battle of the current state.
     CampaignBattle battle(const CampaignResources& res, std::mt19937& rng);
+    // Its parts: a province battle on the scenario database `path` (reads
+    // the counter-attack rows), the settings of a battle on the city
+    // without its database (budgets, income, unit lists), and the battle on
+    // the city with its database written into res.tempDir.
+    CampaignBattle provinceBattle(const std::filesystem::path& path, const std::string& name, const GlobalRules& rules);
+    CampaignBattle cityBattleSetup(const GlobalRules& rules) const;
+    CampaignBattle cityBattle(const CampaignResources& res, std::mt19937& rng);
 
     // Upgrades a unit type by one level (army-tech.md 4.6). False when not
     // possible (maximum, not enough points).
     bool upgrade(const GlobalRules& rules, int typeId);
 };
+
+// The texts of a scenario's Scenario Info (title, province, description,
+// aftermath).
+void readScenarioTexts(const data::SqliteDb& db, CampaignBattle& b);
 
 // Linear interpolation of the difficulty tables: E + ((H - E) * d) / 10.
 int interpolate(int easy, int hard, int difficulty);
@@ -144,9 +162,18 @@ int scalePercent(int value, int multiplier);
 // tiles per player slot 1-4 and the AI zone (slot 0).
 std::array<std::vector<Point>, kPlayerSlots> cityZones(const City& city, const GlobalRules& rules);
 
-// Saving: OpenDay's own text format.
-std::string saveCampaign(const Campaign& c, const std::string& description);
+// Saving: OpenDay's own text format (docs/mechanics/savegame.md, "Notes for
+// OpenDay"). `battleSection` (saveBattle) is the battle in progress; empty
+// between battles. Version 1 files (no battle section) still load.
+inline constexpr int kCampaignSaveVersion = 2;
+std::string saveCampaign(const Campaign& c, const std::string& description, const std::string& battleSection = {});
+// Throws std::runtime_error with a readable reason on a damaged or
+// unsupported file.
 Campaign loadCampaign(const std::string& text, const CampaignResources& res, std::string* description = nullptr);
+// Writes a save file atomically: a temporary file next to it, then a
+// rename, so that a failed save leaves the previous content intact.
+// Throws std::runtime_error on failure.
+void writeSaveFile(const std::filesystem::path& file, const std::string& text);
 // The description line of a save file, without loading it.
 std::string saveDescription(const std::string& text);
 

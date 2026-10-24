@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <functional>
 #include <random>
+#include <string>
 #include <vector>
 
 #include "battle/combat.hpp"
@@ -25,6 +26,21 @@ public:
 
     // Events for the start of the battle (the first player's turn).
     std::vector<Event> start();
+    // Continues a battle restored from a save (savegame.md 3.4, resume
+    // mode): no objective check, no turn step, no income and no AP refill.
+    // If the saved current player is the computer player, it plays its
+    // turn from the first phase; otherwise nothing happens until the next
+    // request.
+    std::vector<Event> resume();
+
+    // The parts of the server's own state that a save keeps besides
+    // state() (battle_save.hpp): the random-number generator and the
+    // computer player's automated-unit budget.
+    std::string rngState() const;
+    int aiBudget() const { return aiAutomatedBudget_; }
+    // Puts them back; an empty `rng` keeps the seeded generator. Throws
+    // std::runtime_error if `rng` is not a generator state.
+    void restore(const std::string& rng, int aiBudget);
     // Handles one request. The events have already been applied to the
     // server's state when this returns.
     std::vector<Event> handle(const Request& request);

@@ -71,3 +71,7 @@ add_test(NAME info_test COMMAND info_test)
 if(DEFINED ENV{OPENDAY_DATA_DIR})
     add_test(NAME info_game_files COMMAND info_test --data "$ENV{OPENDAY_DATA_DIR}")
 endif()
+
+add_executable(save_test save_test.cpp)
+target_link_libraries(save_test PRIVATE openday_game openday_warnings)
+add_test(NAME save_test COMMAND save_test)

@@ -393,6 +393,88 @@ the joining users) was not examined *(?)*.
   while buying reinforcements; the save format then never needs a
   "deployment in progress" state.
 
+## Implementation notes (OpenDay)
+
+Implemented in `game/battle/battle_save.*` (the battle section),
+`game/campaign/campaign.*` (the campaign file, atomic write),
+`game/campaign/savegame_import.*` (import of original slots),
+`game/anim/battle_session.*` (restoring the client) and `app/` (dialogs).
+
+- **File:** `campaign.NN` (NN = 01…10) in the `saves` folder of the per-user
+  directory (`OPENDAY_SAVE_DIR` overrides it). Line 1 `OPENDAY-CAMPAIGN 2`,
+  line 2 the description, then `key value…` lines, `end`. Version 1 files
+  (OpenDay before battle saves) load unchanged; a higher version is refused
+  with a message. Written **atomically**: `campaign.NN.tmp`, then a rename
+  over the old file; a failed save leaves the slot as it was.
+- **Battle section** (`battle 1` … `battle-end`, only in states 1, 4, 6):
+  the screen texts and combat options, the map (run-length coded sprite
+  names, so burned and wrecked terrain is kept), every living unit with all
+  runtime fields (type and tech level, owner, AP, `negAP`, armor, facing,
+  order with its position and id lists), buildings, walls with AR and the
+  broken-end flag, roads, mines with the armed flag and the five hidden
+  flags, all ruins **including the wrecks and rubble of the battle**, turn,
+  current player, turn limit, participants, objective (kind, N, ids, zone,
+  hold counter, last held turn, progress counter, cheat flags), deployment
+  zones, per-player resource and income, the city-battle income settings,
+  the purchasable and tech-level lists, automated units (usable lists,
+  "needs buildings" flags, the DeployOnce **used set**, scheduled calls),
+  the computer player's support (chance, budget, list) **and its remaining
+  automated-unit budget**, pending reinforcements **with their `order`
+  flag**, the battle statistics per type, the held tech buildings and the
+  **random-number generator state** (std::mt19937 text form). Destroyed
+  objects are dropped; the others keep their order, so a restored battle
+  continues exactly as the saved one (tested). These are the deliberate
+  deviations listed above.
+- **Where:** the *Save* button of the battle's options dialog follows the
+  table of 1.1 (tactical view and waiting view, campaign battles only, not
+  after the end). In OpenDay the computer player's whole turn runs inside
+  one server request, so the server is never in the middle of it when the
+  player can click: a save made in the waiting view while the computer
+  player's turn is being animated stores the state **after** that turn,
+  i.e. the start of the player's next turn (AP refilled, income added).
+  This answers open question 1 for OpenDay: a save request is effectively
+  deferred to the end of the AI's action sequence. A save whose current
+  player is the computer player (an imported original save, or hot-seat
+  without AI) resumes with the computer player replaying its turn from its
+  first phase.
+- **Resume** (3.4): `BattleServer::resume` does no objective check, no
+  turn step, no income, no AP refill and no tech re-evaluation; if the
+  current player is 0 the AI plays. The client is rebuilt from the saved
+  state (`BattleSession::restore`: map sprites from the objects, the replica,
+  the animations); selection, view position, *done* marks, remembered
+  destinations and the message line start fresh (as in the original). The
+  objective dialog opens first.
+- **Feedback** (1.3): the slot dialog takes a name of up to 31 characters
+  (trimmed; empty = nothing happens), shows string 816 for one frame while
+  the file is written, then closes; on failure it stays open and shows
+  string 817. The options dialog stays open after a successful save
+  *(OpenDay choice for open question 6)*.
+- **Skirmish** is not saved (as in the original): its options dialog keeps
+  *Save* disabled. The battle section would support it (the format does not
+  depend on the campaign), but the slot files are campaign files.
+- **Import of original slots:** the load dialog offers an *Original game
+  saves* toggle when `<game>\SAVEGAME\savegame.NN` folders with
+  `GAMEINFO.MDB`, `CITY.MDB` and `COLONY.MDB` exist (the default savegame
+  path of the shipped `LIBDAY.INI`; the INI is not read). The slot's
+  databases are converted with the built-in Jet reader into the temporary
+  folder and mapped as in section 3: colony number from `COLONY.MDB`
+  (`Server Mode Campaign.Colony Number` must be that number − 1 *(assumed
+  0-based)* or the number itself), state, tactical province, difficulty, the
+  human player's `Player Campaign` row (Player ID 1, else the lowest
+  non-zero id) and tech map, the first `User List` name (else the slot
+  name), captured flags and variants, the city from `CITY.MDB`, the
+  `Strategic IO` lists (state 3). A battle (states 1, 4, 6) is loaded from
+  `SCENARIO.MDB` (state 4) or `CITY.MDB` (1, 6) with the normal scenario
+  loader, the per-player lists recomputed from the city (3.2 step 5),
+  `Tactic IO` current player and turn, the hold counters (state 4) or a
+  fresh kind 7 objective and city zones (1, 6), `Player Tactical.Deploy Res`
+  and the per-type statistics; the AI budget starts full and the random
+  numbers anew (section 4). Slots 2–4 become slot 1 (single player). Refused
+  with a message: a missing database or table, a state other than 1, 3, 4,
+  6, a battle saved during deployment (current player 5), colony mismatch,
+  a province battle without `SCENARIO.MDB`, unknown types. Tested with
+  synthetic databases only (no original saves were available).
+
 ## Open questions
 
 1. Whether a save request can be handled in the middle of the computer

@@ -100,6 +100,16 @@ Environment variables: `OPENDAY_GAME_DIR`, `OPENDAY_DATA_DIR`,
 `OPENDAY_SAVE_DIR` (saves folder). On macOS the program is
 `OpenDay.app/Contents/MacOS/OpenDay`.
 
+### Saving
+
+A campaign can be saved from the in-game options (*Save*) on the city and
+continent screens and during a battle (after deployment, also while the
+computer player moves); a loaded battle continues exactly where it was
+saved. Skirmish battles cannot be saved, as in the original. The ten slots
+are text files `saves/campaign.01` … `campaign.10` in the per-user folder.
+Saves of the original game (`SAVEGAME\savegame.NN` in the game folder) can
+be imported from the load dialog with *Original game saves*.
+
 ## Building from source
 
 Requirements: CMake 3.21+ and a C++20 compiler (Xcode 15+ / Clang 15+,

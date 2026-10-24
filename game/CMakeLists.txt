@@ -6,6 +6,7 @@ add_library(openday_game
     anim/unit_animation.cpp
     battle/ai.cpp
     battle/automated.cpp
+    battle/battle_save.cpp
     battle/battle_state.cpp
     battle/combat.cpp
     battle/messages.cpp
@@ -16,6 +17,7 @@ add_library(openday_game
     campaign/campaign.cpp
     campaign/city.cpp
     campaign/colony.cpp
+    campaign/savegame_import.cpp
     info/encyclopedia.cpp
     info/overview.cpp
     map/terrain_map.cpp

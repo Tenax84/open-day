@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <sstream>
+#include <stdexcept>
 
 #include "anim/unit_animation.hpp"
 #include "battle/ai.hpp"
@@ -73,6 +75,28 @@ std::vector<Event> BattleServer::start() {
     beginNextTurn();
     runComputerTurns();
     return std::move(out_);
+}
+
+std::vector<Event> BattleServer::resume() {
+    out_.clear();
+    if (!state_.over) runComputerTurns();
+    return std::move(out_);
+}
+
+std::string BattleServer::rngState() const {
+    std::ostringstream o;
+    o << rng_;
+    return o.str();
+}
+
+void BattleServer::restore(const std::string& rng, int aiBudget) {
+    aiAutomatedBudget_ = aiBudget;
+    if (rng.empty()) return;
+    std::istringstream in(rng);
+    std::mt19937 r;
+    in >> r;
+    if (in.fail()) throw std::runtime_error("battle save: bad random-number state");
+    rng_ = r;
 }
 
 bool BattleServer::checkEnd() {

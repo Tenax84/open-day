@@ -12,6 +12,7 @@
 
 #include "anim/battle_animations.hpp"
 #include "anim/battle_view.hpp"
+#include "battle/battle_save.hpp"
 #include "battle/combat.hpp"
 #include "battle/server.hpp"
 #include "data/sqlite_db.hpp"
@@ -29,12 +30,19 @@ public:
                                                render::AnimationCache* clips, std::uint32_t seed, CombatOptions options,
                                                const std::function<void(BattleState&)>& prepare = {});
 
+    // A battle restored from a save (battle_save.hpp): the map objects are
+    // built from the saved state. begin() then resumes it.
+    static std::unique_ptr<BattleSession> restore(const SavedBattle& saved, const GlobalRules& rules,
+                                                  render::AnimationCache* clips);
+
     BattleSession(std::string name, TerrainMap terrain, std::vector<MapSprite> objects, MapEntities entities,
                   BattleState state, const GlobalRules& rules, render::AnimationCache* clips, std::uint32_t seed,
                   CombatOptions options);
 
-    // Starts the first turn.
+    // Starts the first turn; a restored battle resumes instead
+    // (BattleServer::resume).
     void begin();
+    bool restored() const { return restored_; }
     // Sends a request and plays the answer. Returns the refusal, if any.
     std::string send(const Request& request);
 
@@ -66,7 +74,12 @@ private:
     BattleView view_;
     int displayedPlayer_ = 0;
     bool displayedOver_ = false;
+    bool restored_ = false;
 };
+
+// The "... On Map" objects of a battle state (the living ones, in index
+// order), for building the map sprites of a restored battle.
+ScenarioObjects scenarioObjects(const BattleState& state);
 
 // Requests built from a client's state for the player whose turn it is.
 MoveRequest moveOrder(const BattleState& s, const std::vector<int>& units, Point target);

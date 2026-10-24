@@ -12,6 +12,7 @@
 
 #include "app/campaign.hpp"
 #include "app/setup.hpp"
+#include "campaign/savegame_import.hpp"
 #include "formats/pe_resources.hpp"
 
 namespace openday::app {
@@ -154,30 +155,56 @@ private:
 
 class SlotMenu : public Screen {
 public:
-    SlotMenu(App& app, CampaignPtr ctx) : Screen(app), ctx_(std::move(ctx)), panel_(centred(286, 419)) {
+    // Loading when `ctx` is null; else saving the campaign, with the battle
+    // in progress from `battle` (empty function between battles).
+    SlotMenu(App& app, CampaignPtr ctx, std::function<std::string()> battle = {})
+        : Screen(app), ctx_(std::move(ctx)), battle_(std::move(battle)), panel_(centred(286, 419)) {
         saving_ = ctx_ != nullptr;
         for (int i = 0; i < kSaveSlots; ++i) {
             const std::string text = readFile(saveFile(i + 1));
             descriptions_.push_back(game::saveDescription(text));
         }
+        name_.maxLength = 31; // savegame.md 1.3
+        name_.largeFont = false;
         buttons_.push_back(makeButton({panel_.x + 10, panel_.y + 383, 100, 24}, saving_ ? 751 : 740, "Back", ui::kKeyEscape,
                                       [this] { app_.pop(); }));
         buttons_.push_back(makeButton({panel_.x + 176, panel_.y + 383, 100, 24}, saving_ ? 755 : 744, saving_ ? "Save" : "Load",
                                       ui::kKeyEnter, [this] { act(); }));
+        if (!saving_) {
+            // The original game's slots (savegame.md), imported on loading.
+            for (const game::OriginalSlot& o : game::listOriginalSlots(app.data().gameDir)) {
+                originals_.push_back(o);
+                if (o.used) anyOriginal_ = true;
+            }
+            if (anyOriginal_)
+                buttons_.push_back(makeButton({panel_.x + 43, 4, 200, 20}, -1, "Original game saves", 'o', [this] {
+                    showOriginal_ = !showOriginal_;
+                    buttons_.back().checked = showOriginal_;
+                    selected_ = -1;
+                    message_.clear();
+                }, true));
+        }
     }
 
     void handle(const ui::InputEvent& e) override {
+        if (pending_) return; // "...SAVING..." is up
         for (ui::Button& b : buttons_)
             if (b.handle(e)) return;
         if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1)
             for (int i = 0; i < kSaveSlots; ++i)
-                if (slotRect(i).contains(e.x, e.y)) {
-                    selected_ = i;
-                    if (saving_ && descriptions_[static_cast<std::size_t>(i)].empty())
-                        descriptions_[static_cast<std::size_t>(i)] = defaultDescription();
-                }
+                if (slotRect(i).contains(e.x, e.y)) select(i);
         if (e.type == ui::InputEvent::Type::KeyDown && (e.key == ui::kKeyUp || e.key == ui::kKeyDown))
-            selected_ = std::clamp(selected_ + (e.key == ui::kKeyDown ? 1 : -1), 0, kSaveSlots - 1);
+            select(std::clamp(selected_ + (e.key == ui::kKeyDown ? 1 : -1), 0, kSaveSlots - 1));
+        else if (saving_ && selected_ >= 0)
+            name_.handle(e);
+    }
+
+    void update(int) override {
+        // The save runs after "...SAVING..." has been drawn once.
+        if (pending_ && ++pendingFrames_ > 1) {
+            pending_ = false;
+            save();
+        }
     }
 
     void draw(render::IndexedSurface& s) override {
@@ -187,42 +214,84 @@ public:
         for (int i = 0; i < kSaveSlots; ++i) {
             const ui::Rect r = slotRect(i);
             fillBox(s, r, ui.black);
+            if (saving_ && i == selected_) {
+                name_.draw(s, ui);
+                frameBox(s, r, ui.white);
+                continue;
+            }
             if (i == selected_) frameBox(s, r, ui.white);
-            ui.standard->drawIn(s, r.x + 4, r.y + 2, r.w - 8, r.h - 2, descriptions_[static_cast<std::size_t>(i)], ui.white,
+            ui.standard->drawIn(s, r.x + 4, r.y + 2, r.w - 8, r.h - 2, slotText(i), ui.white,
                                 render::Align::Left);
         }
         for (const ui::Button& b : buttons_) b.draw(s, ui);
         if (!message_.empty()) ui.standard->drawIn(s, 0, 460, 640, 18, message_, ui.white);
+        if (pending_) {
+            // A message box without buttons (savegame.md 1.3, string 816).
+            const ui::Rect box = centred(254, 60);
+            fillBox(s, box, ui.black);
+            frameBox(s, box, ui.white);
+            ui.standard->drawIn(s, box.x, box.y + 20, box.w, 20, campaignText(app_, 816, "...SAVING..."), ui.white);
+        }
     }
 
 private:
-    ui::Rect slotRect(int i) const { return {panel_.x + 52, panel_.y + 40 + i * 32 - (i >= 6 ? 0 : 0), 217, 21}; }
+    ui::Rect slotRect(int i) const { return {panel_.x + 52, panel_.y + 40 + i * 32, 217, 21}; }
+
+    std::string slotText(int i) const {
+        if (!showOriginal_) return descriptions_[static_cast<std::size_t>(i)];
+        if (static_cast<std::size_t>(i) >= originals_.size() || !originals_[static_cast<std::size_t>(i)].used) return {};
+        const game::OriginalSlot& o = originals_[static_cast<std::size_t>(i)];
+        return o.description.empty() ? "(slot " + std::to_string(o.number) + ")" : o.description;
+    }
 
     std::string defaultDescription() const {
         const game::Campaign& c = ctx_->campaign;
         return c.playerName + " - " + c.colony.name;
     }
 
+    void select(int i) {
+        selected_ = i;
+        if (!saving_) return;
+        const std::string& d = descriptions_[static_cast<std::size_t>(i)];
+        name_.text = d.empty() ? defaultDescription() : d;
+        if (name_.text.size() > name_.maxLength) name_.text.resize(name_.maxLength);
+        name_.rect = slotRect(i);
+    }
+
     void act() {
         if (selected_ < 0) return;
-        const fs::path file = saveFile(selected_ + 1);
         if (saving_) {
-            try {
-                fs::create_directories(file.parent_path());
-                std::ofstream f(file, std::ios::binary);
-                f << game::saveCampaign(ctx_->campaign, descriptions_[static_cast<std::size_t>(selected_)]);
-                if (!f) throw std::runtime_error("write failed");
-                app_.pop();
-            } catch (const std::exception&) {
-                message_ = campaignText(app_, 817, "Save failed");
-                app_.sound("INVALIDE.WAV");
-            }
+            // Leading and trailing blanks go; an empty name does nothing (1.3).
+            std::string name = name_.text;
+            while (!name.empty() && name.back() == ' ') name.pop_back();
+            while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+            if (name.empty()) return app_.sound("INVALIDE.WAV");
+            name_.text = name;
+            message_.clear();
+            pending_ = true;
+            pendingFrames_ = 0;
             return;
         }
-        const std::string text = readFile(file);
-        if (text.empty()) return app_.sound("INVALIDE.WAV");
         auto ctx = std::make_shared<CampaignContext>();
         ctx->res = campaignResources(app_.data());
+        if (showOriginal_) {
+            const game::OriginalSlot& o = originals_[static_cast<std::size_t>(selected_)];
+            if (!o.used) return app_.sound("INVALIDE.WAV");
+            try {
+                ctx->campaign = game::importOriginalSlot(o, ctx->res, ctx->res.tempDir / "import");
+            } catch (const std::exception& ex) {
+                message_ = ex.what();
+                app_.sound("INVALIDE.WAV");
+                return;
+            }
+            ctx->continueShown = true;
+            App& app = app_;
+            app_.reset(makeWait(app_, 3, [&app, ctx] { return campaignScreen(app, ctx); }));
+            return;
+        }
+        const fs::path file = saveFile(selected_ + 1);
+        const std::string text = readFile(file);
+        if (text.empty()) return app_.sound("INVALIDE.WAV");
         try {
             ctx->campaign = game::loadCampaign(text, ctx->res);
         } catch (const std::exception& ex) {
@@ -235,9 +304,30 @@ private:
         app_.reset(makeWait(app_, 3, [&app, ctx] { return campaignScreen(app, ctx); }));
     }
 
+    void save() {
+        const fs::path file = saveFile(selected_ + 1);
+        try {
+            fs::create_directories(file.parent_path());
+            const std::string battle = battle_ ? battle_() : std::string();
+            game::writeSaveFile(file, game::saveCampaign(ctx_->campaign, name_.text, battle));
+            app_.pop();
+        } catch (const std::exception& ex) {
+            // String 817 in place of the OK box (savegame.md 1.3).
+            std::fprintf(stderr, "save failed: %s\n", ex.what());
+            message_ = campaignText(app_, 817, "A problem occured during saving. Please try again.");
+            app_.sound("INVALIDE.WAV");
+        }
+    }
+
     CampaignPtr ctx_;
+    std::function<std::string()> battle_;
+    std::vector<game::OriginalSlot> originals_;
+    bool anyOriginal_ = false, showOriginal_ = false;
     bool saving_ = false;
+    bool pending_ = false;
+    int pendingFrames_ = 0;
     ui::Rect panel_;
+    ui::EditBox name_;
     std::vector<std::string> descriptions_;
     std::vector<ui::Button> buttons_;
     int selected_ = -1;
@@ -301,23 +391,46 @@ private:
 
 std::unique_ptr<Screen> campaignBattle(App& app, CampaignPtr ctx) {
     game::Campaign& c = ctx->campaign;
-    game::CampaignBattle b;
-    try {
-        b = c.battle(ctx->res, ctx->rng);
-    } catch (const std::exception& ex) {
-        std::fprintf(stderr, "cannot prepare the battle: %s\n", ex.what());
-        return makeMainMenu(app);
-    }
     BattleConfig config;
-    config.entry.title = b.title;
-    config.entry.province = b.provinceName;
-    config.entry.description = b.description;
-    config.entry.database = b.database;
-    config.prepare = b.prepare;
-    config.options = b.options;
-    config.aftermath = b.aftermath;
-    config.techLine = !b.city;
+    game::BattleHeader header;
+    if (c.savedBattle) {
+        // A battle loaded from a save resumes (savegame.md 3.2-3.4); the
+        // saved section is used once.
+        config.resume = std::move(c.savedBattle);
+        c.savedBattle.reset();
+        header = config.resume->header;
+        config.entry.database = ctx->res.scenario ? ctx->res.scenario(header.scenario) : fs::path();
+    } else {
+        game::CampaignBattle b;
+        try {
+            b = c.battle(ctx->res, ctx->rng);
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "cannot prepare the battle: %s\n", ex.what());
+            return makeMainMenu(app);
+        }
+        header.scenario = b.scenario;
+        header.title = b.title;
+        header.province = b.provinceName;
+        header.description = b.description;
+        header.aftermath = b.aftermath;
+        header.city = b.city;
+        header.provinceNumber = b.province;
+        header.techLine = !b.city;
+        header.options = b.options;
+        config.entry.database = b.database;
+        config.prepare = b.prepare;
+    }
+    config.entry.title = header.title;
+    config.entry.province = header.province;
+    config.entry.description = header.description;
+    config.options = header.options;
+    config.aftermath = header.aftermath;
+    config.techLine = header.techLine;
     config.canSave = true; // a campaign (the single player hosts the server)
+    config.saveMenu = [&app, ctx, header](const game::BattleServer& server) {
+        const game::BattleServer* s = &server; // the battle screen stays below the dialog
+        return makeSaveMenu(app, ctx, [s, header] { return game::saveBattle(*s, header); });
+    };
     config.playerName = c.playerName;
     config.onFinished = [&app, ctx](const BattleResult& r) {
         game::Campaign& cc = ctx->campaign;
@@ -389,7 +502,9 @@ void campaignContinue(App& app, CampaignPtr ctx) { app.reset(campaignScreen(app,
 
 std::unique_ptr<Screen> makeNewCampaignMenu(App& app) { return std::make_unique<NewCampaignMenu>(app); }
 std::unique_ptr<Screen> makeLoadMenu(App& app) { return std::make_unique<SlotMenu>(app, nullptr); }
-std::unique_ptr<Screen> makeSaveMenu(App& app, CampaignPtr ctx) { return std::make_unique<SlotMenu>(app, std::move(ctx)); }
+std::unique_ptr<Screen> makeSaveMenu(App& app, CampaignPtr ctx, std::function<std::string()> battle) {
+    return std::make_unique<SlotMenu>(app, std::move(ctx), std::move(battle));
+}
 std::unique_ptr<Screen> makeCampaignOptions(App& app, CampaignPtr ctx, int resolution) {
     return std::make_unique<CampaignOptions>(app, std::move(ctx), resolution);
 }

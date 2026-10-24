@@ -1015,9 +1015,14 @@ private:
             askConfirm(text(app_, 819, "Do you really want to quit the game?"), [this] { app_.reset(makeMainMenu(app_)); });
         });
         quit.enabled = !wait;
-        // Saving a battle is not available yet; the button only shows its state.
-        ui::Button save = button({p.x + 132, p.y + 340, 53, 17}, 661, "Save", hotkey(122, 's'), nullptr);
-        save.enabled = config_.canSave && (tactic || wait);
+        // Saving (savegame.md 1): the server's state, which in OpenDay is
+        // never in the middle of the computer player's turn (its turn runs
+        // within one request); the dialog stays open afterwards.
+        ui::Button save = button({p.x + 132, p.y + 340, 53, 17}, 661, "Save", hotkey(122, 's'), [this] {
+            const game::BattleState& st = session_->server().state();
+            if (config_.saveMenu && !st.over && !st.deploying) app_.push(config_.saveMenu(session_->server()));
+        });
+        save.enabled = config_.canSave && config_.saveMenu && (tactic || wait) && !session_->server().state().over;
         ui::Button surrender = button({p.x + 10, p.y + 340, 110, 17}, 689, "Surrender", 0, [this] {
             askConfirm(text(app_, 818, "Do you really want to surrender?"), [this] {
                 dialog_ = Dialog::None;
@@ -1561,6 +1566,16 @@ private:
 } // namespace
 
 std::unique_ptr<Screen> makeBattle(App& app, BattleConfig config) {
+    if (config.resume) {
+        std::unique_ptr<game::BattleSession> session;
+        try {
+            session = game::BattleSession::restore(*config.resume, app.data().rules, app.data().clips.get());
+        } catch (const std::exception& ex) {
+            std::fprintf(stderr, "cannot restore the battle: %s\n", ex.what());
+            return makeMainMenu(app);
+        }
+        return std::make_unique<BattleScreen>(app, std::move(config), std::move(session));
+    }
     auto session = game::BattleSession::load(config.entry.database, app.data().rules, app.data().clips.get(),
                                              static_cast<std::uint32_t>(std::random_device{}()), config.options,
                                              config.prepare);

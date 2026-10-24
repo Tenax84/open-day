@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "app/app.hpp"
+#include "battle/battle_save.hpp"
 #include "battle/battle_state.hpp"
 #include "battle/combat.hpp"
 
@@ -38,6 +39,11 @@ struct BattleConfig {
     std::string aftermath;  // report text on a win (campaign); empty = generic
     bool techLine = false;  // report shows "New technologies found"
     bool canSave = false;   // the in-game options allow saving (a campaign)
+    // The save dialog for the running battle (with canSave); it saves the
+    // given server's state when a slot is chosen.
+    std::function<std::unique_ptr<Screen>(const game::BattleServer&)> saveMenu;
+    // A battle restored from a save: resumed instead of loaded from `entry`.
+    std::shared_ptr<const game::SavedBattle> resume;
     std::string playerName; // the local player's name (report, player list); empty = generic
     std::function<void(const BattleResult&)> onFinished; // after the report; default: main menu
 };
