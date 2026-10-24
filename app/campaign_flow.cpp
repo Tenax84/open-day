@@ -78,7 +78,8 @@ constexpr int kSaveSlots = 10;
 ui::Rect centred(int w, int h) { return {(640 - w) / 2, (480 - h) / 2, w, h}; }
 
 fs::path savesDir() {
-    if (const char* env = std::getenv("OPENDAY_SAVE_DIR")) return fs::path(env);
+    if (const char* env = SDL_getenv("OPENDAY_SAVE_DIR"); env && *env) // UTF-8
+        return fs::path(std::u8string(reinterpret_cast<const char8_t*>(env)));
     return setup::userDir() / "saves";
 }
 

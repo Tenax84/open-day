@@ -60,7 +60,7 @@ GameData GameData::load(const fs::path& gameDir, const fs::path& dataDir) {
             d.colonies[stem[1] - '0'] = e.path();
         else if (!d.scenarios.count(stem) && data::SqliteDb(e.path()).hasTable("Map")) d.scenarios[stem] = e.path();
     }
-    if (global.empty()) throw data::DbError("GLOBAL.sqlite not found in " + dataDir.string());
+    if (global.empty()) throw data::DbError("GLOBAL.sqlite not found in " + std::string(reinterpret_cast<const char*>(dataDir.u8string().c_str())));
     d.global = global;
     d.rules = game::loadGlobalRules(data::SqliteDb(global));
     d.sprites = game::SpriteLibrary::fromGameDir(gameDir);
@@ -176,7 +176,7 @@ const render::SmkFrames* App::encyclopediaPictures() {
         picturesLoaded_ = true;
         try {
             encyclopediaPictures_ =
-                std::make_unique<render::SmkFrames>(render::SmkFrames::load(data_.gameDir / "ENCYCL" / "ENCYCL.SMK"));
+                std::make_unique<render::SmkFrames>(render::SmkFrames::load(data_.file("ENCYCL/ENCYCL.SMK")));
         } catch (const std::exception&) {
             encyclopediaPictures_.reset();
         }
@@ -190,7 +190,7 @@ const formats::DbiSprite* App::exeBitmap(int id, bool keyed) {
     if (!exeLoaded_) {
         exeLoaded_ = true;
         try {
-            exeBitmapData_ = formats::loadResources(data_.gameDir / "EXE" / "LIBDAY.EXE", formats::kResourceBitmap);
+            exeBitmapData_ = formats::loadResources(data_.file("EXE/LIBDAY.EXE"), formats::kResourceBitmap);
         } catch (const std::exception&) {
             exeBitmapData_.clear();
         }

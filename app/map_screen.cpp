@@ -42,7 +42,7 @@ public:
         // The map square, centred horizontally; the picture centred in it.
         const int side = std::min(viewW_, viewH_);
         square_ = {(viewW_ - side) / 2, 0, side, side};
-        pic_ = c_.picture.width > 0 ? c_.picture.width : side * 396 / 448;
+        pic_ = c_.picture.width > 0 ? std::min(c_.picture.width, side) : side * 396 / 448;
         ox_ = square_.x + (square_.w - pic_) / 2;
         oy_ = square_.y + (square_.h - pic_) / 2;
         scale_ = static_cast<double>(pic_) / std::max(1, c_.mapSize);

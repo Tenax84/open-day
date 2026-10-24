@@ -28,9 +28,11 @@ std::string utf8(const fs::path& p) {
     return std::string(u.begin(), u.end());
 }
 
+// SDL_getenv gives UTF-8 on every platform (std::getenv is in the ANSI code
+// page on Windows, which garbles non-ASCII folder names).
 fs::path envPath(const char* name) {
-    const char* v = std::getenv(name);
-    return v && *v ? fs::path(v) : fs::path();
+    const char* v = SDL_getenv(name);
+    return v && *v ? utf8Path(v) : fs::path();
 }
 
 bool pathExists(const fs::path& p) {

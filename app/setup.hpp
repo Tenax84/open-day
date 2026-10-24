@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 
 // The per-user directory (created on first use): converted data, saves and
 // the configuration file.
-//   Windows: %APPDATA%\OpenDay\
+//   Windows: %APPDATA%\OpenDay
 //   macOS:   ~/Library/Application Support/OpenDay/
 //   Linux:   $XDG_DATA_HOME/openday/ (~/.local/share/openday/)
 fs::path userDir();
