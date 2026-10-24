@@ -1034,9 +1034,22 @@ views, objectives dialog, in-game options, battle report) on top of
   names both races) *(OpenDay choices)*.
 - Deployment is sent to the server one placement at a time (place and
   recall are immediate) instead of in one request at CONTINUE.
-- When the deployment view opens, the pre-battle overview map comes first
-  (strategic-interface.md 4), then the objectives dialog; MAP opens the
-  overview map again (with BACK).
+- Tactical map screen (7, `app/map_screen.*`): opened once when the first
+  deployment view opens (CONTINUE), then the objectives dialog; MAP / `F4`
+  of the deployment, tactical and waiting views opens it with BACK. It is an
+  overlay over the battle view, which keeps running below it (the AI's turn
+  continues; the message strip stays visible). The list follows the order
+  of the battle's unit list. The deployment zone shaded is the local
+  player's (whatever its `Turn`). The markers `SHADE`, `DEPL`, `OBJ00` and
+  `LBULB` are read at run time from the user's `LIBDAY.EXE`; their colour
+  key is the colour of their top-left pixel *(OpenDay choice)*; without the
+  program file OpenDay draws a red stipple, a small flag, a marker and a
+  bulb. Shaded tiles are grouped greedily into rectangles from the top-left
+  (row runs grown downwards) *(OpenDay choice)*. MENU / CHAT of the strip
+  are not reachable while the map screen is open.
+- Encyclopedia: the emblems (`F1`) of the deployment / reinforcement view
+  (selected list type), the tactical view (lead selected unit) and the
+  waiting view (default page), and the map screen (selected row's type).
 - REINFORCEMENT switches to the deployment view during the player's own
   turn: units bought there are placed at once without AP (battle-flow.md
   4.2); CONTINUE returns to the tactical view.
@@ -1056,7 +1069,7 @@ views, objectives dialog, in-game options, battle report) on top of
   nothing is usable. The scroll buttons sit below the list at (9, 404) and
   (70, 404), 53×17 *(OpenDay choice)*. The resource indicator shows the
   tactical resource in the tactical views (2.4).
-- Not implemented yet: encyclopedia (emblem), turning a
+- Not implemented yet: turning a
   unit by clicking it, chat, the turn time
   limit, the ability icons of the info card, statistics beyond units and
   buildings lost and destroyed (the RANK column shows 1).

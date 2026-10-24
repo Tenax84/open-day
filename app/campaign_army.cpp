@@ -69,9 +69,7 @@ public:
             buttons_.push_back(button(at(471, 428, 110, 17), 158, "Continue", ui::kKeyEnter, [this] { close(); }));
         else
             buttons_.push_back(button(at(471, 428, 110, 17), 168, "Back", ui::kKeyEscape, [this] { close(); }));
-        ui::Button ency = button(at(496, 309, 60, 55), 172, "", ui::kKeyF1, nullptr);
-        ency.enabled = false; // no encyclopedia yet
-        buttons_.push_back(ency);
+        buttons_.push_back(button(at(496, 309, 60, 55), 172, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }));
         auto arrows = [&](int x, int y, bool units) {
             buttons_.push_back(button(at(x, y, 19, 17), 180, "<", 0, [this, units] { step(units, -1); }));
             buttons_.push_back(button(at(x + 22, y, 19, 17), 188, "^", 0, [this, units] { scroll(units, -1); }));
@@ -186,6 +184,22 @@ private:
         message_.clear();
         app_.sound("CASHOUT.WAV");
         updateUpgradeButton();
+    }
+
+    // The encyclopedia at the selected unit, else at the selected automated
+    // unit (encyclopedia.md 3); OpenDay prefers the list clicked last.
+    void openEncyclopediaHere() {
+        EncyclopediaRequest r;
+        if (c_.levels) r.levels = *c_.levels;
+        r.context = c_.context;
+        if (unitSel_ >= 0 && (activeUnits_ || autoSel_ < 0)) {
+            r.kind = EncyclopediaRequest::Kind::Unit;
+            r.type = c_.units[static_cast<std::size_t>(unitSel_)];
+        } else if (autoSel_ >= 0) {
+            r.kind = EncyclopediaRequest::Kind::Automated;
+            r.type = c_.automated[static_cast<std::size_t>(autoSel_)];
+        }
+        openEncyclopedia(app_, std::move(r));
     }
 
     void close() {

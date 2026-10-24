@@ -4,6 +4,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -57,8 +58,20 @@ struct ArmyConfig {
     bool canUpgrade = true;
     int resolution = 0; // 0 = 640x480, 1 = 1024x768
     std::function<void(int selectedType)> onClose;
+    std::optional<std::vector<int>> context; // the colony's buildings, for the encyclopedia
 };
 std::unique_ptr<Screen> makeArmy(App& app, ArmyConfig config);
+
+// What the encyclopedia shows first (docs/mechanics/encyclopedia.md 3).
+struct EncyclopediaRequest {
+    enum class Kind { Default, Unit, Automated, Building, Wall, Mine } kind = Kind::Default;
+    int type = -1;                           // typeID / WallType of the initial entry
+    std::map<int, int> levels;               // the viewing player's unit tech levels
+    std::optional<std::vector<int>> context; // the colony's building types (PREREQUISITE)
+};
+// The encyclopedia dialog over the current top screen.
+std::unique_ptr<Screen> makeEncyclopedia(App& app, EncyclopediaRequest request);
+void openEncyclopedia(App& app, EncyclopediaRequest request);
 
 // Campaign entry points (app/campaign_flow.cpp).
 std::unique_ptr<Screen> makeNewCampaignMenu(App& app);

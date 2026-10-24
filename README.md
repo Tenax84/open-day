@@ -6,9 +6,10 @@ OpenRA, OpenXcom and fheroes2. It runs natively on **macOS (Apple Silicon)**,
 Windows and Linux.
 
 > **Status:** work in progress. Single player is playable: the campaign
-> (four colonies), skirmish and death match battles against the computer.
-> Network play, automated units (air strikes, drops, AA) and the
-> encyclopedia are not there yet.
+> (four colonies) and skirmish battles against the computer, with automated
+> units (air strikes, drops, transports), the encyclopedia and saving.
+> Network play (and with it death match, which has no computer player) is
+> not there yet.
 
 ## Disclaimer
 

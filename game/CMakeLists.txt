@@ -16,6 +16,8 @@ add_library(openday_game
     campaign/campaign.cpp
     campaign/city.cpp
     campaign/colony.cpp
+    info/encyclopedia.cpp
+    info/overview.cpp
     map/terrain_map.cpp
     map/map_objects.cpp
     map/map_renderer.cpp

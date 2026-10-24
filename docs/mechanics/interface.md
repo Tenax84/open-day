@@ -481,8 +481,13 @@ text boxes) and the game program `app/` (screens).
   positions)*. OpenDay saves in its own format (campaign.md 8).
 - The program window is scaled; the mouse pointer is the system arrow.
 - The music starts (random track, as described) when a battle screen opens.
-- Not implemented yet: encyclopedia, CD-player track list, credits, the
-  multiplayer menus.
+- The encyclopedia is implemented as specified in
+  [encyclopedia.md](encyclopedia.md) (not reachable from the main menu, as
+  in the original).
+- Dialogs that leave the screen below visible (the encyclopedia, the map
+  screens) are overlay screens: the screen below is drawn first.
+- Not implemented yet: CD-player track list, credits, the multiplayer
+  menus.
 
 ## 7. Open questions
 

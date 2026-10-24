@@ -437,6 +437,36 @@ and labels the prerequisite; if none is present → string 880.
   rest of the screen keeps showing the view below); centring is a possible
   later improvement.
 
+## Implementation notes (OpenDay)
+
+Implemented in `game/info/encyclopedia.*` (lists, filters, navigation, unit
+page rows, gauges, prerequisite text; tested in `tests/info_test.cpp`) and
+`app/encyclopedia_screen.cpp` (the dialog).
+
+- One entry per unit `typeID` as recommended above; on the shipped data ▶
+  gives exactly the human list of 4.3.
+- The dialog is an overlay screen at screen (40, 40): the screen below stays
+  visible but is not updated while it is open (no animation, palette
+  cycling or AI turn), which is OpenDay's reading of the "suspend" counter.
+- The pictures are decoded once from `ENCYCL.SMK` and remapped from the
+  file's own palette to the nearest game-palette entries.
+- The gauge parts (252 / 195 / 251) and the ability icons are read at run
+  time from the user's `LIBDAY.EXE` (RT_BITMAP resources, converted to the
+  nearest game-palette colours). The dark red bar copies the leftmost
+  columns of bitmap 251 *(OpenDay choice)*. When the program file or a
+  bitmap is missing OpenDay draws a yellow / red / dark red bar and framed
+  boxes with a two-letter label instead.
+- Opening places: the emblem of the tactical view (lead selected unit), the
+  deployment and reinforcement view (selected list type), the waiting view
+  (default page), both map screens (selected row), the continent screen
+  (default page, colony context), the city screen (3.1, colony context) and
+  the army screens. The army screen takes the unit list's selection unless
+  the automated list was clicked last; the strategic army screen passes the
+  colony list as the context, the skirmish and deployment variants none.
+  The viewing player's tech levels are those of the battle (tactical
+  screens) or of the campaign player.
+- An initial type that is not in its table opens the default page.
+
 ## Open questions
 
 - The meaning of the application counter held while the encyclopedia is

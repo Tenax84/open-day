@@ -13,6 +13,7 @@
 #include <set>
 
 #include "anim/battle_session.hpp"
+#include "app/map_screen.hpp"
 #include "app/screens.hpp"
 #include "battle/automated.hpp"
 #include "battle/combat.hpp"
@@ -198,8 +199,7 @@ public:
         if (std::getenv("OPENDAY_LOG"))
             session_->log = [](const game::Event& e) { std::fprintf(stderr, "event %zu\n", e.index()); };
         if (!session_->state().deploying) session_->begin();
-        loadOverviewPicture();
-        if (session_->state().deploying) openOverview(true); // the pre-battle overview map
+        if (session_->state().deploying) firstMap_ = true; // the tactical map first (opened by update)
         else openGoal();
     }
 
@@ -262,6 +262,10 @@ public:
     }
 
     void update(int ms) override {
+        if (firstMap_ && app_.top() == this) {
+            firstMap_ = false;
+            openMap(true);
+        }
         clockMs_ += ms;
         if (messageMs_ > 0) messageMs_ -= ms;
         tickAcc_ += ms;
@@ -283,7 +287,7 @@ public:
         }
         if (session_->state().techHeld.size() > techHeld_) app_.sound("TECH.WAV");
         techHeld_ = session_->state().techHeld.size();
-        if (session_->displayedOver() && !session_->animations().busy()) {
+        if (session_->displayedOver() && !session_->animations().busy() && app_.top() == this) {
             const game::BattleState& s = session_->state();
             app_.replace(std::make_unique<AftermathScreen>(app_, config_, session_->stats(), s.players,
                                                            std::make_shared<game::BattleState>(session_->server().state())));
@@ -315,14 +319,13 @@ public:
         } else {
             drawDeployList(s, ui);
         }
-        if (dialog_ == Dialog::Overview) drawOverview(s, ui);
         if (dialog_ == Dialog::Goal) drawGoal(s, ui);
         if (dialog_ == Dialog::Menu) drawMenu(s, ui);
     }
 
 private:
     enum class Mode { Deploy, Tactic, Wait, Automated };
-    enum class Dialog { None, Goal, Menu, Overview };
+    enum class Dialog { None, Goal, Menu };
 
     Mode mode() const {
         if (session_->state().deploying) return Mode::Deploy;
@@ -405,7 +408,7 @@ private:
 
     // Edge scrolling: within 5 px of the screen edges (3.6).
     void edgeScroll(int ms) {
-        if (dialog_ != Dialog::None || mouseX_ < 0) return;
+        if (dialog_ != Dialog::None || mouseX_ < 0 || app_.top() != this) return;
         const int dx = mouseX_ < 5 ? -1 : mouseX_ >= width_ - 5 ? 1 : 0;
         const int dy = mouseY_ < 5 ? -1 : mouseY_ >= height_ - 5 ? 1 : 0;
         if (!dx && !dy) {
@@ -435,15 +438,11 @@ private:
             v.push_back(chat);
             v.push_back(button({stripRight - 60, stripY + 8, 53, 17}, 693, "Menu", ui::kKeyF2, [this] { openMenu(); }));
         };
-        auto disabled = [](ui::Button b) {
-            b.enabled = false;
-            return b;
-        };
 
         // Deployment view (5.1).
         deployButtons_ = {
-            disabled(button(at(5, 0, 44, 43), 25, "", ui::kKeyF1, nullptr)),
-            button(at(9, 172, 53, 17), 5, "Map", ui::kKeyF4, [this] { openOverview(false); }),
+            button(at(5, 0, 44, 43), 25, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }),
+            button(at(9, 172, 53, 17), 5, "Map", ui::kKeyF4, [this] { openMap(false); }),
             button(at(68, 172, 53, 17), 9, "Goal", ui::kKeyF5, [this] { openGoal(); }),
             button(at(9, 406, 53, 17), 13, "Up", 0, [this] { deployList_.scroll(-1); }),
             button(at(66, 406, 53, 17), 17, "Down", 0, [this] { deployList_.scroll(1); }),
@@ -457,8 +456,8 @@ private:
 
         // Tactical view (2.1).
         tacticButtons_ = {
-            disabled(button(at(5, 0, 44, 43), 294, "", ui::kKeyF1, nullptr)),
-            button(at(10, 169, 53, 17), 231, "Map", ui::kKeyF4, [this] { openOverview(false); }),
+            button(at(5, 0, 44, 43), 294, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }),
+            button(at(10, 169, 53, 17), 231, "Map", ui::kKeyF4, [this] { openMap(false); }),
             button(at(71, 169, 53, 17), 235, "Goal", ui::kKeyF5, [this] { openGoal(); }),
             button(at(10, 252, 53, 17), 241, "Group", 'g', [this] { toggleGroup(); }, true),
             button(at(71, 252, 53, 17), 298, "Center", ui::kKeyF6, [this] { centerSelection(); }),
@@ -477,8 +476,8 @@ private:
 
         // Automated units view (6.2).
         autoButtons_ = {
-            disabled(button(at(5, 0, 44, 43), 516, "", ui::kKeyF1, nullptr)),
-            button(at(10, 169, 53, 17), 520, "Map", ui::kKeyF4, [this] { openOverview(false); }),
+            button(at(5, 0, 44, 43), 516, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }),
+            button(at(10, 169, 53, 17), 520, "Map", ui::kKeyF4, [this] { openMap(false); }),
             button(at(71, 169, 53, 17), 524, "Goal", ui::kKeyF5, [this] { openGoal(); }),
             button(at(9, 404, 53, 17), 528, "Up", 0, [this] { autoList_.scroll(-1); }),
             button(at(70, 404, 53, 17), 532, "Down", 0, [this] { autoList_.scroll(1); }),
@@ -491,8 +490,8 @@ private:
 
         // Waiting view (4.2).
         waitButtons_ = {
-            disabled(button(at(5, 0, 44, 43), 323, "", ui::kKeyF1, nullptr)),
-            button(at(10, 169, 53, 17), 315, "Map", ui::kKeyF4, [this] { openOverview(false); }),
+            button(at(5, 0, 44, 43), 323, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }),
+            button(at(10, 169, 53, 17), 315, "Map", ui::kKeyF4, [this] { openMap(false); }),
             button(at(71, 169, 53, 17), 319, "Goal", ui::kKeyF5, [this] { openGoal(); }),
         };
         strip(waitButtons_);
@@ -904,7 +903,6 @@ private:
     ui::Rect menuRect() const { return {(viewW_ - 403) / 2, (viewH_ - 371) / 2, 403, 371}; }
 
     void handleDialog(const ui::InputEvent& e) {
-        if (dialog_ == Dialog::Overview) return handleOverview(e);
         if (dialog_ == Dialog::Goal) dialogButtons_[1].checked = markers_;
         for (ui::Button& b : dialogButtons_)
             if (b.handle(e)) return;
@@ -946,136 +944,47 @@ private:
         scrollGroup_.draw(s, ui);
     }
 
-    // --- Overview map (strategic-interface.md 4) ------------------------------
+    // --- Tactical map screen (tactical-interface.md 7) and encyclopedia --------
 
-    void loadOverviewPicture() {
-        try {
-            const data::SqliteDb db(entry_.database);
-            const char* column = large_ ? "mapScreen1024" : "mapScreen640";
-            db.forEach(std::string("SELECT ") + column + " FROM \"Scenario Info\"", [&](const data::Row& r) {
-                const std::vector<std::uint8_t> bmp = r.blob(0);
-                if (!bmp.empty()) overviewPicture_ = formats::readBmpImage(bmp);
-            });
-        } catch (const std::exception&) {
-            overviewPicture_ = {};
-        }
-    }
-
-    // The map square: side min(view w, view h), centred in the viewport.
-    ui::Rect overviewSquare() const {
-        const int side = std::min(viewW_, viewH_);
-        return {(viewW_ - side) / 2, (viewH_ - side) / 2, side, side};
-    }
-
-    void openOverview(bool first) {
-        dialog_ = Dialog::Overview;
-        overviewFirst_ = first;
-        const int px = viewW_;
-        overviewButtons_.clear();
-        overviewButtons_.push_back(first ? button({px + 10, 458, 53, 17}, 700, "Continue", ui::kKeyEscape, [this] { closeOverview(); })
-                                         : button({px + 10, 458, 53, 17}, 84, "Back", ui::kKeyEscape, [this] { closeOverview(); }));
-        overviewButtons_.push_back(button({px + 8, 431, 53, 17}, 13, "Up", 0, [this] { overviewList_.scroll(-1); }));
-        overviewButtons_.push_back(button({px + 75, 431, 53, 17}, 17, "Down", 0, [this] { overviewList_.scroll(1); }));
-        overviewArmy_ = {};
-        overviewArmy_.items.push_back(button({px + 10, 73, 19, 19}, 52, "", 0, nullptr, true));
-        overviewArmy_.items.push_back(button({px + 29, 73, 19, 19}, 46, "", 0, nullptr, true));
-        overviewArmy_.check(0);
-        overviewArmy_.onChange = [this](int) { fillOverviewList(); };
-        overviewList_.rect = {px + 12, 96, 116, 330};
-        overviewList_.rowHeight = 17;
-        fillOverviewList();
-    }
-
-    int overviewOwner() const { return overviewArmy_.checked() == 1 ? 0 : kHuman; }
-
-    void fillOverviewList() {
-        std::map<std::string, int> counts;
-        for (const game::BattleUnit& u : session_->state().units())
-            if (u.alive && u.owner == overviewOwner() && !u.type->isConvoy) ++counts[u.type->name];
-        overviewList_.rows.clear();
-        for (const auto& [name, n] : counts) overviewList_.rows.push_back("  " + name + " x" + std::to_string(n));
-        overviewList_.selected = -1;
-        overviewList_.top = 0;
-    }
-
-    void closeOverview() {
-        dialog_ = Dialog::None;
-        if (overviewFirst_) openGoal();
-    }
-
-    void handleOverview(const ui::InputEvent& e) {
-        for (ui::Button& b : overviewButtons_)
-            if (b.handle(e)) return;
-        if (overviewArmy_.handle(e) || overviewList_.handle(e)) return;
-        // A click on the map centres the view there and closes the screen.
-        const ui::Rect sq = overviewSquare();
-        if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1 && sq.contains(e.x, e.y)) {
-            const int n = session_->state().size();
-            const int pic = overviewPicture_.width > 0 ? overviewPicture_.width : sq.w;
-            const int ox = sq.x + (sq.w - pic) / 2, oy = sq.y + (sq.h - pic) / 2;
-            const int tx = (e.x - ox) * n / pic, ty = (e.y - oy) * n / pic;
-            if (tx >= 0 && ty >= 0 && tx < n && ty < n) {
-                centerOn({tx, ty});
-                closeOverview();
-            }
-        }
-    }
-
-    void drawOverview(render::IndexedSurface& s, const ui::UiContext& ui) {
-        fillRect(s, {0, 0, viewW_, viewH_}, ui.black);
-        const ui::Rect sq = overviewSquare();
-        const int n = session_->state().size();
-        const int pic = overviewPicture_.width > 0 ? overviewPicture_.width : sq.w;
-        const int ox = sq.x + (sq.w - pic) / 2, oy = sq.y + (sq.h - pic) / 2;
-        if (overviewPicture_.width > 0)
-            for (int y = 0; y < overviewPicture_.height && oy + y < s.height(); ++y)
-                std::copy_n(overviewPicture_.pixels.begin() + static_cast<std::ptrdiff_t>(y) * overviewPicture_.width,
-                            overviewPicture_.width, s.row(oy + y) + ox);
-        const game::BattleState& st = session_->state();
-        const double sc = static_cast<double>(pic) / n;
-        const int dot = std::max(1, static_cast<int>(std::ceil(sc)));
-        auto square = [&](game::Point p, std::uint8_t c) {
-            fillRect(s, {ox + static_cast<int>(p.x * sc), oy + static_cast<int>(p.y * sc), dot, dot}, c);
+    void openMap(bool first) {
+        TacticalMapConfig m;
+        m.state = &session_->state();
+        m.localPlayer = kHuman;
+        m.first = first;
+        m.resolution = large_ ? 1 : 0;
+        m.scenario = entry_.database;
+        m.playerName = [this](int slot) { return playerName(slot); };
+        m.clickable = [this] { return mode() != Mode::Wait; }; // your turn or your deployment
+        m.viewport = [this](game::Point& tl, int& span) {
+            tl = tileAt(0, 0);
+            span = std::max(viewW_ / 54, viewH_ / 28);
         };
-        // Deployment zone, objective zone and markers in OpenDay's own shapes.
-        if (st.deploying)
-            for (const game::Point z : st.deployZone[kHuman])
-                if ((z.x + z.y) % 2 == 0) square(z, objectColor(1, kHuman, 0));
-        for (const game::Point z : st.objective.zone)
-            if ((z.x + z.y) % 2 == 0) square(z, colors_(255, 140, 0));
-        const bool blink = (clockMs_ / 175) % 2 == 0;
-        std::string marked;
-        if (overviewList_.selected >= 0 && overviewList_.selected < static_cast<int>(overviewList_.rows.size())) {
-            marked = overviewList_.rows[static_cast<std::size_t>(overviewList_.selected)];
-            marked = marked.substr(2, marked.rfind(" x") - 2);
+        m.centre = [this](game::Point t) { centerOn(t); };
+        if (first) m.onClose = [this] { openGoal(); };
+        app_.push(makeTacticalMap(app_, std::move(m)));
+    }
+
+    // The emblem (encyclopedia.md 3): the lead selected unit's type in the
+    // tactical view, the selected list type in the deployment view.
+    void openEncyclopediaHere() {
+        EncyclopediaRequest r;
+        r.levels = session_->state().techLevels[kHuman];
+        const Mode mode = this->mode();
+        int type = -1;
+        if (mode == Mode::Tactic && !selection_.empty()) type = session_->state().unit(selection_.front()).type->typeId;
+        if (mode == Mode::Deploy && deployList_.selected >= 0 && deployList_.selected < static_cast<int>(deployTypes_.size()))
+            type = deployTypes_[static_cast<std::size_t>(deployList_.selected)]->typeId;
+        if (type >= 0) {
+            r.kind = EncyclopediaRequest::Kind::Unit;
+            r.type = type;
         }
-        for (const game::BattleBuilding& b : st.buildings())
-            if (b.alive)
-                for (int dy = 0; dy < b.type->sizeY; ++dy)
-                    for (int dx = 0; dx < b.type->sizeX; ++dx) square({b.pos.x + dx, b.pos.y + dy}, objectColor(0, b.owner, b.type->race));
-        for (const game::BattleUnit& u : st.units())
-            if (u.alive) {
-                const bool highlight = blink && u.owner == overviewOwner() && u.type->name == marked;
-                square(u.pos, highlight ? ui.white : objectColor(1, u.owner, u.type->race));
+        if (mode == Mode::Automated) {
+            if (const game::AutomatedType* t = selectedAutomated()) {
+                r.kind = EncyclopediaRequest::Kind::Automated;
+                r.type = t->id;
             }
-        for (const int b : st.techHeld)
-            if (b >= 0 && b < static_cast<int>(st.buildings().size())) square(st.building(b).pos, colors_(255, 255, 0));
-        // Side panel.
-        ui::drawFrame(s, ui, 41, {viewW_, 0, width_ - viewW_, height_});
-        ui::Button emblem = button({viewW_ + 5, 0, 44, 43}, 88, "", 0, nullptr);
-        emblem.enabled = false;
-        emblem.draw(s, ui);
-        const ui::Rect ind{viewW_ + 64, 26, 40, 14};
-        fillRect(s, ind, ui.black);
-        ui.standard->drawIn(s, ind.x, ind.y - 1, ind.w, ind.h + 2, std::to_string(st.deployBudget[kHuman]), ui.white);
-        const ui::Rect name{viewW_ + 6, 53, 121, 15};
-        fillRect(s, name, ui.black);
-        ui.standard->drawIn(s, name.x + 2, name.y, name.w - 4, name.h, overviewOwner() == 0 ? text(app_, 65, "Alien") : playerName(kHuman),
-                            ui.white, render::Align::Left);
-        fillRect(s, overviewList_.rect, ui.black);
-        overviewArmy_.draw(s, ui);
-        overviewList_.draw(s, ui);
-        for (const ui::Button& b : overviewButtons_) b.draw(s, ui);
+        }
+        openEncyclopedia(app_, std::move(r));
     }
 
     // --- Map -----------------------------------------------------------------
@@ -1401,11 +1310,7 @@ private:
     bool reinforcing_ = false;
     std::size_t techHeld_ = 0;
     std::map<int, int> armyLevels_;
-    formats::BmpImage overviewPicture_;
-    bool overviewFirst_ = false;
-    std::vector<ui::Button> overviewButtons_;
-    ui::RadioGroup overviewArmy_;
-    ui::ListBox overviewList_;
+    bool firstMap_ = false;
     std::vector<ui::Button> deployButtons_, tacticButtons_, waitButtons_, dialogButtons_, autoButtons_;
     ui::RadioGroup soundGroup_, animGroup_, scrollGroup_;
     ui::ListBox deployList_;

@@ -6,8 +6,10 @@ add_executable(openday
     campaign_city.cpp
     campaign_continent.cpp
     campaign_flow.cpp
+    encyclopedia_screen.cpp
     game.cpp
     main.cpp
+    map_screen.cpp
     menus.cpp
     ui_frames.cpp
 )

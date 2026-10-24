@@ -299,7 +299,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     break;
                 }
             }
-            app.top()->update(elapsed);
+            app.update(elapsed);
             app.applyChanges();
             if (app.quitting()) break;
             audio.update();
@@ -307,7 +307,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             screen = app.top();
             if (surface.width() != screen->width() || surface.height() != screen->height())
                 surface.resize(screen->width(), screen->height());
-            screen->draw(surface);
+            app.draw(surface);
             if (surface.width() != texW || surface.height() != texH) {
                 SDL_DestroyTexture(texture);
                 texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, surface.width(),

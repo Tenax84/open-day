@@ -150,5 +150,7 @@ Implemented in `game/campaign/campaign.*` (levels, upgrade rules) and
 
 - The skirmish army screen and tech allotment (2.2) are used before skirmish
   battles; death match is not implemented.
-- The encyclopedia button is disabled (not implemented yet); specification:
-  [encyclopedia.md](encyclopedia.md) (opening rule for the army screens: 3).
+- The encyclopedia button opens the encyclopedia ([encyclopedia.md](encyclopedia.md)
+  3): the selected unit, or the selected automated unit when that list was
+  clicked last; the strategic variant passes the colony's building list as
+  the context.

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "formats/dbi.hpp"
 #include "formats/palcycle.hpp"
 #include "formats/palette.hpp"
 #include "map/map_renderer.hpp"
@@ -15,8 +16,13 @@
 #include "render/animation.hpp"
 #include "render/font.hpp"
 #include "render/indexed_surface.hpp"
+#include "render/smk_frames.hpp"
 #include "ui/atlas.hpp"
 #include "ui/widgets.hpp"
+
+namespace openday::game {
+struct EncyclopediaData;
+}
 
 namespace openday::app {
 
@@ -33,6 +39,7 @@ struct ScenarioEntry {
 // Everything loaded from the game installation.
 struct GameData {
     fs::path gameDir, dataDir;
+    fs::path global; // converted GLOBAL database
     game::GlobalRules rules;
     game::SpriteLibrary sprites;
     formats::Palette palette{};
@@ -68,6 +75,10 @@ public:
     // A palette of its own (videos), or nullptr for the game palette.
     virtual const formats::Palette* palette() const { return nullptr; }
     virtual bool paletteCycling() const { return false; }
+    // An overlay (a dialog) is drawn over the screen below it, which stays
+    // visible; with `updatesBelow` the screen below keeps running too.
+    virtual bool overlay() const { return false; }
+    virtual bool updatesBelow() const { return false; }
 
 protected:
     App& app_;
@@ -107,6 +118,18 @@ public:
 
     Screen* top() { return screens_.empty() ? nullptr : screens_.back().get(); }
     void applyChanges();
+    // Updates the top screen (and the screens below it that overlays keep
+    // running) and draws the top screen over the screens below its overlays.
+    void update(int elapsedMs);
+    void draw(render::IndexedSurface& target);
+
+    // Loaded on first use: the encyclopedia texts and pictures, and the
+    // bitmap resources of the game program (LIBDAY.EXE), converted to the
+    // game palette; `keyed`: pixels of the top-left pixel's color are
+    // transparent. nullptr when missing.
+    const game::EncyclopediaData& encyclopedia();
+    const render::SmkFrames* encyclopediaPictures();
+    const formats::DbiSprite* exeBitmap(int id, bool keyed = false);
 
     // Plays a sound from SOUNDS\ by file name.
     void sound(const std::string& file);
@@ -129,6 +152,12 @@ private:
     };
     std::vector<Change> pending_;
     bool quit_ = false;
+    std::unique_ptr<game::EncyclopediaData> encyclopedia_;
+    std::unique_ptr<render::SmkFrames> encyclopediaPictures_;
+    bool picturesLoaded_ = false;
+    std::map<int, std::vector<std::uint8_t>> exeBitmapData_;
+    bool exeLoaded_ = false;
+    std::map<std::pair<int, bool>, formats::DbiSprite> exeBitmaps_;
 };
 
 // The interface atlas elements the screens use (frame and size, from
