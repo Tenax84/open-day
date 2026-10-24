@@ -165,7 +165,7 @@ struct TestMap {
         TerrainMap t;
         t.size = 6;
         t.tiles.assign(36, "GRASS0");
-        rules.terrain = {{"GRASS0", {TerrainClass::Plain}}};
+        rules.terrain["GRASS0"].cls = TerrainClass::Plain;
         entities.units.push_back({&type, 2, 0, 1, 1});
         scene = MapScene(t, {unitSprite(entities.units[0], 0, t, rules, false)});
     }

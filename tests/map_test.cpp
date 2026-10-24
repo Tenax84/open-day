@@ -187,8 +187,9 @@ void testMapObjects() {
         rules.roads = {{0, {"ROAL"}}, {1, {"ROAH"}}};
         rules.walls[0] = {"WALLC", 60}; // currentAR 10 <= 33% of 60: damaged
         rules.buildings[130] = {"HHQ", 2, 2};
-        rules.units[{5, 1}] = {"BDN", 0};
-        rules.terrain = {{"GRASS0", {game::TerrainClass::Plain}}, {"EAU000", {game::TerrainClass::DeepWater}}};
+        rules.units[{5, 1}].image = "BDN";
+        rules.terrain["GRASS0"].cls = game::TerrainClass::Plain;
+        rules.terrain["EAU000"].cls = game::TerrainClass::DeepWater;
         terrain = game::loadTerrainMap(db);
         objects = game::loadMapObjects(db, rules, terrain);
     }

@@ -106,6 +106,13 @@ int add(BattleState& s, int type, int owner, Point p) {
     return s.addUnit({100 + static_cast<int>(s.units().size()), &t, owner, t.actionPoints, 0, t.armor, p, 0});
 }
 
+BattleUnit owned(const UnitType& t, int owner) {
+    BattleUnit u;
+    u.type = &t;
+    u.owner = owner;
+    return u;
+}
+
 bool same(Point a, Point b) { return a.x == b.x && a.y == b.y; }
 
 // Random numbers from a script; 0 when it runs out.
@@ -146,10 +153,10 @@ void checkReplica(BattleState replica, const std::vector<Event>& events, const B
 
 void testTiles() {
     BattleState s = world({".fmw.", ".....", ".....", ".....", "....."});
-    const BattleUnit tank{0, &rules().units.at({kTank, 0}), 1};
-    const BattleUnit trooper{0, &rules().units.at({kTrooper, 0}), 1};
-    const BattleUnit chopper{0, &rules().units.at({kChopper, 0}), 1};
-    const BattleUnit boat{0, &rules().units.at({kBoat, 0}), 1};
+    const BattleUnit tank = owned(rules().units.at({kTank, 0}), 1);
+    const BattleUnit trooper = owned(rules().units.at({kTrooper, 0}), 1);
+    const BattleUnit chopper = owned(rules().units.at({kChopper, 0}), 1);
+    const BattleUnit boat = owned(rules().units.at({kBoat, 0}), 1);
 
     TileEval e = evaluateTile(s, tank, {0, 0});
     CHECK(e.enterable && !e.flyOver && e.cost == 10);
@@ -479,7 +486,8 @@ void testSides() {
     UnitType convoyAlien, convoyHuman, plain;
     convoyAlien.isConvoy = convoyHuman.isConvoy = true;
     convoyAlien.race = 2;
-    BattleUnit h1{0, &plain, 1}, h2{0, &plain, 2}, ai{0, &plain, 0}, ca{0, &convoyAlien, 3}, ch{0, &convoyHuman, 0};
+    const BattleUnit h1 = owned(plain, 1), h2 = owned(plain, 2), ai = owned(plain, 0), ca = owned(convoyAlien, 3),
+                     ch = owned(convoyHuman, 0);
     CHECK(unitSide(h1, h1, true) == Side::Same);
     CHECK(unitSide(h1, h2, true) == Side::Ally && unitSide(h1, h2, false) == Side::Enemy);
     CHECK(unitSide(h1, ai, true) == Side::Enemy);
