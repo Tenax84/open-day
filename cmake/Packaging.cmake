@@ -78,6 +78,10 @@ set(CPACK_PACKAGE_FILE_NAME "OpenDay-${OPENDAY_PACKAGE_VERSION}-${openday_os}-${
 set(CPACK_PACKAGE_DIRECTORY "${PROJECT_BINARY_DIR}/packages")
 set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
 set(CPACK_STRIP_FILES ON)
+if(APPLE AND OPENDAY_BUILD_VIEWER)
+    # Stripping breaks the linker's ad-hoc signature; sign again before zipping.
+    set(CPACK_PRE_BUILD_SCRIPTS "${PROJECT_SOURCE_DIR}/cmake/MacAdhocSign.cmake")
+endif()
 if(WIN32 OR APPLE)
     set(CPACK_GENERATOR ZIP)
 else()

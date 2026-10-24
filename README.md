@@ -29,8 +29,10 @@ Download the package for your system from the
 [releases](https://github.com/Tenax84/open-day/releases) page:
 
 - **macOS (arm64):** unzip and move `OpenDay.app` to Applications. The app is
-  not signed: on first start, right-click it and choose *Open* (or run
-  `xattr -dr com.apple.quarantine OpenDay.app`).
+  signed ad hoc only, not notarized: on first start, right-click it and choose
+  *Open* (on macOS 15 and later: try to open it once, then *System Settings →
+  Privacy & Security → Open Anyway*), or run
+  `xattr -dr com.apple.quarantine OpenDay.app` in Terminal.
 - **Windows (x64):** unzip anywhere and start `openday.exe`.
 - **Linux (x64):** unpack the `.tar.gz` and start `bin/openday`.
 

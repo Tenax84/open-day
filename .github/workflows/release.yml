@@ -72,6 +72,15 @@ jobs:
       - name: Package
         run: cmake --build build --config Release --target package
 
+      # Apple Silicon refuses ("damaged") binaries whose signature is invalid.
+      - name: Verify code signatures (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p verify && cd verify
+          ditto -x -k ../build/packages/*.zip .
+          codesign --verify --strict --verbose=2 */OpenDay.app
+          for tool in */tools/*; do codesign --verify --strict --verbose=2 "$tool"; done
+
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ runner.os }}
