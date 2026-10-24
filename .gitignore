@@ -39,6 +39,7 @@ rea-evidence/
 
 # --- Build output ---
 build/
+build-*/
 out/
 cmake-build-*/
 CMakeUserPresets.json
