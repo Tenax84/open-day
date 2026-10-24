@@ -81,6 +81,72 @@ MapSprite unitSprite(const MapUnit& unit, int entity, const TerrainMap& terrain,
             unit.type->image + std::to_string(unit.color) + facingChar + "00", onBridge ? -5 : 0, entity};
 }
 
+std::vector<MapSprite> roadSprites(const std::vector<RoadPiece>& roads, const GlobalRules& rules, const TerrainMap& terrain) {
+    // Roads join only roads of the same type; the sprite set follows the
+    // terrain class of the road's own tile.
+    auto classAt = [&](int x, int y) {
+        return terrain.inside(x, y) ? rules.classOf(terrain.at(x, y)) : TerrainClass::Unknown;
+    };
+    auto isWaterSide = [&](int x, int y) {
+        const TerrainClass c = classAt(x, y);
+        return c == TerrainClass::DeepWater || c == TerrainClass::Riverside;
+    };
+    auto isLandSide = [&](int x, int y) { return classAt(x, y) == TerrainClass::Plain; };
+    std::map<int, std::set<Tile>> roadTiles; // per road type
+    for (const RoadPiece& r : roads) roadTiles[r.type].insert({r.x, r.y});
+    std::vector<MapSprite> out;
+    for (const auto& [type, x, y] : roads) {
+        const auto road = rules.roads.find(type);
+        if (road == rules.roads.end() || !terrain.inside(x, y)) continue;
+        const std::string& image = road->second.image;
+        const int variant = roadVariant(neighborMask(roadTiles[type], x, y));
+        std::string name;
+        switch (classAt(x, y)) {
+        case TerrainClass::DeepWater:
+            name = image + "B" + threeDigits(variant);
+            break;
+        case TerrainClass::Riverside: {
+            int orientation = 3;
+            if (isWaterSide(x - 1, y) && isLandSide(x + 1, y)) orientation = 0;
+            else if (isWaterSide(x + 1, y) && isLandSide(x - 1, y)) orientation = 1;
+            else if (isWaterSide(x, y - 1) && isLandSide(x, y + 1)) orientation = 2;
+            name = image + "R" + threeDigits(rampNumber(variant, orientation));
+            break;
+        }
+        default:
+            name = image + "G" + threeDigits(variant);
+            break;
+        }
+        out.push_back({x, y, Layer::Road, SpriteSet::Roads, std::move(name)});
+    }
+    return out;
+}
+
+std::vector<MapSprite> wallSprites(std::vector<WallPiece>& walls, const GlobalRules& rules, const TerrainMap& terrain) {
+    // Walls join only walls of the same type. The damage digit comes from
+    // armor; brokenEnd (the isDamaged column) marks a broken end.
+    std::map<int, std::set<Tile>> wallTiles;
+    for (const WallPiece& w : walls) wallTiles[w.type].insert({w.x, w.y});
+    std::vector<MapSprite> out;
+    for (WallPiece& w : walls) {
+        const auto wall = rules.walls.find(w.type);
+        if (wall == rules.walls.end() || !terrain.inside(w.x, w.y)) continue;
+        int number = roadVariant(neighborMask(wallTiles[w.type], w.x, w.y));
+        if (w.brokenEnd) {
+            static constexpr std::pair<int, int> kBroken[] = {{10, 16}, {11, 17}, {9, 18}, {8, 19}};
+            for (const auto& [from, to] : kBroken)
+                if (number == from) number = to;
+            // An isolated piece keeps a straight shape it had before.
+            if (number == 0 && w.previous == 7) number = 20;
+            else if (number == 0 && w.previous == 6) number = 21;
+        }
+        w.previous = number;
+        out.push_back({w.x, w.y, Layer::Wall, SpriteSet::Walls,
+                       wall->second.image + (isDamaged(w.armor, wall->second.armor) ? "1" : "0") + twoDigits(number)});
+    }
+    return out;
+}
+
 std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain,
                                       MapEntities* entities) {
     MapEntities local;
@@ -92,75 +158,27 @@ std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const Glob
     auto classAt = [&](int x, int y) {
         return inside(x, y) ? rules.classOf(terrain.at(x, y)) : TerrainClass::Unknown;
     };
-    auto isWaterSide = [&](int x, int y) {
-        const TerrainClass c = classAt(x, y);
-        return c == TerrainClass::DeepWater || c == TerrainClass::Riverside;
-    };
-    auto isLandSide = [&](int x, int y) { return classAt(x, y) == TerrainClass::Plain; };
 
-    // Roads join only roads of the same type; the sprite set follows the
-    // terrain class of the road's own tile.
-    std::vector<std::tuple<int, int, int>> roads;
-    std::map<int, std::set<Tile>> roadTiles; // per road type
-    std::set<Tile> anyRoad;
+    std::vector<RoadPiece> roads;
     scenario.forEach("SELECT roadtype, PosX, PosY FROM \"Roads On Map\"", [&](const data::Row& r) {
-        roads.emplace_back(toInt(r, 0), toInt(r, 1), toInt(r, 2));
-        roadTiles[toInt(r, 0)].insert({toInt(r, 1), toInt(r, 2)});
-        anyRoad.insert({toInt(r, 1), toInt(r, 2)});
+        roads.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2)});
     });
-    for (const auto& [type, x, y] : roads) {
-        const auto img = rules.roadImage.find(type);
-        if (img == rules.roadImage.end() || !inside(x, y)) continue;
-        const int variant = roadVariant(neighborMask(roadTiles[type], x, y));
-        std::string name;
-        switch (classAt(x, y)) {
-        case TerrainClass::DeepWater:
-            name = img->second + "B" + threeDigits(variant);
-            break;
-        case TerrainClass::Riverside: {
-            int orientation = 3;
-            if (isWaterSide(x - 1, y) && isLandSide(x + 1, y)) orientation = 0;
-            else if (isWaterSide(x + 1, y) && isLandSide(x - 1, y)) orientation = 1;
-            else if (isWaterSide(x, y - 1) && isLandSide(x, y + 1)) orientation = 2;
-            name = img->second + "R" + threeDigits(rampNumber(variant, orientation));
-            break;
-        }
-        default:
-            name = img->second + "G" + threeDigits(variant);
-            break;
-        }
-        out.push_back({x, y, Layer::Road, SpriteSet::Roads, std::move(name)});
-    }
+    std::set<Tile> anyRoad;
+    for (const RoadPiece& r : roads) anyRoad.insert({r.x, r.y});
+    for (MapSprite& sprite : roadSprites(roads, rules, terrain)) out.push_back(std::move(sprite));
 
-    // Walls join only walls of the same type. The damage digit comes from
-    // armor; the isDamaged column marks a broken end.
-    std::vector<std::tuple<int, int, int, int, bool>> walls;
-    std::map<int, std::set<Tile>> wallTiles;
+    std::vector<WallPiece> walls;
     scenario.forEach("SELECT roadtype, posX, posY, currentAR, isDamaged FROM \"Walls On Map\"", [&](const data::Row& r) {
-        walls.emplace_back(toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), r.integer(4) != 0);
-        wallTiles[toInt(r, 0)].insert({toInt(r, 1), toInt(r, 2)});
+        walls.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), r.integer(4) != 0});
     });
-    for (const auto& [type, x, y, armor, brokenEnd] : walls) {
-        const auto wall = rules.walls.find(type);
-        if (wall == rules.walls.end() || !inside(x, y)) continue;
-        int number = roadVariant(neighborMask(wallTiles[type], x, y));
-        if (brokenEnd) {
-            // Freshly loaded walls have no previous shape, so an isolated
-            // piece stays a plain post (0).
-            static constexpr std::pair<int, int> kBroken[] = {{10, 16}, {11, 17}, {9, 18}, {8, 19}};
-            for (const auto& [from, to] : kBroken)
-                if (number == from) number = to;
-        }
-        out.push_back({x, y, Layer::Wall, SpriteSet::Walls,
-                       wall->second.image + (isDamaged(armor, wall->second.armor) ? "1" : "0") + twoDigits(number)});
-    }
+    for (MapSprite& sprite : wallSprites(walls, rules, terrain)) out.push_back(std::move(sprite));
 
     // Mines: ImageID + 000 or 001; which state selects 001 is unknown, so
     // every mine uses 000 for now.
     scenario.forEach("SELECT typeID, PosX, PosY FROM \"Mines On Map\"", [&](const data::Row& r) {
-        const auto img = rules.mineImage.find(toInt(r, 0));
-        if (img != rules.mineImage.end() && inside(toInt(r, 1), toInt(r, 2)))
-            out.push_back({toInt(r, 1), toInt(r, 2), Layer::Mine, SpriteSet::Mines, img->second + "000"});
+        const auto mine = rules.mines.find(toInt(r, 0));
+        if (mine != rules.mines.end() && inside(toInt(r, 1), toInt(r, 2)))
+            out.push_back({toInt(r, 1), toInt(r, 2), Layer::Mine, SpriteSet::Mines, mine->second.image + "000"});
     });
 
     scenario.forEach("SELECT id, PosX, PosY FROM \"Ruins On Map\"", [&](const data::Row& r) {

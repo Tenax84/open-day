@@ -1,4 +1,4 @@
-// The parts of GLOBAL.MDB (converted to SQLite) that map rendering needs.
+// The parts of GLOBAL.MDB (converted to SQLite) that the map and battle need.
 // See docs/mechanics/data-model.md.
 #pragma once
 
@@ -21,6 +21,9 @@ struct BuildingType {
     int armor = 0;
     bool damagedImages = false;
     bool hasExplosion = false;
+    int race = 0;
+    bool destructible = true;
+    bool hasRuin = false;
 };
 
 // Unit actions with their own animation clip, in the program's order
@@ -41,6 +44,23 @@ struct UnitType {
     int projectileSpeed = 20;                   // pixels per tick
     int projectileCurve = 0;                    // arc height in percent of the path length
     std::string ruinImage;                      // RUINS.DBI name, upper case
+    int actionPoints = 0;                       // AP per turn
+    int sizeX = 1, sizeY = 1;                   // footprint; only 1 x 1 units move
+    int mineDetectionRange = 0;
+    // Combat, docs/mechanics/tactical-combat.md.
+    int armor = 0; // maximum armor (hit points)
+    bool hasWeapon = false;
+    bool indirect = false;    // weaponType 1: no line of fire needed
+    int range = 0;            // weaponRange
+    int minRange = 0;         // weaponMinimumRange, exclusive
+    std::array<int, 3> hit{}; // HitShortRange, HitMediumRange, HitLongRange
+    int shotAp = 0;           // actionPointsShoot
+    bool apDamage = false;    // damageType 1: the weapon reduces AP
+    int damageBase = 0;
+    int damageRandom = 0;
+    int damageArea = 1;
+    bool canOverwatch = false;
+    int jammer = 0;
 };
 
 struct WallType {
@@ -48,15 +68,44 @@ struct WallType {
     int armor = 0;
 };
 
+struct RoadType {
+    std::string image; // ROADS.DBI prefix (ROAL, ROAH)
+    int armor = 0;     // `ar`: armor damage that destroys the road in one hit
+};
+
+struct MineType {
+    std::string image; // MINES.DBI prefix (MINE, GMINE)
+    bool apDamage = false;
+    int damageBase = 0;
+    int damageRandom = 0;
+};
+
+struct TerrainType {
+    TerrainClass cls = TerrainClass::Unknown;
+    bool canFireThrough = true;
+    std::string burned; // TERRAINS.DBI name after burning; empty = cannot burn
+};
+
+struct RuinType {
+    bool canFireThrough = true;
+    bool canMoveThrough = true;
+};
+
 struct GlobalRules {
     std::map<std::pair<int, int>, UnitType> units;        // (typeID, unitTechLevel)
     std::map<int, BuildingType> buildings;                // TypeID
-    std::map<int, std::string> roadImage;                 // RoadType -> ROADS.DBI prefix (ROAL, ROAH)
+    std::map<int, RoadType> roads;                        // RoadType
     std::map<int, WallType> walls;                        // WallType
-    std::map<int, std::string> mineImage;                 // typeID -> MINES.DBI prefix (MINE, GMINE)
-    std::unordered_map<std::string, TerrainClass> terrainClass; // TERRAINS.DBI name -> class
+    std::map<int, MineType> mines;                        // typeID
+    std::unordered_map<std::string, TerrainType> terrain; // TERRAINS.DBI name -> properties
+    std::unordered_map<std::string, RuinType> ruins;      // RUINS.DBI name -> properties
+    std::array<int, 2> ranges{3, 6};                      // Ranges: Short, Medium
+    int damageEasy = 100, damageHard = 100;               // Difficulty, percent
 
     TerrainClass classOf(const std::string& terrainName) const;
+    const TerrainType* terrainType(const std::string& terrainName) const;
+    // Number of RUINS.DBI names starting with `prefix` (building rubble sets).
+    int ruinCount(const std::string& prefix) const;
 };
 
 GlobalRules loadGlobalRules(const data::SqliteDb& global);

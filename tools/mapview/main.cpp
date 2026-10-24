@@ -1,5 +1,5 @@
-// mapview: SDL3 viewer for the scenario maps (terrain, placed objects and
-// unit animations).
+// mapview: SDL3 viewer for the scenario maps: terrain, placed objects, and a
+// hot-seat tactical battle on them (movement, combat, turns).
 //
 //   mapview [--game-dir DIR] --data DIR [--scenario NAME] [--scale N] [--mute]
 //   mapview [--game-dir DIR] --data DIR --scenario NAME --screenshot OUT.png [--no-objects]
@@ -10,22 +10,31 @@
 // --data      output folder of tools/mdb/mdb2sqlite.py (default:
 //             $OPENDAY_DATA_DIR).
 // --scenario  scenario database name without extension, e.g. s1-1-1.
-// --do        (screenshot) start an action before the screenshot:
-//             move:X,Y:TX,TY  attack:X,Y:TX,TY  destroy:X,Y  (unit or building
-//             at tile X,Y). Repeatable.
-// --ticks     (screenshot) animation ticks (1/15 s) to run before the
-//             screenshot; default: until all animations have finished.
+// --do        (screenshot) send an order before the screenshot, as the player
+//             whose turn it is: move:X,Y:TX,TY (unit at X,Y to TX,TY),
+//             attack:X,Y:TX,TY (fire at TX,TY), end (end the turn).
+//             Repeatable; each order waits for the previous animations.
+// --ticks     (screenshot) animation ticks (1/15 s) to run after the last
+//             order; default: until all animations have finished.
+// --seed      random seed of the battle (default: 1).
 //
 // Controls: arrow keys / WASD or drag with the mouse to scroll, PageUp /
 // PageDown for the previous / next scenario, 1-4 to set the zoom, C to toggle
 // palette cycling (water, lights), O to toggle objects, M to toggle sound,
-// Esc to quit. Units: left click selects, right click on a tile moves the
-// selected unit there (straight 8-connected path, no game rules), right click
-// on a unit or building attacks it, X destroys the unit or building under the
-// mouse, Space clears the selection.
+// Esc to quit.
+// Battle (hot seat: every side is played from this window): left click
+// selects a unit of the player whose turn it is, Shift + left click adds or
+// removes units of a group; the path to the tile under the mouse is shown.
+// Right click moves there, or fires at an enemy unit or building; Ctrl +
+// right click fires at any tile. F toggles autofire, Space clears the
+// selection, Enter ends the turn. The window title shows the turn, the
+// player, the selected unit and the hit chance at the tile under the mouse.
 
 #include "anim/battle_animations.hpp"
-#include "anim/unit_animation.hpp"
+#include "anim/battle_view.hpp"
+#include "battle/combat.hpp"
+#include "battle/movement.hpp"
+#include "battle/server.hpp"
 #include "data/sqlite_db.hpp"
 #include "formats/bmp_palette.hpp"
 #include "formats/ff.hpp"
@@ -47,6 +56,8 @@
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
+#include <functional>
+#include <type_traits>
 #include <memory>
 #include <set>
 #include <stdexcept>
@@ -66,6 +77,7 @@ struct Options {
     std::vector<std::string> actions;
     int ticks = -1;
     int scale = 2;
+    std::uint32_t seed = 1;
     bool objects = true;
     bool sound = true;
 };
@@ -108,31 +120,84 @@ struct Palettes {
     }
 };
 
-// A loaded scenario. Heap-allocated as a whole: the animations refer to the
-// scene and the entities.
+std::string describe(const game::BattleState& s, const game::Event& event);
+
+// A loaded scenario with its battle: the server holds the authoritative
+// state, the view the client's copy. Heap-allocated as a whole: the
+// animations refer to the scene and the entities.
 struct LoadedMap {
     std::string name;
     game::MapEntities entities;
     game::MapScene scene;
     game::BattleAnimations battle;
+    game::BattleServer server;
+    game::BattleView view;
+    std::function<void(const game::Event&)> log; // optional
 
     LoadedMap(std::string n, game::TerrainMap terrain, std::vector<game::MapSprite> objects, game::MapEntities ent,
-              const game::GlobalRules& rules, render::AnimationCache* clips)
+              game::BattleState state, const game::GlobalRules& rules, render::AnimationCache* clips, std::uint32_t seed)
         : name(std::move(n)), entities(std::move(ent)), scene(std::move(terrain), std::move(objects)),
-          battle(scene, entities, rules, clips) {}
+          battle(scene, entities, rules, clips), server(state, game::CombatOptions{}, seed),
+          view(std::move(state), scene, battle) {
+        view.apply(server.start());
+    }
+
+    // Sends a request and plays the answer. Returns the refusal, if any.
+    std::string send(const game::Request& r) {
+        const std::vector<game::Event> events = server.handle(r);
+        if (log)
+            for (const game::Event& e : events) log(e);
+        view.apply(events);
+        std::string refused;
+        for (const game::Event& e : events)
+            if (const auto* rej = std::get_if<game::RequestRejected>(&e)) refused = rej->reason;
+        return refused;
+    }
 };
 
-std::unique_ptr<LoadedMap> loadMap(const fs::path& path, const game::GlobalRules& rules, render::AnimationCache* clips) {
+std::unique_ptr<LoadedMap> loadMap(const fs::path& path, const game::GlobalRules& rules, render::AnimationCache* clips,
+                                   std::uint32_t seed) {
     const data::SqliteDb db(path);
     game::TerrainMap terrain = game::loadTerrainMap(db);
     game::MapEntities entities;
     std::vector<game::MapSprite> objects = game::loadMapObjects(db, rules, terrain, &entities);
+    game::BattleState state = game::loadBattle(db, rules, terrain);
+    game::startBattle(state);
     return std::make_unique<LoadedMap>(path.stem().string(), std::move(terrain), std::move(objects), std::move(entities),
-                                       rules, clips);
+                                       std::move(state), rules, clips, seed);
+}
+
+// Requests built from the client's state.
+game::MoveRequest moveOrder(const game::BattleState& s, const std::vector<int>& units, game::Point target) {
+    game::MoveRequest r{s.currentPlayer, {}};
+    for (const game::PlannedMove& m : game::planGroupMove(s, units, target)) {
+        game::UnitOrder o{m.unit, m.path};
+        o.path.resize(static_cast<std::size_t>(m.affordable));
+        r.orders.push_back(std::move(o));
+    }
+    return r;
+}
+
+game::ShootRequest shootOrder(const game::BattleState& s, const std::vector<int>& units, game::Point target, bool autofire) {
+    game::ShootRequest r{s.currentPlayer, {}, target, autofire};
+    for (const int u : units) r.orders.push_back({u, {}});
+    return r;
+}
+
+// Should a right click on this tile fire rather than move? True for enemy
+// units and buildings of the player whose turn it is.
+bool isEnemyTarget(const game::BattleState& s, game::Point t) {
+    const int player = s.currentPlayer;
+    if (const int b = s.buildingAt(t); b >= 0) return game::buildingSide(player, s.building(b), true) == game::Side::Enemy;
+    const int u = s.unitAt(t);
+    if (u < 0) return false;
+    for (const game::BattleUnit& mine : s.units())
+        if (mine.alive && mine.owner == player) return game::unitSide(mine, s.unit(u), true) == game::Side::Enemy;
+    return s.unit(u).owner != player;
 }
 
 int usage() {
-    std::fprintf(stderr, "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N] [--mute]\n"
+    std::fprintf(stderr, "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N] [--mute] [--seed N]\n"
                          "               [--screenshot OUT.png] [--no-objects] [--do ACTION]... [--ticks N]\n");
     return 2;
 }
@@ -143,7 +208,47 @@ game::Point parseTile(const std::string& s) {
     return {std::stoi(s.substr(0, comma)), std::stoi(s.substr(comma + 1))};
 }
 
-// Starts an action given as move:X,Y:TX,TY, attack:X,Y:TX,TY or destroy:X,Y.
+std::string tileText(game::Point p) { return std::to_string(p.x) + "," + std::to_string(p.y); }
+
+// One line per event, for the screenshot mode's log.
+std::string describe(const game::BattleState& s, const game::Event& event) {
+    auto unit = [&](int i) { return s.unit(i).type->image + "#" + std::to_string(i); };
+    return std::visit(
+        [&](const auto& e) -> std::string {
+            using T = std::decay_t<decltype(e)>;
+            if constexpr (std::is_same_v<T, game::UnitMoved>)
+                return unit(e.unit) + " moves " + std::to_string(e.tiles.size()) + " tiles to " + tileText(e.tiles.back()) +
+                       ", AP " + std::to_string(e.ap);
+            else if constexpr (std::is_same_v<T, game::UnitShot>)
+                return unit(e.unit) + " fires at " + tileText(e.aim) + ", lands on " + tileText(e.impact) + ", AP " +
+                       std::to_string(e.ap);
+            else if constexpr (std::is_same_v<T, game::UnitDamaged>)
+                return unit(e.unit) + " armor " + std::to_string(e.armor) + " AP " + std::to_string(e.ap) + " negAP " +
+                       std::to_string(e.negAp);
+            else if constexpr (std::is_same_v<T, game::UnitDestroyed>)
+                return unit(e.unit) + " destroyed" + (e.wreck.empty() ? "" : ", wreck " + e.wreck);
+            else if constexpr (std::is_same_v<T, game::BuildingDamaged>)
+                return "building #" + std::to_string(e.building) + " armor " + std::to_string(e.armor);
+            else if constexpr (std::is_same_v<T, game::BuildingDestroyed>)
+                return "building #" + std::to_string(e.building) + " destroyed, " + std::to_string(e.rubble.size()) + " rubble";
+            else if constexpr (std::is_same_v<T, game::WallDamaged>)
+                return "wall #" + std::to_string(e.wall) + " armor " + std::to_string(e.armor);
+            else if constexpr (std::is_same_v<T, game::WallDestroyed>) return "wall #" + std::to_string(e.wall) + " destroyed";
+            else if constexpr (std::is_same_v<T, game::RoadDestroyed>) return "road #" + std::to_string(e.road) + " destroyed";
+            else if constexpr (std::is_same_v<T, game::MineDestroyed>) return "mine #" + std::to_string(e.mine) + " destroyed";
+            else if constexpr (std::is_same_v<T, game::MineExploded>) return "mine #" + std::to_string(e.mine) + " explodes";
+            else if constexpr (std::is_same_v<T, game::MinesRevealed>)
+                return std::to_string(e.mines.size()) + " mines revealed to player " + std::to_string(e.player);
+            else if constexpr (std::is_same_v<T, game::TerrainBurned>) return tileText(e.tile) + " burns to " + e.terrain;
+            else if constexpr (std::is_same_v<T, game::TurnStarted>)
+                return "turn " + std::to_string(e.turn) + ", player " + std::to_string(e.player);
+            else if constexpr (std::is_same_v<T, game::BattleOver>) return "battle over";
+            else return "refused: " + e.reason;
+        },
+        event);
+}
+
+// Sends an order given as move:X,Y:TX,TY, attack:X,Y:TX,TY or end.
 void startAction(LoadedMap& map, const std::string& spec) {
     std::vector<std::string> parts;
     for (std::size_t start = 0;;) {
@@ -152,30 +257,36 @@ void startAction(LoadedMap& map, const std::string& spec) {
         if (colon == std::string::npos) break;
         start = colon + 1;
     }
-    if (parts.size() < 2) throw std::runtime_error("bad action: " + spec);
-    const game::Point at = parseTile(parts[1]);
-    const int unit = map.battle.unitAt(at);
-    if (parts[0] == "destroy") {
-        if (unit >= 0) map.battle.destroyUnit(unit);
-        else map.battle.destroyBuilding(map.battle.buildingAt(at));
-        return;
+    const game::BattleState& s = map.view.state();
+    std::string refused;
+    if (parts[0] == "end") {
+        refused = map.send(game::EndTurnRequest{s.currentPlayer});
+    } else {
+        if (parts.size() < 3) throw std::runtime_error("bad action: " + spec);
+        const game::Point at = parseTile(parts[1]), to = parseTile(parts[2]);
+        const int unit = s.unitAt(at);
+        if (unit < 0) throw std::runtime_error("no unit for action: " + spec);
+        if (parts[0] == "move") refused = map.send(moveOrder(s, {unit}, to));
+        else if (parts[0] == "attack") refused = map.send(shootOrder(s, {unit}, to, false));
+        else throw std::runtime_error("unknown action: " + spec);
     }
-    if (parts.size() < 3 || unit < 0) throw std::runtime_error("no unit for action: " + spec);
-    const game::Point to = parseTile(parts[2]);
-    if (parts[0] == "move") map.battle.move(unit, game::straightPath(at, to));
-    else if (parts[0] == "attack") map.battle.attack(unit, to);
-    else throw std::runtime_error("unknown action: " + spec);
+    if (!refused.empty()) std::printf("%s: %s\n", spec.c_str(), refused.c_str());
 }
 
 void drawScene(const LoadedMap& map, render::IndexedSurface& surface, const game::Rect& view, game::SpriteLibrary& sprites,
-               bool objects, game::RenderStats* statsOut = nullptr) {
-    const game::SceneExtras extras = map.battle.extras();
+               bool objects, game::RenderStats* statsOut = nullptr, const std::vector<game::Overlay>& markers = {}) {
+    game::SceneExtras extras = map.battle.extras();
+    extras.overlays.insert(extras.overlays.end(), markers.begin(), markers.end());
     const game::RenderStats stats = map.scene.draw(surface, view, sprites, objects, &extras);
     if (statsOut) *statsOut = stats;
 }
 
 int screenshot(LoadedMap& map, game::SpriteLibrary& sprites, const Palettes& palettes, const Options& opt) {
-    for (const std::string& a : opt.actions) startAction(map, a);
+    map.log = [&map](const game::Event& e) { std::printf("  %s\n", describe(map.server.state(), e).c_str()); };
+    for (const std::string& a : opt.actions) {
+        for (int i = 0; i < 100000 && map.battle.busy(); ++i) map.battle.tick();
+        startAction(map, a);
+    }
     if (opt.ticks >= 0)
         for (int i = 0; i < opt.ticks; ++i) map.battle.tick();
     else
@@ -296,18 +407,30 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
 
         std::unique_ptr<LoadedMap> map;
         game::Rect bounds;
-        int selected = -1;
+        std::vector<int> selection;
+        bool autofire = false;
+        std::string message; // last refusal, shown in the title
         auto open = [&](std::size_t index) {
-            map = loadMap(scenarios[index], rules, clips);
+            map = loadMap(scenarios[index], rules, clips, opt.seed);
             map->battle.animator().playSound = [&sound](const render::Animation& a) { sound.play(a.audio); };
             bounds = game::iso::mapBounds(map->scene.terrain().size);
-            selected = -1;
-            const int n = map->scene.terrain().size;
-            const std::string title =
-                "OpenDay map viewer - " + map->name + " (" + std::to_string(n) + "x" + std::to_string(n) + ")";
-            SDL_SetWindowTitle(window, title.c_str());
+            selection.clear();
+            message.clear();
         };
         open(current);
+        std::string shownTitle;
+
+        // Path preview, recomputed when the hovered tile or the state changes.
+        std::vector<game::PlannedMove> preview;
+        game::Point previewTile{-1, -1};
+        std::size_t previewEvents = static_cast<std::size_t>(-1);
+        std::size_t eventCount = 0; // requests sent, to notice state changes
+        auto send = [&](const game::Request& r) {
+            message = map->send(r);
+            ++eventCount;
+            const game::BattleState& s = map->view.state();
+            std::erase_if(selection, [&](int u) { return !s.unit(u).alive || s.unit(u).owner != s.currentPlayer; });
+        };
 
         float camX = 0, camY = 0; // map pixel at the top-left of the view
         render::IndexedSurface surface;
@@ -339,13 +462,11 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
                     if (ev.key.key == SDLK_C) cycling = !cycling;
                     if (ev.key.key == SDLK_O) showObjects = !showObjects;
                     if (ev.key.key == SDLK_M) sound.enabled = !sound.enabled;
-                    if (ev.key.key == SDLK_SPACE) selected = -1;
-                    if (ev.key.key == SDLK_X && !map->battle.busy()) {
-                        const game::Point t = tileUnderMouse();
-                        const int unit = map->battle.unitAt(t);
-                        if (unit >= 0) map->battle.destroyUnit(unit);
-                        else map->battle.destroyBuilding(map->battle.buildingAt(t));
-                        if (unit == selected) selected = -1;
+                    if (ev.key.key == SDLK_SPACE) selection.clear();
+                    if (ev.key.key == SDLK_F) autofire = !autofire;
+                    if ((ev.key.key == SDLK_RETURN || ev.key.key == SDLK_KP_ENTER) && !map->battle.busy()) {
+                        send(game::EndTurnRequest{map->view.state().currentPlayer});
+                        selection.clear();
                     }
                     if (ev.key.key >= SDLK_1 && ev.key.key <= SDLK_4) scale = static_cast<int>(ev.key.key - SDLK_1) + 1;
                     if (ev.key.key == SDLK_PAGEDOWN || ev.key.key == SDLK_PAGEUP) {
@@ -360,14 +481,23 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
                     break;
                 case SDL_EVENT_MOUSE_BUTTON_UP:
                     if (dragged > 4 || map->battle.busy()) break;
-                    if (ev.button.button == SDL_BUTTON_LEFT) {
-                        selected = map->battle.unitAt(tileUnderMouse());
-                    } else if (ev.button.button == SDL_BUTTON_RIGHT && selected >= 0) {
+                    {
+                        const game::BattleState& s = map->view.state();
                         const game::Point t = tileUnderMouse();
-                        const game::MapUnit& u = map->entities.units[static_cast<std::size_t>(selected)];
-                        if (!map->scene.terrain().inside(t.x, t.y) || (t.x == u.x && t.y == u.y)) break;
-                        if (map->battle.unitAt(t) >= 0 || map->battle.buildingAt(t) >= 0) map->battle.attack(selected, t);
-                        else map->battle.move(selected, game::straightPath({u.x, u.y}, t));
+                        const SDL_Keymod mods = SDL_GetModState();
+                        if (ev.button.button == SDL_BUTTON_LEFT) {
+                            const int u = s.unitAt(t);
+                            const bool own = u >= 0 && s.unit(u).owner == s.currentPlayer;
+                            if (mods & SDL_KMOD_SHIFT) {
+                                if (own && std::erase(selection, u) == 0) selection.push_back(u);
+                            } else {
+                                selection.clear();
+                                if (own) selection.push_back(u);
+                            }
+                        } else if (ev.button.button == SDL_BUTTON_RIGHT && !selection.empty() && s.inside(t)) {
+                            if ((mods & SDL_KMOD_CTRL) || isEnemyTarget(s, t)) send(shootOrder(s, selection, t, autofire));
+                            else send(moveOrder(s, selection, t));
+                        }
                     }
                     break;
                 case SDL_EVENT_MOUSE_MOTION:
@@ -424,11 +554,62 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
 
             surface.fill(0);
             const game::Rect view{static_cast<int>(camX), static_cast<int>(camY), viewW, viewH};
-            drawScene(*map, surface, view, sprites, showObjects);
-            if (selected >= 0) {
-                const game::MapUnit& u = map->entities.units[static_cast<std::size_t>(selected)];
-                if (u.alive) drawTileMarker(surface, {u.x, u.y}, map->scene.terrain().size, view, markerColor);
-                else selected = -1;
+            const game::BattleState& state = map->view.state();
+            const int n = map->scene.terrain().size;
+            const game::Point hover = tileUnderMouse();
+            const bool idle = !map->battle.busy();
+            const bool aiming = !selection.empty() && state.inside(hover) &&
+                                ((SDL_GetModState() & SDL_KMOD_CTRL) || isEnemyTarget(state, hover));
+
+            // Markers: path preview, target and selection (SYMBOLS.DBI).
+            std::vector<game::Overlay> markers;
+            auto marker = [&](game::Point t, const char* name) {
+                const game::Point o = game::iso::tileOrigin(t.x, t.y, n);
+                if (const formats::DbiSprite* sp = sprites.get(game::SpriteSet::Symbols, name))
+                    markers.push_back({t.x, t.y, o.x, o.y, sp});
+            };
+            if (idle && !selection.empty() && !aiming) {
+                if (hover.x != previewTile.x || hover.y != previewTile.y || previewEvents != eventCount) {
+                    preview = state.inside(hover) ? game::planGroupMove(state, selection, hover)
+                                                  : std::vector<game::PlannedMove>{};
+                    previewTile = hover;
+                    previewEvents = eventCount;
+                }
+                for (const game::PlannedMove& m : preview) {
+                    const std::vector<std::string> names = game::previewSprites(m);
+                    for (std::size_t i = 0; i < names.size(); ++i) marker(m.path[i].pos, names[i].c_str());
+                }
+            }
+            if (idle && aiming) marker(hover, "TARGET");
+            for (const int u : selection)
+                if (idle && state.unit(u).alive) marker(state.unit(u).pos, "SEL000");
+            drawScene(*map, surface, view, sprites, showObjects, nullptr, markers);
+            if (!sprites.cache(game::SpriteSet::Symbols))
+                for (const int u : selection)
+                    if (state.unit(u).alive) drawTileMarker(surface, state.unit(u).pos, n, view, markerColor);
+
+            // Title: battle status.
+            std::string title = "OpenDay - " + map->name + " - turn " + std::to_string(state.turn);
+            if (state.turnLimit > 0) title += "/" + std::to_string(state.turnLimit);
+            title += state.over ? " - battle over" : " - player " + std::to_string(state.currentPlayer);
+            if (selection.size() == 1) {
+                const game::BattleUnit& u = state.unit(selection[0]);
+                title += " - " + u.type->image + " AP " + std::to_string(u.availableAp()) + "/" +
+                         std::to_string(u.type->actionPoints) + " armor " + std::to_string(u.armor) + "/" +
+                         std::to_string(u.type->armor);
+                if (aiming) {
+                    const game::ShotCheck c = game::checkShot(state, selection[0], hover, true);
+                    if (c.ok()) title += " - hit " + std::to_string(std::min(100, game::hitChance(state, selection[0], c.aim) + 1)) + "%";
+                    else title += " - cannot fire";
+                }
+            } else if (!selection.empty()) {
+                title += " - " + std::to_string(selection.size()) + " units";
+            }
+            if (autofire) title += " - autofire";
+            if (!message.empty()) title += " - " + message;
+            if (title != shownTitle) {
+                SDL_SetWindowTitle(window, title.c_str());
+                shownTitle = title;
             }
 
             void* pixels = nullptr;
@@ -477,6 +658,7 @@ int main(int argc, char** argv) {
         else if (a == "--do") opt.actions.emplace_back(argv[++i]);
         else if (a == "--ticks") opt.ticks = std::max(0, std::atoi(argv[++i]));
         else if (a == "--scale") opt.scale = std::clamp(std::atoi(argv[++i]), 1, 4);
+        else if (a == "--seed") opt.seed = static_cast<std::uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         else return usage();
     }
     if (opt.gameDir.empty() || opt.dataDir.empty()) {
@@ -514,7 +696,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s not found: actions run without animations\n", ff.string().c_str());
 
         if (!opt.screenshot.empty()) {
-            const std::unique_ptr<LoadedMap> map = loadMap(scenarios[current], rules, clips.get());
+            const std::unique_ptr<LoadedMap> map = loadMap(scenarios[current], rules, clips.get(), opt.seed);
             return screenshot(*map, sprites, palettes, opt);
         }
         return run(scenarios, current, rules, sprites, clips.get(), palettes, opt);

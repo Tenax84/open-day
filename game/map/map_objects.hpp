@@ -14,8 +14,8 @@
 namespace openday::game {
 
 // The DBI archive a sprite comes from.
-enum class SpriteSet { Terrain, Roads, Walls, Mines, Ruins, UnitsBuildings };
-inline constexpr std::size_t kSpriteSetCount = 6;
+enum class SpriteSet { Terrain, Roads, Walls, Mines, Ruins, UnitsBuildings, Symbols };
+inline constexpr std::size_t kSpriteSetCount = 7;
 
 // Draw order of objects on the same tile, after the terrain
 // (docs/mechanics/map-objects.md, "Drawing").
@@ -60,6 +60,24 @@ int roadVariant(std::uint8_t mask);
 // Number of a riverside road (bridge ramp) piece, 16-31, or 32 when the
 // combination has no sprite. `orientation` is 0-3, see map-objects.md.
 int rampNumber(int variant, int orientation);
+
+struct RoadPiece {
+    int type = 0; // Road Types.RoadType
+    int x = 0, y = 0;
+};
+
+struct WallPiece {
+    int type = 0; // Wall Types.WallType
+    int x = 0, y = 0;
+    int armor = 0;          // currentAR
+    bool brokenEnd = false; // Walls On Map.isDamaged
+    int previous = -1;      // sprite number of the previous computation
+};
+
+// Road sprites with their connection variants.
+std::vector<MapSprite> roadSprites(const std::vector<RoadPiece>& roads, const GlobalRules& rules, const TerrainMap& terrain);
+// Wall sprites; updates each piece's `previous` number.
+std::vector<MapSprite> wallSprites(std::vector<WallPiece>& walls, const GlobalRules& rules, const TerrainMap& terrain);
 
 // Builds the object sprites of a scenario from its "... On Map" tables.
 // When `entities` is given, it receives the units and buildings, and their

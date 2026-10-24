@@ -119,6 +119,10 @@ public:
     // with `sprites`, which may be empty to remove it.
     void replaceEntity(Layer layer, int entity, std::vector<MapSprite> sprites);
     void addObject(MapSprite sprite);
+    // Replaces every sprite of a layer (roads, walls and mines are redrawn
+    // as a whole because neighbors change their shape).
+    void replaceLayer(Layer layer, std::vector<MapSprite> sprites);
+    void setTerrain(int x, int y, const std::string& name);
 
     RenderStats draw(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects = true,
                      const SceneExtras* extras = nullptr) const;

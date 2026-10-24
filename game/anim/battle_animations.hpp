@@ -3,7 +3,10 @@
 // the scene when their animations end (units arrive, objects disappear).
 #pragma once
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "anim/animator.hpp"
@@ -24,12 +27,19 @@ public:
     bool busy() const { return !animator_.idle(); }
     void tick() { animator_.tick(); }
 
-    // Moves a unit along an 8-connected path (start tile first).
-    void move(int unit, const std::vector<Point>& path);
-    // Fires `shots` shots at a tile.
-    void attack(int unit, Point target, int shots = 1);
-    void destroyUnit(int unit);
-    void destroyBuilding(int building);
+    // Actions play one after another, each starting when the previous one
+    // has ended.
+    //
+    // Moves a unit along a path (start tile first).
+    void move(int unit, const std::vector<Point>& path, std::optional<int> arrivalFacing = std::nullopt);
+    // Aims at `aim` and fires one shot per impact tile (default: one at `aim`).
+    void attack(int unit, Point aim, std::vector<Point> impacts = {});
+    // Leaves `wreck` (RUINS.DBI) on the tile; by default the type's ruinImageID.
+    void destroyUnit(int unit, std::optional<std::string> wreck = std::nullopt);
+    // Places `rubble` (Ruin layer sprites) when the explosion ends.
+    void destroyBuilding(int building, std::vector<MapSprite> rubble = {});
+    // Runs `fn` when the actions scheduled so far have played.
+    void schedule(std::function<void()> fn);
 
     // Unit / building at a tile, or -1.
     int unitAt(Point tile) const;
@@ -46,12 +56,15 @@ private:
     void showUnit(int unit);
     void hideUnit(int unit);
     void refreshUnit(int unit);
+    int startTick() const;
+    void finish(int end, const render::Animation* shown);
 
     MapScene& scene_;
     MapEntities& entities_;
     const GlobalRules& rules_;
     render::AnimationCache* clips_;
     Animator animator_;
+    int cursor_ = 0; // first tick of the next action
     std::vector<int> unitHidden_;     // hide counter per unit
     std::vector<bool> buildingHidden_;
 };

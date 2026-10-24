@@ -47,6 +47,7 @@ SpriteLibrary SpriteLibrary::fromGameDir(const std::filesystem::path& gameDir) {
     static constexpr std::pair<SpriteSet, const char*> kFiles[] = {
         {SpriteSet::Terrain, "TERRAINS.DBI"}, {SpriteSet::Roads, "ROADS.DBI"}, {SpriteSet::Walls, "WALLS.DBI"},
         {SpriteSet::Mines, "MINES.DBI"},      {SpriteSet::Ruins, "RUINS.DBI"}, {SpriteSet::UnitsBuildings, "UB.DBI"},
+        {SpriteSet::Symbols, "SYMBOLS.DBI"},
     };
     SpriteLibrary lib;
     for (const auto& [set, file] : kFiles)
@@ -108,6 +109,17 @@ void MapScene::replaceEntity(Layer layer, int entity, std::vector<MapSprite> spr
     for (MapSprite& s : sprites)
         if (terrain_.inside(s.x, s.y)) objects_.push_back(std::move(s));
     reindex();
+}
+
+void MapScene::replaceLayer(Layer layer, std::vector<MapSprite> sprites) {
+    std::erase_if(objects_, [&](const MapSprite& o) { return o.layer == layer; });
+    for (MapSprite& s : sprites)
+        if (terrain_.inside(s.x, s.y)) objects_.push_back(std::move(s));
+    reindex();
+}
+
+void MapScene::setTerrain(int x, int y, const std::string& name) {
+    if (terrain_.inside(x, y)) terrain_.tiles[static_cast<std::size_t>(y * terrain_.size + x)] = name;
 }
 
 void MapScene::addObject(MapSprite sprite) {

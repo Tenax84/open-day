@@ -1,0 +1,292 @@
+#include "battle/movement.hpp"
+
+#include <algorithm>
+#include <climits>
+#include <cstdlib>
+
+namespace openday::game {
+namespace {
+
+// Grid step of each facing (docs/mechanics/unit-animation.md, section 2).
+constexpr Point kStep[8] = {{0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}, {1, 0}, {1, 1}};
+
+enum Movement { kNoneGround = 0, kGround, kTrooper, kGrav, kBoat, kAir, kUnderwater, kTeleport, kNoneWater, kGravFly };
+
+bool contains(const std::vector<Point>& v, Point p) {
+    return std::any_of(v.begin(), v.end(), [&](Point q) { return q.x == p.x && q.y == p.y; });
+}
+
+bool isWater(TerrainClass c) {
+    return c == TerrainClass::ShallowWater || c == TerrainClass::DeepWater || c == TerrainClass::Riverside;
+}
+
+// Section 1.1. Cells: '-' blocked, 'E' enterable (cost 10), 'T' enterable
+// at cost 13, 'F' fly-over only, 'B' enterable and fly-over.
+TileEval baseValue(int movement, TerrainClass terrain) {
+    static constexpr const char* kTable[7] = {
+        // movement class 0123456789
+        "---E-F-E-B", // shallow water
+        "---EEFBE-B", // deep water
+        "---E-F-E-B", // riverside
+        "-EEE-B-E-B", // plain
+        "-----F---F", // mountains
+        "--T--F---F", // forest
+        "-----F---F", // crack
+    };
+    TileEval e;
+    const int t = static_cast<int>(terrain);
+    if (t < 0 || t > 6 || movement < 0 || movement > 9) return e;
+    const char cell = kTable[t][movement];
+    e.enterable = cell == 'E' || cell == 'T' || cell == 'B';
+    e.flyOver = cell == 'F' || cell == 'B';
+    if (cell == 'T') e.cost = 13;
+    if (e.enterable) e.reason = BlockReason::Free;
+    return e;
+}
+
+} // namespace
+
+TileEval evaluateTile(const BattleState& state, const BattleUnit& unit, Point tile, const PlanContext* context) {
+    if (!state.inside(tile) || unit.type->sizeX != 1 || unit.type->sizeY != 1) return {};
+    const int movement = unit.type->movement;
+    const TerrainClass terrain = state.classAt(tile);
+    TileEval e = baseValue(movement, terrain);
+
+    // 1.2 Roads and bridges.
+    const int road = state.roadTypeAt(tile);
+    if (road >= 0) {
+        const bool water = isWater(terrain);
+        switch (movement) {
+        case kGround:
+        case kTrooper:
+            if (water && !e.enterable) {
+                e.enterable = true;
+                e.reason = BlockReason::Road;
+            }
+            e.cost = road == 0 ? 7 : 4;
+            break;
+        case kGrav:
+        case kAir:
+        case kGravFly:
+        case kTeleport:
+            if (water && !e.enterable) {
+                e.enterable = true;
+                e.reason = BlockReason::Road;
+            }
+            break;
+        case kBoat:
+            if (water) {
+                e.enterable = e.flyOver = false;
+                e.reason = BlockReason::BridgeBlocksBoat;
+            }
+            break;
+        case kUnderwater:
+            if (water) {
+                e.enterable = false;
+                e.reason = BlockReason::BridgeBlocksBoat;
+            }
+            break;
+        default:
+            break;
+        }
+    }
+
+    // 1.3 Obstacles: they clear "enterable" only.
+    auto block = [&](BlockReason why) {
+        if (!e.enterable) return;
+        e.enterable = false;
+        e.reason = why;
+    };
+    const int other = state.unitAt(tile);
+    if (other >= 0 && !(context && contains(context->vacated, tile))) block(BlockReason::Unit);
+    if (context && contains(context->claimed, tile)) block(BlockReason::Unit);
+    if (state.wallAt(tile) >= 0) block(BlockReason::Wall);
+    if (state.buildingAt(tile) >= 0) block(BlockReason::Building);
+    const int mine = state.mineAt(tile);
+    if (mine >= 0) {
+        const BattleMine& m = state.mine(mine);
+        const bool known = unit.owner < 0 || unit.owner >= kPlayerSlots || !m.hidden[static_cast<std::size_t>(unit.owner)];
+        const bool hovers = movement == kGrav || movement == kAir || movement == kGravFly || movement == kTeleport;
+        if (m.armed && known && (m.type == 1 || !hovers)) block(BlockReason::Mine);
+    }
+    if (state.ruinBlocksMove(tile)) block(BlockReason::Ruin);
+    return e;
+}
+
+std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point target, const PlanContext* context) {
+    const BattleUnit& unit = state.unit(unitIndex);
+    const Point start = unit.pos;
+    const int movement = unit.type->movement;
+    if (movement == kNoneGround || movement == kNoneWater) return {};
+    if (!state.inside(target) || (target.x == start.x && target.y == start.y)) return {};
+    const TileEval dest = evaluateTile(state, unit, target, context);
+    if (!dest.enterable) return {};
+
+    // 3.6 Teleport: one step, no search. The facing is chosen by the server.
+    if (movement == kTeleport) return {{target, dest.cost, true, 0}};
+
+    // 3.1 Values: start = INT_MAX, unreached = 0, otherwise INT_MAX minus
+    // the planning cost. Relaxed by sweeps until nothing changes.
+    const int n = state.size();
+    auto at = [n](int x, int y) { return static_cast<std::size_t>(y * n + x); };
+    std::vector<TileEval> eval(static_cast<std::size_t>(n * n));
+    for (int y = 0; y < n; ++y)
+        for (int x = 0; x < n; ++x) eval[at(x, y)] = evaluateTile(state, unit, {x, y}, context);
+    std::vector<int> value(eval.size(), 0);
+    value[at(start.x, start.y)] = INT_MAX;
+
+    bool changed = false;
+    auto update = [&](int x, int y) {
+        const TileEval& t = eval[at(x, y)];
+        if (!t.crossable()) return;
+        int best = 0, bestFacing = -1;
+        for (int f = 0; f < 8; ++f) {
+            const int nx = x + kStep[f].x, ny = y + kStep[f].y;
+            if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
+            const int v = value[at(nx, ny)];
+            if (v > best) {
+                best = v;
+                bestFacing = f;
+            }
+        }
+        if (bestFacing < 0) return;
+        const int candidate = best - (t.cost + (bestFacing & 1));
+        if (candidate > value[at(x, y)]) {
+            value[at(x, y)] = candidate;
+            changed = true;
+        }
+    };
+    do {
+        changed = false;
+        for (int x = 1; x <= n - 2; ++x)
+            for (int y = 1; y <= n - 2; ++y) update(x, y);
+        for (int y = n - 2; y >= 1; --y)
+            for (int x = n - 2; x >= 1; --x) update(x, y);
+        for (int x = 0; x < n; ++x) update(x, 0);
+        for (int x = 0; x < n; ++x) update(x, n - 1);
+        for (int y = 0; y < n; ++y) update(n - 1, y);
+        for (int y = 0; y < n; ++y) update(0, y);
+    } while (changed);
+
+    // 3.3 Walk back from the target to the neighbor with the largest value;
+    // on equal values a later neighbor wins only if it is closer to the
+    // start in x or in y.
+    std::vector<Point> tiles{target};
+    Point cur = target;
+    while (cur.x != start.x || cur.y != start.y) {
+        int bestFacing = -1;
+        Point best;
+        for (int f = 0; f < 8; ++f) {
+            const Point p{cur.x + kStep[f].x, cur.y + kStep[f].y};
+            if (!state.inside(p)) continue;
+            const int v = value[at(p.x, p.y)];
+            if (v <= value[at(cur.x, cur.y)]) continue;
+            if (bestFacing < 0 || v > value[at(best.x, best.y)]) {
+                bestFacing = f;
+                best = p;
+            } else if (v == value[at(best.x, best.y)] &&
+                       (std::abs(p.x - start.x) < std::abs(best.x - start.x) ||
+                        std::abs(p.y - start.y) < std::abs(best.y - start.y))) {
+                bestFacing = f;
+                best = p;
+            }
+        }
+        if (bestFacing < 0) return {};
+        tiles.push_back(best);
+        cur = best;
+    }
+    std::reverse(tiles.begin(), tiles.end());
+
+    std::vector<PathStep> path;
+    for (std::size_t i = 1; i < tiles.size(); ++i) {
+        const Point d{tiles[i].x - tiles[i - 1].x, tiles[i].y - tiles[i - 1].y};
+        int facing = 0;
+        for (int f = 0; f < 8; ++f)
+            if (kStep[f].x == d.x && kStep[f].y == d.y) facing = f;
+        const TileEval& e = eval[at(tiles[i].x, tiles[i].y)];
+        path.push_back({tiles[i], e.cost, e.enterable, facing});
+    }
+    return path;
+}
+
+int affordableSteps(const std::vector<PathStep>& path, int availableAp) {
+    if (path.empty() || path[0].cost > availableAp) return 0;
+    int left = availableAp;
+    for (std::size_t i = 0; i < path.size(); ++i) {
+        left -= path[i].cost;
+        if (left >= 0) continue;
+        // The AP ran out on step i. Stop on the previous tile, or, over a
+        // fly-over tile, go on to the next tile the unit can stop on.
+        if (path[i - 1].enterable) return static_cast<int>(i);
+        for (std::size_t j = i; j < path.size(); ++j)
+            if (path[j].enterable) return static_cast<int>(j + 1);
+        return static_cast<int>(path.size());
+    }
+    return static_cast<int>(path.size());
+}
+
+int moveCost(const std::vector<PathStep>& path, int steps, int availableAp) {
+    int sum = 0;
+    for (int i = 0; i < steps && i < static_cast<int>(path.size()); ++i) sum += path[static_cast<std::size_t>(i)].cost;
+    return std::min(sum, availableAp);
+}
+
+PlannedMove planMove(const BattleState& state, int unit, Point target) {
+    PlannedMove m;
+    m.unit = unit;
+    m.target = target;
+    m.path = findPath(state, unit, target);
+    m.affordable = affordableSteps(m.path, state.unit(unit).availableAp());
+    return m;
+}
+
+std::vector<PlannedMove> planGroupMove(const BattleState& state, const std::vector<int>& units, Point target) {
+    std::vector<PlannedMove> out;
+    PlanContext context;
+    for (const int unit : units) {
+        if (out.size() >= 64) break;
+        const BattleUnit& u = state.unit(unit);
+        // The clicked tile, or else the nearest free tile around it
+        // (orthogonal neighbors first, then x and y ascending).
+        Point dest = target;
+        if (!evaluateTile(state, u, target, &context).enterable) {
+            static constexpr Point kAround[8] = {{-1, 0}, {0, -1}, {0, 1}, {1, 0}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+            bool found = false;
+            for (const Point d : kAround) {
+                const Point p{target.x + d.x, target.y + d.y};
+                if (evaluateTile(state, u, p, &context).enterable) {
+                    dest = p;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) continue;
+        }
+        PlannedMove m;
+        m.unit = unit;
+        m.target = dest;
+        m.path = findPath(state, unit, dest, &context);
+        m.affordable = affordableSteps(m.path, u.availableAp());
+        if (m.affordable == 0) continue;
+        context.vacated.push_back(u.pos);
+        context.claimed.push_back(dest);
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+std::vector<std::string> previewSprites(const PlannedMove& move) {
+    std::vector<std::string> out;
+    const int last = static_cast<int>(move.path.size()) - 1;
+    for (int i = 0; i <= last; ++i) {
+        const bool affordable = i < move.affordable;
+        int n = 0;
+        if (i == last) n = affordable ? 4 : 5;
+        else if (move.path[static_cast<std::size_t>(i)].enterable) n = affordable ? 0 : 1;
+        else n = affordable ? 2 : 3;
+        out.push_back("PATH000" + std::to_string(n));
+    }
+    return out;
+}
+
+} // namespace openday::game

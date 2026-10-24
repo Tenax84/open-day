@@ -1,6 +1,7 @@
 #include "anim/battle_animations.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace openday::game {
 namespace {
@@ -26,6 +27,17 @@ const render::Animation* BattleAnimations::unitClip(const UnitType& type, int co
     for (const int c : {color, 1, 0})
         if (const render::Animation* a = clip(unitClipName(type, c, action, facing))) return a;
     return nullptr;
+}
+
+int BattleAnimations::startTick() const { return std::max(cursor_, animator_.now() + 1); }
+
+void BattleAnimations::finish(int end, const render::Animation* shown) { cursor_ = std::max(cursor_, after(end, shown)); }
+
+void BattleAnimations::schedule(std::function<void()> fn) {
+    AnimTrack t;
+    t.start = startTick();
+    t.onStart = std::move(fn);
+    finish(animator_.add(std::move(t)), nullptr);
 }
 
 void BattleAnimations::hideUnit(int unit) { ++unitHidden_[static_cast<std::size_t>(unit)]; }
@@ -64,16 +76,20 @@ int BattleAnimations::buildingAt(Point tile) const {
     return -1;
 }
 
-void BattleAnimations::move(int unit, const std::vector<Point>& path) {
+void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optional<int> arrivalFacing) {
     if (unit < 0 || path.size() < 2) return;
     MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
     if (!u.alive) return;
     const UnitType& type = *u.type;
     const int n = scene_.terrain().size;
     const Point from = path.front(), to = path.back();
-    const int lastFacing = facingOfStep(to.x - path[path.size() - 2].x, to.y - path[path.size() - 2].y);
+    const bool adjacent = std::abs(to.x - path[path.size() - 2].x) <= 1 && std::abs(to.y - path[path.size() - 2].y) <= 1;
+    const int lastFacing = arrivalFacing ? *arrivalFacing & 7
+                           : adjacent    ? facingOfStep(to.x - path[path.size() - 2].x, to.y - path[path.size() - 2].y)
+                                         : facingToward(path[path.size() - 2], to);
 
     AnimTrack begin;
+    begin.start = startTick();
     begin.clips[0] = unitClip(type, u.color, UnitAction::MoveStart, u.facing);
     begin.duration = lastFrame(begin.clips[0]);
     begin.pos = framePosition(from.x, from.y, n, begin.clips[0] ? begin.clips[0]->width : 0,
@@ -114,11 +130,13 @@ void BattleAnimations::move(int unit, const std::vector<Point>& path) {
         refreshUnit(unit);
         showUnit(unit);
     };
-    animator_.add(std::move(end));
+    const render::Animation* endClip = end.clips[0];
+    finish(animator_.add(std::move(end)), endClip);
 }
 
-void BattleAnimations::attack(int unit, Point target, int shots) {
+void BattleAnimations::attack(int unit, Point target, std::vector<Point> impacts) {
     if (unit < 0) return;
+    if (impacts.empty()) impacts.push_back(target);
     MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
     if (!u.alive) return;
     const UnitType& type = *u.type;
@@ -133,6 +151,7 @@ void BattleAnimations::attack(int unit, Point target, int shots) {
     };
 
     AnimTrack begin;
+    begin.start = startTick();
     begin.clips[0] = unitClip(type, u.color, UnitAction::ShootBegin, facing);
     begin.duration = lastFrame(begin.clips[0]);
     place(begin, from);
@@ -147,7 +166,9 @@ void BattleAnimations::attack(int unit, Point target, int shots) {
     const render::Animation* shotClip = unitClip(type, u.color, UnitAction::Shoot, facing);
     const render::Animation* projClip = unitClip(type, u.color, UnitAction::Projectile, 0);
     const render::Animation* impactClip = unitClip(type, u.color, UnitAction::Impact, 0);
-    for (int i = 0; i < std::max(1, shots); ++i) {
+    int lastImpact = 0;
+    const render::Animation* lastImpactClip = nullptr;
+    for (const Point impactTile : impacts) {
         AnimTrack shot;
         shot.start = after(prevEnd, prevClip);
         shot.clips[0] = shotClip;
@@ -161,7 +182,7 @@ void BattleAnimations::attack(int unit, Point target, int shots) {
         proj.start = shotStart + type.projectileStart;
         proj.clips[0] = projClip;
         if (projClip)
-            for (const Point& p : projectilePath(from, target, type, n, projClip->width, projClip->height))
+            for (const Point& p : projectilePath(from, impactTile, type, n, projClip->width, projClip->height))
                 proj.path.push_back({p, {-1, -1}, 0});
         proj.duration = proj.path.empty() ? 0 : static_cast<int>(proj.path.size()) - 1;
         proj.sound = proj.path.empty() ? nullptr : projClip;
@@ -172,8 +193,9 @@ void BattleAnimations::attack(int unit, Point target, int shots) {
         impact.start = projShown ? projEnd + 1 : projEnd;
         impact.clips[0] = impactClip;
         impact.duration = lastFrame(impactClip);
-        place(impact, target);
-        animator_.add(std::move(impact));
+        place(impact, impactTile);
+        lastImpact = std::max(lastImpact, animator_.add(std::move(impact)));
+        lastImpactClip = impactClip;
     }
 
     AnimTrack end;
@@ -182,14 +204,17 @@ void BattleAnimations::attack(int unit, Point target, int shots) {
     end.duration = lastFrame(end.clips[0]);
     place(end, from);
     end.onEnd = [this, unit] { showUnit(unit); };
-    animator_.add(std::move(end));
+    const render::Animation* endClip = end.clips[0];
+    finish(animator_.add(std::move(end)), endClip);
+    finish(lastImpact, lastImpactClip);
 }
 
-void BattleAnimations::destroyUnit(int unit) {
+void BattleAnimations::destroyUnit(int unit, std::optional<std::string> wreck) {
     if (unit < 0) return;
     const MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
     if (!u.alive) return;
     AnimTrack t;
+    t.start = startTick();
     t.clips[0] = unitClip(*u.type, u.color, UnitAction::Explosion, 0);
     t.duration = lastFrame(t.clips[0]);
     const render::Animation* c = t.clips[0];
@@ -197,25 +222,24 @@ void BattleAnimations::destroyUnit(int unit) {
     t.tile = {u.x, u.y};
     t.sound = c;
     t.onStart = [this, unit] { hideUnit(unit); };
-    t.onEnd = [this, unit] {
+    t.onEnd = [this, unit, wreck] {
         MapUnit& mu = entities_.units[static_cast<std::size_t>(unit)];
         if (!mu.alive) return;
         mu.alive = false;
         refreshUnit(unit);
-        // The ruin name comes with the server's message in the original;
-        // the unit type's ruinImageID is the presumed source *(?)*.
-        if (!mu.type->ruinImage.empty())
-            scene_.addObject({mu.x, mu.y, Layer::Ruin, SpriteSet::Ruins, mu.type->ruinImage});
+        const std::string name = wreck ? *wreck : mu.type->ruinImage;
+        if (!name.empty()) scene_.addObject({mu.x, mu.y, Layer::Ruin, SpriteSet::Ruins, name});
     };
-    animator_.add(std::move(t));
+    finish(animator_.add(std::move(t)), c);
 }
 
-void BattleAnimations::destroyBuilding(int building) {
+void BattleAnimations::destroyBuilding(int building, std::vector<MapSprite> rubble) {
     if (building < 0) return;
     const MapBuilding& b = entities_.buildings[static_cast<std::size_t>(building)];
     if (!b.alive) return;
     const BuildingType& type = *b.type;
     AnimTrack t;
+    t.start = startTick();
     t.clips[0] = clip(buildingClipName(type));
     t.duration = lastFrame(t.clips[0]);
     const render::Animation* c = t.clips[0];
@@ -224,11 +248,12 @@ void BattleAnimations::destroyBuilding(int building) {
     t.tile = {b.x + type.sizeX - 1, b.y + type.sizeY - 1}; // in front of the whole footprint
     t.sound = c;
     t.onStart = [this, building] { buildingHidden_[static_cast<std::size_t>(building)] = true; };
-    t.onEnd = [this, building] {
+    t.onEnd = [this, building, rubble = std::move(rubble)] {
         entities_.buildings[static_cast<std::size_t>(building)].alive = false;
         scene_.replaceEntity(Layer::Building, building, {});
+        for (const MapSprite& r : rubble) scene_.addObject(r);
     };
-    animator_.add(std::move(t));
+    finish(animator_.add(std::move(t)), c);
 }
 
 SceneExtras BattleAnimations::extras() const {

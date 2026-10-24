@@ -57,23 +57,29 @@ graphics of your installation.
 - `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
   (Python standard library only).
 - `mapview` — SDL3 viewer for every scenario map: terrain, roads, walls,
-  mines, buildings and units, with palette cycling (animated water) and
-  unit animations with sound (move, attack, destruction). It needs the
-  converted databases:
+  mines, buildings and units, with palette cycling (animated water), and a
+  hot-seat tactical battle on the map: movement with path finding and
+  action points, shooting with hit rolls, damage and destruction, reaction
+  fire, mines, and turns. Every side is played from the same window. It
+  needs the converted databases:
 
   ```
   python3 tools/mdb/mdb2sqlite.py --game-dir "<game dir>" ~/openday-data
-  mapview --game-dir "<game dir>" --data ~/openday-data --scenario s1-1-1
+  mapview --game-dir "<game dir>" --data ~/openday-data --scenario s4-5-1
   ```
 
   Arrow keys / WASD or mouse drag scroll, PageUp/PageDown switch scenario,
   1–4 zoom, C toggles palette cycling, O toggles the objects, M toggles
-  sound. Left click selects a unit; right click moves it to a tile or
-  attacks the unit or building there; X destroys what is under the mouse.
-  Movement follows a straight line and ignores the game rules for now.
+  sound. Left click selects a unit of the player whose turn it is
+  (Shift + click builds a group), and the path to the tile under the mouse
+  is previewed. Right click moves there or fires at an enemy unit or
+  building (Ctrl + right click fires at any tile). F toggles autofire,
+  Enter ends the turn. The window title shows the turn, the player, the
+  selected unit and the hit chance.
   `--screenshot out.png` renders the whole map to a file instead of
-  opening a window; `--do move:X,Y:TX,TY` (or `attack:…`, `destroy:X,Y`)
-  with `--ticks N` captures an animation in progress.
+  opening a window; `--do move:X,Y:TX,TY` (or `attack:X,Y:TX,TY`, `end`)
+  sends orders first and prints the server's events, and `--ticks N`
+  captures an animation in progress.
 
 Everything these tools produce comes from your own game data; do not
 redistribute it.

@@ -184,11 +184,11 @@ void testMapObjects() {
         db.exec("INSERT INTO \"Units On Map\" VALUES (1, 9, 5, 1, 0, 6, 1, 1)");
 
         game::GlobalRules rules;
-        rules.roadImage = {{0, "ROAL"}, {1, "ROAH"}};
+        rules.roads = {{0, {"ROAL"}}, {1, {"ROAH"}}};
         rules.walls[0] = {"WALLC", 60}; // currentAR 10 <= 33% of 60: damaged
         rules.buildings[130] = {"HHQ", 2, 2};
         rules.units[{5, 1}] = {"BDN", 0};
-        rules.terrainClass = {{"GRASS0", game::TerrainClass::Plain}, {"EAU000", game::TerrainClass::DeepWater}};
+        rules.terrain = {{"GRASS0", {game::TerrainClass::Plain}}, {"EAU000", {game::TerrainClass::DeepWater}}};
         terrain = game::loadTerrainMap(db);
         objects = game::loadMapObjects(db, rules, terrain);
     }

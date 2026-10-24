@@ -1,0 +1,76 @@
+#include "battle/messages.hpp"
+
+namespace openday::game {
+namespace {
+
+template <class... Fs> struct Overloaded : Fs... {
+    using Fs::operator()...;
+};
+template <class... Fs> Overloaded(Fs...) -> Overloaded<Fs...>;
+
+} // namespace
+
+void applyEvent(BattleState& s, const Event& event) {
+    std::visit(Overloaded{
+                   [&](const UnitMoved& e) {
+                       if (!e.tiles.empty()) s.moveUnit(e.unit, e.tiles.back());
+                       s.unit(e.unit).facing = e.facing;
+                       s.unit(e.unit).ap = e.ap;
+                   },
+                   [&](const UnitShot& e) {
+                       s.unit(e.unit).facing = e.facing;
+                       s.unit(e.unit).ap = e.ap;
+                   },
+                   [&](const UnitDamaged& e) {
+                       BattleUnit& u = s.unit(e.unit);
+                       u.armor = e.armor;
+                       u.ap = e.ap;
+                       u.negAp = e.negAp;
+                   },
+                   [&](const BuildingDamaged& e) { s.building(e.building).armor = e.armor; },
+                   [&](const WallDamaged& e) { s.wall(e.wall).armor = e.armor; },
+                   [&](const UnitDestroyed& e) {
+                       const Point p = s.unit(e.unit).pos;
+                       s.unit(e.unit).armor = 0;
+                       s.removeUnit(e.unit);
+                       if (!e.wreck.empty()) s.addRuin({e.wreck, p});
+                   },
+                   [&](const BuildingDestroyed& e) {
+                       s.building(e.building).armor = 0;
+                       s.removeBuilding(e.building);
+                       for (const BattleRuin& r : e.rubble) s.addRuin(r);
+                   },
+                   [&](const WallDestroyed& e) {
+                       // Concrete walls next to a destroyed piece get a broken
+                       // end (docs/mechanics/map-objects.md).
+                       const Point p = s.wall(e.wall).pos;
+                       s.wall(e.wall).armor = 0;
+                       s.removeWall(e.wall);
+                       for (const Point d : {Point{0, -1}, Point{1, 0}, Point{0, 1}, Point{-1, 0}}) {
+                           const int w = s.wallAt({p.x + d.x, p.y + d.y});
+                           if (w >= 0 && s.wall(w).type == 0) s.wall(w).brokenEnd = true;
+                       }
+                   },
+                   [&](const RoadDestroyed& e) { s.removeRoad(e.road); },
+                   [&](const MineDestroyed& e) { s.removeMine(e.mine); },
+                   [&](const MineExploded&) {},
+                   [&](const MinesRevealed& e) {
+                       if (e.player < 0 || e.player >= kPlayerSlots) return;
+                       for (const int m : e.mines) s.mine(m).hidden[static_cast<std::size_t>(e.player)] = false;
+                   },
+                   [&](const TerrainBurned& e) { s.setTerrain(e.tile, e.terrain); },
+                   [&](const TurnStarted& e) {
+                       s.currentPlayer = e.player;
+                       s.turn = e.turn;
+                       refillAp(s, e.player);
+                   },
+                   [&](const BattleOver& e) {
+                       s.turn = e.turn;
+                       s.over = true;
+                   },
+                   [&](const RequestRejected&) {},
+               },
+               event);
+}
+
+} // namespace openday::game
