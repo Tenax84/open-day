@@ -61,6 +61,8 @@ private:
     void showUnit(int unit);
     void hideUnit(int unit);
     void refreshUnit(int unit);
+    // Where a unit stands once the actions scheduled so far have played.
+    Point plannedTile(int unit) const;
     int startTick() const;
     void finish(int end, const render::Animation* shown);
 
@@ -71,6 +73,13 @@ private:
     Animator animator_;
     int cursor_ = 0; // first tick of the next action
     std::vector<int> unitHidden_;     // hide counter per unit
+    // Tile and facing per unit after the scheduled actions; the entities
+    // only change when the animations get there.
+    struct Planned {
+        Point tile;
+        int facing;
+    };
+    std::vector<Planned> planned_;
     std::vector<bool> buildingHidden_;
 };
 

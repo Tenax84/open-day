@@ -128,4 +128,17 @@ public:
     void draw(render::IndexedSurface& s, const UiContext& ui) const;
 };
 
+// A one-line text entry (player name). Printable keys append (Shift gives
+// upper case), Backspace deletes; the text is drawn with a caret.
+class EditBox {
+public:
+    Rect rect;
+    std::string text;
+    std::size_t maxLength = 16;
+    bool largeFont = true;
+
+    bool handle(const InputEvent& e);
+    void draw(render::IndexedSurface& s, const UiContext& ui) const;
+};
+
 } // namespace openday::ui

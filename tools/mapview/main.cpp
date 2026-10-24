@@ -199,6 +199,8 @@ std::string describe(const game::BattleState& s, const game::Event& event) {
             else if constexpr (std::is_same_v<T, game::UnitRemoved>) return unit(e.unit) + " taken back";
             else if constexpr (std::is_same_v<T, game::OrderChanged>)
                 return unit(e.unit) + " order now " + std::to_string(e.order.order);
+            else if constexpr (std::is_same_v<T, game::TechChanged>)
+                return "building #" + std::to_string(e.building) + (e.held ? " tech held" : " tech lost");
             else return "refused: " + e.reason;
         },
         event);

@@ -271,14 +271,14 @@ original does it. Keep it for faithful numbers.)
 - Only `Difficulty.DamageEasy` and `Difficulty.DamageHard` are read.
   `DamageAvg` is never read: the average value results from interpolation.
 - The difficulty setting `L` is the `Difficulty` value of the running game
-  (`Server Mode Info`, GAMEINFO), apparently on a 0–10 scale *(?: the exact
-  menu values for easy / average / hard are not confirmed; 0 / 5 / 10 would
-  reproduce 70 / 100 / 130)*.
+  (`Server Mode Info`, GAMEINFO), 0–10: the slider of the new-campaign menu
+  (strategic-interface.md 6), initially 4.
 - Factor `F = DamageEasy + ((DamageHard − DamageEasy) × L) div 10`
   (percent; 70…130 with the shipped data).
 - It applies **only to shots fired by AI-owned units**, and only in the two
-  game modes the program numbers 0 and 1 (presumably campaign and skirmish
-  *(?)*; not in the other modes). There `lo = trunc(lo × F / 100)` and
+  game modes the program numbers 0 and 1: a new and a loaded **campaign**
+  (all campaign battles, campaign.md 4.1). Skirmish and death match are not
+  scaled. There `lo = trunc(lo × F / 100)` and
   `hi = trunc(hi × F / 100)` before the roll. Human players' damage is never
   scaled. Higher difficulty makes the AI hit harder. It does not weaken the
   player.

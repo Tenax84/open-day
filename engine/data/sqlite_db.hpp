@@ -8,6 +8,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 struct sqlite3;
 struct sqlite3_stmt;
@@ -26,6 +27,7 @@ public:
     std::int64_t integer(int column) const;
     double real(int column) const;
     std::string text(int column) const;
+    std::vector<std::uint8_t> blob(int column) const;
 
 private:
     sqlite3_stmt* stmt_;

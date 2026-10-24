@@ -174,4 +174,27 @@ void TextBox::draw(render::IndexedSurface& s, const UiContext& ui) const {
     }
 }
 
+bool EditBox::handle(const InputEvent& e) {
+    if (e.type != InputEvent::Type::KeyDown) return false;
+    if (e.key == kKeyBackspace) {
+        if (!text.empty()) text.pop_back();
+        return true;
+    }
+    if (e.key >= 32 && e.key < 127 && e.key != kKeyEnter && e.key != kKeyEscape) {
+        if (text.size() >= maxLength) return true;
+        char c = static_cast<char>(e.key);
+        if (e.shift && c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
+        text += c;
+        return true;
+    }
+    return false;
+}
+
+void EditBox::draw(render::IndexedSurface& s, const UiContext& ui) const {
+    const render::Font* font = largeFont ? ui.large : ui.standard;
+    if (!font) return;
+    fillRect(s, rect, ui.black);
+    font->drawIn(s, rect.x + 3, rect.y, rect.w - 6, rect.h, text + "_", ui.white, render::Align::Left);
+}
+
 } // namespace openday::ui

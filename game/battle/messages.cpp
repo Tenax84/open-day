@@ -77,7 +77,7 @@ void applyEvent(BattleState& s, const Event& event) {
                        u.type = s.unitType(e.typeId, e.techLevel);
                        if (!u.type) return;
                        u.owner = e.owner;
-                       u.ap = u.type->actionPoints;
+                       u.ap = e.noAp ? 0 : u.type->actionPoints;
                        u.armor = u.type->armor;
                        u.pos = e.pos;
                        u.facing = e.facing;
@@ -91,6 +91,10 @@ void applyEvent(BattleState& s, const Event& event) {
                    },
                    [&](const UnitRemoved& e) { s.removeUnit(e.unit); },
                    [&](const RequestRejected&) {},
+                   [&](const TechChanged& e) {
+                       std::erase(s.techHeld, e.building);
+                       if (e.held) s.techHeld.push_back(e.building);
+                   },
                },
                event);
 }

@@ -106,13 +106,13 @@ controls of the same screen (round 44×43 buttons, 66×9 tabs, 53×17 and
 | Panel frame | Size | User |
 |---|---|---|
 | 0 | 136×480 / 184×768 | the deployment and reinforcement views (`CFirstDeployView` / `CDeployView`, see `tactical-interface.md` 1.2) |
-| 41 | 136×480 / 184×768 | likely the tactical map screen (`CMapScreenTactic`) |
-| 100 | 136×480 / 184×768 | likely the strategic city view (has *Buildings* / *Defenses* tabs) |
-| 192 | 136×480 / 184×768 | colony views (`CColonyBaseView`) |
+| 41 | 136×480 / 184×768 | the overview map of a battle (`CMapScreenTactic`, strategic-interface.md 4) |
+| 100 | 136×480 / 184×768 | the city view (`CStratView`, city-building.md 9) |
+| 192 | 136×480 / 184×768 | the continent screen (`CColonyBaseView`, strategic-interface.md 1) |
 | 226 | 136×480 / 184×768 | tactical view (`CTacticView`; has *Overwatch* / *Auto fire*) |
 | 310 | 136×480 / 184×768 | tactical waiting/deployment view (`CTacticWaitView`) |
 | 507 | 136×480 / 184×768 | a tactical-family view (likely `CAutomatView`) |
-| 578 | 136×480 / 184×768 | likely the strategic map screen (`CMapScreenStrat`) |
+| 578 | 136×480 / 184×768 | the city overview map (`CMapScreenStrat`) |
 
 Gaps (empty): 33–40, 92–99, 153–156, 166–167, 197, 206–209, 218–225,
 239–240, 257, 302–309, 357–364. The tactical pieces are detailed in
@@ -127,7 +127,7 @@ Gaps (empty): 33–40, 92–99, 153–156, 166–167, 197, 206–209, 218–225,
 | 382 | 540×415 | `CEncyclopInterface` | encyclopedia; 383–386 53×17; 387–394 19×17; 395–432 19×19 |
 | 433 | 472×344 | `CChatInterface` | chat window |
 | 453–468 | 53×17 | | four small buttons |
-| 477 | 254×144 | `CWaitBox` and the message box | 478–489 53×17 buttons |
+| 477 | 254×144 | `CWaitBox` and the message box | 478–481 *YES*, 482–485 *NO*, 486–489 *OK* (53×17) |
 | 498 | 504×32 / 840×40 | `CFH2MsgArea` | message strip; 499–502 53×17 |
 | 557 | 513×311 | `CIntelStratInterface` | strategic intelligence; 558–561 110×17 |
 | 633 | ≈449 wide | `CIntelInterface` | tactical intelligence / objectives |

@@ -65,9 +65,12 @@ confirmed.
    slots.
 2. **Budget.** Every human player gets a deployment budget (credits):
    - skirmish / death match: `One Off Deployment` × share;
-   - campaign: `One Off Deployment`, then scaled by the difficulty setting
-     *(?: the scaling interpolates between the colony's two deployment
-     multipliers, `Continent Info` / `Difficulty`)*, then × share.
+   - campaign province battle: `One Off Deployment` × M(d) / 100, then ×
+     share, where M(d) interpolates the colony's `Continent Info.DeployEasy`
+     and `DeployHard` (campaign.md 4.2); battles on the player's city use the
+     HQ and deployment centres instead (campaign.md 6.4).
+
+   Whatever is not spent during deployment is lost when the battle starts.
 
    **Share** depends on the number of human players: 1 → 100 %, 2 → 75 %,
    3 → 65 %, 4 → 55 % (integer arithmetic, `value × share / 100`).
@@ -347,25 +350,24 @@ Each human player has a reinforcement resource. At the start of each of his
 turns it grows by:
 
 - skirmish: `ReinfRes` × share (share as in 1.2);
-- campaign: `ReinfRes` + `ReinfRes` × 2 % × (number of "Deploy Mk" buildings,
-  `H_Center_Deployment1…4`, the player owns on the map), then the
-  difficulty scaling and share as for the deployment budget *(?)*.
+- campaign province battle: `ReinfRes` + `ReinfRes` × 2 × n / 100, where n
+  is the number of deployment centres (`H_Center_Deployment1…4`, any level)
+  the player owns **in his city**, then × M(d) / 100 and × share
+  (campaign.md 4.2); city battles: campaign.md 6.4.
 
-He can spend it with a reinforcement request (same list format and rules as
-deployment: cost ≤ remaining resource, valid zone tile *(?: zone not
-confirmed)*, facing the map center).
+He can spend it with a reinforcement request in his own turn (same list
+format and rules as deployment: cost ≤ remaining resource, zone tile,
+facing the map center). Units bought this way have no AP until his next
+turn.
 
 ### 4.3 Counter-attack
 
-`Scenario Info.CounterAttack` marks campaign provinces where the enemy can
-strike back after the province was taken *(?: trigger in the strategic
-layer)*. The counter-attack is a separate battle phase on the same map, with
-its own server phase and result message. Its objective is kind 7 (2.9)
-instead of the scenario's objective. `Counter Attack` lists the attacking
-army: rows have the `Reinforcement` shape but all positions and turns are 0
-in the shipped data, so the computer player places these units itself
-*(?: placement rule not traced)*. If the counter-attack is lost, the
-province is lost again *(?)*.
+After **every** won campaign battle whose scenario has
+`Scenario Info.CounterAttack` set, the aliens strike back at the player's
+**city**: a separate battle on the city map with objective kind 7 (2.9). The
+attackers are the won scenario's `Counter Attack` rows, placed by the rules of
+campaign.md 6.3 in a band 12–14 tiles from the player's zones. Losing it ends
+the campaign. The details are in [campaign.md](campaign.md) 6.
 
 ### 4.4 Automated units
 
@@ -387,22 +389,24 @@ moves are accepted) and sends one result message to all clients:
   own losses, buildings weighted more than units *(?: exact weights)*,
 - the **tech points found**: the sum of `TechReward` of all tech buildings
   the human side holds at the end (5.2),
-- campaign: whether this battle completed the colony *(?: flag set when the
-  captured province is the colony's last one)*,
+- campaign: an **end-of-campaign** flag, set for the battle for colony 4's
+  alien capital (campaign.md 4.3, 7),
 - death match: the loser code.
 
 The client then shows the debriefing: `Scenario Info.Aftermath*` (in the
 selected language) on success, a generic failure
-text otherwise, and the number of new technologies. Province rewards
-(`Province List.Credits` / `.Tech`) and `Scenario Info.Credits` are applied
-by the campaign layer after the debriefing *(?: not traced in detail)*.
+text otherwise, and the number of new technologies. The campaign then
+pays `Province List.Credits` × C(d) / 100 and adds the tech points found
+(campaign.md 4.3, 5); `Scenario Info.Credits` and `Province List.Tech` are
+not used.
 
 ### 5.2 Tech buildings
 
 A building with `TechReward` ≥ 1 counts as **held** while a human unit
 stands on any tile of the one-tile ring around its footprint (the eight
 neighbors of a 1 × 1 building; diagonals included). The held set is updated
-at the start of every turn *(?: and probably after unit actions)*; a destroyed building
+at the start of the battle, at the start of every turn, after moves and
+attacks and when the result is computed; a destroyed building
 leaves the set. Changes are sent to the clients as a tech record
 (`tactic_mmsg_tech`). The result message uses the set as it is at the end.
 
@@ -446,10 +450,10 @@ result travels to the clients in the `BattleOver` event (success, loser).
 
 - `turn_qty` = 0 is treated as "no turn limit" (the original would end the
   battle at once).
-- Not implemented yet: deployment (1.2; the battle starts with the units of
-  `Units On Map`), bought reinforcements (4.2), counter-attack battles
-  (4.3), automated units, the result statistics and score (5.1), tech
-  buildings (5.2), saving and restoring, cheats and surrender.
+- Deployment (1.2), bought reinforcements and the per-turn income (4.2),
+  counter-attack battles (4.3, with the campaign), tech buildings (5.2) and
+  the cheat requests are implemented. Not implemented yet: automated units,
+  the score (5.1), saving and restoring a battle, surrender.
 - Reinforcements use the lowest tech level of their type (the rows have no
   tech level column) and face the map center.
 - The computer player only plays when at least one human slot takes part;
@@ -460,13 +464,6 @@ result travels to the clients in the `BattleOver` event (success, loser).
 - Meaning of `Units On Map.Turn` (start or end turn of the order) and the
   exact `TurnArrival` comparison (tactical-ai.md).
 - Use of `HQ on Map`, `necessary_unit`.
-- Exact campaign difficulty scaling of the deployment budget and of the
-  per-turn reinforcement income; whether bought reinforcements must be placed
-  in the deployment zone.
-- What triggers a counter-attack battle, where the computer player places the
-  `Counter Attack` army, and the campaign consequence of losing it.
 - Exact score formula and the order of the four statistics counters.
-- How credits (`Scenario Info.Credits`, `Province List.Credits`/`Tech`) are
-  awarded after the battle.
 - The death-match loser code when a player leaves, and whether a turn-limit
   result with loser 5 is shown as a draw (kinds 8 and 10).

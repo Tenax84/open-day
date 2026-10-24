@@ -11,6 +11,9 @@ add_library(openday_game
     battle/movement.cpp
     battle/objectives.cpp
     battle/server.cpp
+    campaign/campaign.cpp
+    campaign/city.cpp
+    campaign/colony.cpp
     map/terrain_map.cpp
     map/map_objects.cpp
     map/map_renderer.cpp

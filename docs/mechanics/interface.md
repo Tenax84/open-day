@@ -396,9 +396,12 @@ text boxes) and the game program `app/` (screens).
   anti-aliasing (a pixel is set when the glyph covers half of it).
 - A checked toggle shows its `+4` frame also while hovered, because many
   toggle sets have no `+5` frame (open question above).
-- Main menu: *New campaign*, *Load campaign* and *Multi player* are shown
-  disabled until those parts exist. The resolution choice applies to the
-  battle screens.
+- Main menu: *Multi player* is shown disabled. *New campaign* and *Load
+  campaign* are enabled when the four colony databases are present. The
+  resolution choice applies to the game screens (battle and campaign).
+- Load / save: panels 739 / 750 with ten slots (black boxes at x 52, y 40 +
+  32 × slot, 217 × 21); BACK at (10, 383) and LOAD / SAVE at (176, 383) *(OpenDay
+  positions)*. OpenDay saves in its own format (campaign.md 8).
 - The program window is scaled; the mouse pointer is the system arrow.
 - The music starts (random track, as described) when a battle screen opens.
 - Not implemented yet: encyclopedia, CD-player track list, credits, the

@@ -39,7 +39,9 @@ struct EndTurnRequest {
     int player = 0;
 };
 
-// Units bought and placed during deployment (battle-flow.md 1.2).
+// Units bought and placed during deployment (battle-flow.md 1.2), or
+// later in the player's own turn as bought reinforcements (4.2): those
+// start without AP.
 struct DeployEntry {
     int typeId = 0;
     int techLevel = -1; // -1 = lowest level of the type
@@ -144,6 +146,14 @@ struct BattleOver {
     int turn = 0;
     bool success = false; // the human side won
     int loser = 5;        // death match: the slot that lost; 5 = none
+    int techFound = 0;    // TechReward of the tech buildings held at the end
+};
+
+// A tech building became held or no longer held by the human side
+// (battle-flow.md 5.2).
+struct TechChanged {
+    int building = -1;
+    bool held = false;
 };
 
 // A unit placed during the battle (reinforcements).
@@ -155,9 +165,11 @@ struct UnitAdded {
     Point pos;
     int facing = 0;
     ScriptedOrder order;
+    bool noAp = false; // bought reinforcement: no AP until the next turn
 };
 
-// A player's remaining deployment budget.
+// A player's remaining deployment budget (after deployment: the
+// reinforcement resource).
 struct DeployBudget {
     int player = 0;
     int budget = 0;
@@ -182,7 +194,7 @@ struct RequestRejected {
 using Event = std::variant<UnitMoved, UnitShot, UnitDamaged, BuildingDamaged, WallDamaged, UnitDestroyed,
                            BuildingDestroyed, WallDestroyed, RoadDestroyed, MineDestroyed, MineExploded, MinesRevealed,
                            TerrainBurned, TurnStarted, BattleOver, UnitAdded, OrderChanged, DeployBudget, UnitRemoved,
-                           RequestRejected>;
+                           RequestRejected, TechChanged>;
 
 // Applies an event to a state. The server changes its own state only
 // through this function, so client copies stay identical.

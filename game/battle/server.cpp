@@ -63,6 +63,10 @@ std::vector<Event> BattleServer::start() {
     // match at slot 1 or 2 at random (battle-flow.md 1.3).
     state_.turn = 1;
     state_.currentPlayer = state_.computerPlayer ? 0 : 1 + random(2);
+    // Whatever was not spent during deployment is lost (campaign.md 4.2).
+    for (const int p : state_.players)
+        if (p != 0 && state_.deployBudget[static_cast<std::size_t>(p)] != 0) emit(DeployBudget{p, 0});
+    updateTech();
     beginNextTurn();
     runComputerTurns();
     return std::move(out_);
@@ -72,8 +76,41 @@ bool BattleServer::checkEnd() {
     if (state_.over) return true;
     const ObjectiveResult r = checkObjective(state_);
     if (!r.decided) return false;
-    emit(BattleOver{state_.turn, r.success, r.loser});
+    updateTech();
+    emit(BattleOver{state_.turn, r.success, r.loser, state_.techFound()});
     return true;
+}
+
+void BattleServer::updateTech() {
+    // A tech building is held while a human unit stands on the ring around
+    // its footprint (battle-flow.md 5.2).
+    for (int i = 0; i < static_cast<int>(state_.buildings().size()); ++i) {
+        const BattleBuilding& b = state_.building(i);
+        const bool wasHeld = std::find(state_.techHeld.begin(), state_.techHeld.end(), i) != state_.techHeld.end();
+        bool held = false;
+        if (b.alive && b.type->techReward >= 1)
+            for (int x = b.pos.x - 1; x <= b.pos.x + b.type->sizeX && !held; ++x)
+                for (int y = b.pos.y - 1; y <= b.pos.y + b.type->sizeY && !held; ++y) {
+                    const int u = state_.unitAt({x, y});
+                    held = u >= 0 && state_.unit(u).owner != 0 && state_.buildingAt({x, y}) != i;
+                }
+        if (held != wasHeld) emit(TechChanged{i, held});
+    }
+}
+
+int BattleServer::turnIncome(int player) const {
+    const BattleState::CityIncome& c = state_.cityIncome;
+    if (c.deployType < 0) return state_.income[static_cast<std::size_t>(player)];
+    // City battle: deployment centres of the colony's level and the HQ.
+    int deploys = 0;
+    bool hq = false;
+    for (const BattleBuilding& b : state_.buildings()) {
+        if (!b.alive || b.owner != player) continue;
+        if (b.type->id == c.deployType) ++deploys;
+        if (b.type->id == 130) hq = true;
+    }
+    const int raw = c.deployProduction * deploys + (hq ? c.hqProduction : 0);
+    return raw * c.multiplier / 100 * c.share / 100;
 }
 
 void BattleServer::beginNextTurn() {
@@ -100,6 +137,11 @@ void BattleServer::beginNextTurn() {
         }
     }
     emit(TurnStarted{player, turn});
+    if (player != 0) {
+        const int income = turnIncome(player);
+        if (income > 0) emit(DeployBudget{player, state_.deployBudget[static_cast<std::size_t>(player)] + income});
+    }
+    updateTech();
 }
 
 void BattleServer::placeReinforcements() {
@@ -150,6 +192,7 @@ std::vector<Event> BattleServer::handle(const Request& request) {
                               emit(BattleOver{state_.turn, r.win, 5});
                           }},
                request);
+    if (!state_.over && !state_.deploying) updateTech();
     runComputerTurns();
     return std::move(out_);
 }
@@ -518,27 +561,31 @@ void BattleServer::destroyBuilding(int buildingIndex) {
 }
 
 void BattleServer::handleDeploy(const DeployRequest& r) {
-    if (!state_.deploying) return emit(RequestRejected{"the battle has started"});
     if (r.player < 1 || r.player >= kPlayerSlots) return emit(RequestRejected{"invalid player"});
+    // After deployment: bought reinforcements in the player's own turn.
+    const bool reinforcement = !state_.deploying;
+    if (reinforcement && r.player != state_.currentPlayer) return emit(RequestRejected{"not your turn"});
+    const std::vector<int> offered = state_.buyable(r.player);
     int budget = state_.deployBudget[static_cast<std::size_t>(r.player)];
     int nextId = 1;
     for (const BattleUnit& u : state_.units()) nextId = std::max(nextId, u.id + 1);
     const int size = state_.size();
     bool placed = false;
     for (const DeployEntry& e : r.entries) {
-        const UnitType* type = state_.unitType(e.typeId, e.techLevel);
+        const int level = e.techLevel >= 0 ? e.techLevel : state_.techLevel(r.player, e.typeId);
+        const UnitType* type = state_.unitType(e.typeId, level);
         // Skipped: unknown or not offered, too expensive, outside the zone,
         // or a tile the unit cannot stand on.
-        if (!type || std::find(state_.purchasable.begin(), state_.purchasable.end(), e.typeId) == state_.purchasable.end())
-            continue;
+        if (!type || std::find(offered.begin(), offered.end(), e.typeId) == offered.end()) continue;
         if (type->cost > budget || !state_.inDeployZone(r.player, e.pos)) continue;
         BattleUnit probe;
         probe.type = type;
         probe.owner = r.player;
         if (!evaluateTile(state_, probe, e.pos).enterable) continue;
         budget -= type->cost;
-        deployed_.push_back(static_cast<int>(state_.units().size()));
-        emit(UnitAdded{nextId++, e.typeId, e.techLevel, r.player, e.pos, facingToward(e.pos, {size / 2, size / 2}), {}});
+        if (!reinforcement) deployed_.push_back(static_cast<int>(state_.units().size()));
+        emit(UnitAdded{nextId++, e.typeId, type->techLevel, r.player, e.pos, facingToward(e.pos, {size / 2, size / 2}), {},
+                       reinforcement});
         placed = true;
     }
     if (placed) emit(DeployBudget{r.player, budget});

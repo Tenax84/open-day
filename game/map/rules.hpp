@@ -7,6 +7,7 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include "data/sqlite_db.hpp"
 
@@ -29,6 +30,15 @@ struct BuildingType {
     std::string name{}; // NameEnglish
     int techReward = 0;
     int category = 0;   // Building Category Lookup (1 = ruin)
+    // Construction in the campaign (docs/mechanics/city-building.md).
+    bool canBuild = false;
+    int prerequisite = 65535; // TypeID of a building that must exist, 65535 = none
+    bool uniqueOnMap = false;
+    int transformIntoUnit = 65535; // towers: Unit Types.typeID that represents it in battle
+    int position = 3;              // placement mask: 1 = deep water, 3 = plain
+    int cost = 0;
+    int recycle = 0;
+    int resProduction = 0; // deployment points per turn (HQ, deployment centres)
 };
 
 // Unit actions with their own animation clip, in the program's order
@@ -72,16 +82,34 @@ struct UnitType {
     int aiCategory = 0; // AI Category Lookup
     std::string name{}; // NameEnglish
     int techLevel = 0;  // unitTechLevel of this row
+    // Campaign (docs/mechanics/army-tech.md).
+    int prerequisite = 65535; // building TypeID needed to deploy the unit
+    int costToNextTL = 0;     // tech points to reach the next level
+    int category = 0;         // Unit Category Lookup: 0 grav, 1 ground, 2 water
+    int weaponArea = 0;       // DamageArea as stored (0 = single tile)
+    bool isAA = false;
+    int damageAA = 0;
 };
 
 struct WallType {
     std::string image; // WALLS.DBI prefix (WALLC, ...)
     int armor = 0;
+    int id = 0;
+    std::string name{};
+    int prerequisite = 65535;
+    bool canBuild = false;
+    int cost = 0;
+    int recycle = 0;
 };
 
 struct RoadType {
     std::string image; // ROADS.DBI prefix (ROAL, ROAH)
     int armor = 0;     // `ar`: armor damage that destroys the road in one hit
+    int id = 0;
+    std::string name{};
+    bool canBuild = false;
+    int cost = 0;
+    int recycle = 0;
 };
 
 struct MineType {
@@ -89,6 +117,33 @@ struct MineType {
     bool apDamage = false;
     int damageBase = 0;
     int damageRandom = 0;
+    int id = 0;
+    std::string name{};
+    int prerequisite = 65535;
+    bool canBuy = false;
+    int cost = 0;
+    int recycle = 0;
+    int deployTerrain = 3; // TerrainType Lookup class where it can be laid
+    std::string listbox{}; // LISTBOX.DBI name
+};
+
+// A called-in support action (Automated Units, data-model.md).
+struct AutomatedType {
+    int id = 0; // typeID
+    std::string name{};
+    int race = 0;
+    int category = 0; // Automated Category Lookup
+    int cost = 0;
+    int prerequisite = 65535;
+    bool deployOnce = false;
+    std::string image{};  // ANMSUNIT.FF AUTOUNIT code, LISTBOX.DBI code
+    std::string cursor{}; // SYMBOLS.DBI targeting cursor
+};
+
+// One bracket of the Tech Ratio table.
+struct TechRatio {
+    int min = 0, max = -1; // -1 = open-ended
+    int ratio = 1;
 };
 
 struct Rgb {
@@ -117,6 +172,11 @@ struct GlobalRules {
     std::unordered_map<std::string, RuinType> ruins;      // RUINS.DBI name -> properties
     std::array<int, 2> ranges{3, 6};                      // Ranges: Short, Medium
     int damageEasy = 100, damageHard = 100;               // Difficulty, percent
+    int damageAvg = 100;
+    std::array<int, 3> creditPercent{100, 100, 100};      // Difficulty CreditEasy/Avg/Hard
+    std::array<int, 3> deployPercent{100, 100, 100};      // Difficulty DeployEasy/Avg/Hard
+    std::map<int, AutomatedType> automated;               // typeID
+    std::vector<TechRatio> techRatios;
     std::array<std::array<int, 12>, 12> aiPriority{};     // AI Priority [source][target] category
     std::map<std::pair<int, int>, Rgb> colors;            // Colors: (Type, Enum) -> minimap color
 

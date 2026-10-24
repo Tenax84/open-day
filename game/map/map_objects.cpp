@@ -147,8 +147,31 @@ std::vector<MapSprite> wallSprites(std::vector<WallPiece>& walls, const GlobalRu
     return out;
 }
 
-std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain,
-                                      MapEntities* entities) {
+ScenarioObjects readScenarioObjects(const data::SqliteDb& scenario) {
+    ScenarioObjects o;
+    scenario.forEach("SELECT roadtype, PosX, PosY FROM \"Roads On Map\"", [&](const data::Row& r) {
+        o.roads.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2)});
+    });
+    scenario.forEach("SELECT roadtype, posX, posY, currentAR, isDamaged FROM \"Walls On Map\"", [&](const data::Row& r) {
+        o.walls.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), r.integer(4) != 0});
+    });
+    scenario.forEach("SELECT typeID, PosX, PosY FROM \"Mines On Map\"",
+                     [&](const data::Row& r) { o.mines.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2)}); });
+    scenario.forEach("SELECT id, PosX, PosY FROM \"Ruins On Map\"",
+                     [&](const data::Row& r) { o.ruins.push_back({toUpper(r.text(0)), toInt(r, 1), toInt(r, 2)}); });
+    scenario.forEach("SELECT buildingType, playerOwner, PosX, PosY, currentAR FROM \"Buildings On Map\"",
+                     [&](const data::Row& r) {
+                         o.buildings.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), toInt(r, 4)});
+                     });
+    scenario.forEach("SELECT unitType, unitTL, playerOwner, facing, PosX, PosY FROM \"Units On Map\"",
+                     [&](const data::Row& r) {
+                         o.units.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), toInt(r, 4), toInt(r, 5)});
+                     });
+    return o;
+}
+
+std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRules& rules, const TerrainMap& terrain,
+                                        MapEntities* entities) {
     MapEntities local;
     MapEntities& ent = entities ? *entities : local;
     ent = {};
@@ -159,67 +182,58 @@ std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const Glob
         return inside(x, y) ? rules.classOf(terrain.at(x, y)) : TerrainClass::Unknown;
     };
 
-    std::vector<RoadPiece> roads;
-    scenario.forEach("SELECT roadtype, PosX, PosY FROM \"Roads On Map\"", [&](const data::Row& r) {
-        roads.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2)});
-    });
     std::set<Tile> anyRoad;
-    for (const RoadPiece& r : roads) anyRoad.insert({r.x, r.y});
-    for (MapSprite& sprite : roadSprites(roads, rules, terrain)) out.push_back(std::move(sprite));
-
-    std::vector<WallPiece> walls;
-    scenario.forEach("SELECT roadtype, posX, posY, currentAR, isDamaged FROM \"Walls On Map\"", [&](const data::Row& r) {
-        walls.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), r.integer(4) != 0});
-    });
-    for (MapSprite& sprite : wallSprites(walls, rules, terrain)) out.push_back(std::move(sprite));
+    for (const RoadPiece& r : objects.roads) anyRoad.insert({r.x, r.y});
+    for (MapSprite& sprite : roadSprites(objects.roads, rules, terrain)) out.push_back(std::move(sprite));
+    for (MapSprite& sprite : wallSprites(objects.walls, rules, terrain)) out.push_back(std::move(sprite));
 
     // Mines: ImageID + 000 or 001; which state selects 001 is unknown, so
     // every mine uses 000 for now.
-    scenario.forEach("SELECT typeID, PosX, PosY FROM \"Mines On Map\"", [&](const data::Row& r) {
-        const auto mine = rules.mines.find(toInt(r, 0));
-        if (mine != rules.mines.end() && inside(toInt(r, 1), toInt(r, 2)))
-            out.push_back({toInt(r, 1), toInt(r, 2), Layer::Mine, SpriteSet::Mines, mine->second.image + "000"});
-    });
+    for (const ScenarioObjects::Mine& m : objects.mines) {
+        const auto mine = rules.mines.find(m.type);
+        if (mine != rules.mines.end() && inside(m.x, m.y))
+            out.push_back({m.x, m.y, Layer::Mine, SpriteSet::Mines, mine->second.image + "000"});
+    }
 
-    scenario.forEach("SELECT id, PosX, PosY FROM \"Ruins On Map\"", [&](const data::Row& r) {
-        if (inside(toInt(r, 1), toInt(r, 2)))
-            out.push_back({toInt(r, 1), toInt(r, 2), Layer::Ruin, SpriteSet::Ruins, toUpper(r.text(0))});
-    });
+    for (const ScenarioObjects::Ruin& r : objects.ruins)
+        if (inside(r.x, r.y)) out.push_back({r.x, r.y, Layer::Ruin, SpriteSet::Ruins, r.name});
 
     // Buildings: one UB.DBI sprite per footprint tile,
     // <code><color><damaged><offset along PosX><offset along PosY>.
     // The color variant is the owner's slot (0 = AI) *(?)*.
-    scenario.forEach("SELECT buildingType, playerOwner, PosX, PosY, currentAR FROM \"Buildings On Map\"",
-                     [&](const data::Row& r) {
-                         const auto type = rules.buildings.find(toInt(r, 0));
-                         if (type == rules.buildings.end()) return;
-                         const BuildingType& bt = type->second;
-                         const int entity = static_cast<int>(ent.buildings.size());
-                         ent.buildings.push_back({&bt, toInt(r, 2), toInt(r, 3)});
-                         const std::string prefix = bt.image + std::to_string(toInt(r, 1)) +
-                                                    (bt.damagedImages && isDamaged(toInt(r, 4), bt.armor) ? "1" : "0");
-                         for (int dy = 0; dy < bt.sizeY; ++dy)
-                             for (int dx = 0; dx < bt.sizeX; ++dx) {
-                                 const int x = toInt(r, 2) + dx, y = toInt(r, 3) + dy;
-                                 if (inside(x, y))
-                                     out.push_back({x, y, Layer::Building, SpriteSet::UnitsBuildings,
-                                                    prefix + std::to_string(dx) + std::to_string(dy), 0, entity});
-                             }
-                     });
+    for (const ScenarioObjects::Building& b : objects.buildings) {
+        const auto type = rules.buildings.find(b.type);
+        if (type == rules.buildings.end()) continue;
+        const BuildingType& bt = type->second;
+        const int entity = static_cast<int>(ent.buildings.size());
+        ent.buildings.push_back({&bt, b.x, b.y});
+        const std::string prefix =
+            bt.image + std::to_string(b.owner) + (bt.damagedImages && isDamaged(b.armor, bt.armor) ? "1" : "0");
+        for (int dy = 0; dy < bt.sizeY; ++dy)
+            for (int dx = 0; dx < bt.sizeX; ++dx) {
+                const int x = b.x + dx, y = b.y + dy;
+                if (inside(x, y))
+                    out.push_back({x, y, Layer::Building, SpriteSet::UnitsBuildings,
+                                   prefix + std::to_string(dx) + std::to_string(dy), 0, entity});
+            }
+    }
 
     // Units: <code><color><facing>00. Infantry in forest uses the facing
     // letters A-H; units on bridges are lifted by 5 px.
-    scenario.forEach("SELECT unitType, unitTL, playerOwner, facing, PosX, PosY FROM \"Units On Map\"",
-                     [&](const data::Row& r) {
-                         const auto type = rules.units.find({toInt(r, 0), toInt(r, 1)});
-                         const int x = toInt(r, 4), y = toInt(r, 5);
-                         if (type == rules.units.end() || !inside(x, y)) return;
-                         const MapUnit unit{&type->second, toInt(r, 2), toInt(r, 3) & 7, x, y};
-                         const bool onBridge = classAt(x, y) == TerrainClass::DeepWater && anyRoad.count({x, y});
-                         out.push_back(unitSprite(unit, static_cast<int>(ent.units.size()), terrain, rules, onBridge));
-                         ent.units.push_back(unit);
-                     });
+    for (const ScenarioObjects::Unit& u : objects.units) {
+        const auto type = rules.units.find({u.type, u.techLevel});
+        if (type == rules.units.end() || !inside(u.x, u.y)) continue;
+        const MapUnit unit{&type->second, u.owner, u.facing & 7, u.x, u.y};
+        const bool onBridge = classAt(u.x, u.y) == TerrainClass::DeepWater && anyRoad.count({u.x, u.y});
+        out.push_back(unitSprite(unit, static_cast<int>(ent.units.size()), terrain, rules, onBridge));
+        ent.units.push_back(unit);
+    }
     return out;
+}
+
+std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain,
+                                      MapEntities* entities) {
+    return mapObjectSprites(readScenarioObjects(scenario), rules, terrain, entities);
 }
 
 } // namespace openday::game

@@ -18,6 +18,12 @@ std::string Row::text(int column) const {
              : std::string();
 }
 
+std::vector<std::uint8_t> Row::blob(int column) const {
+    const auto* b = static_cast<const std::uint8_t*>(sqlite3_column_blob(stmt_, column));
+    const int n = sqlite3_column_bytes(stmt_, column);
+    return b && n > 0 ? std::vector<std::uint8_t>(b, b + n) : std::vector<std::uint8_t>();
+}
+
 SqliteDb::SqliteDb(const std::filesystem::path& path, Mode mode) {
     const int flags = mode == Mode::ReadOnly ? SQLITE_OPEN_READONLY : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
     const std::u8string u8 = path.u8string();

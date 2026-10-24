@@ -147,9 +147,9 @@ offsets of dropped units (up to five), and a second animation set
 | `Ruin Types` | One row per ruin/wreck sprite (`id` in `RUINS.DBI`): `can_fire_through`, `can_move_through`. |
 | `AI Priority` | A complete `AiSource` × `AiTarget` matrix over the 12 AI categories with a `Priority` weight: how much an AI unit of one category wants to attack a target of another. |
 | `Colors` | Player/side colors as RGB. `Type` selects the object class (0 buildings, 1 units, 2 roads, 3 walls, 4 mines). `Enum` within the class: 0 = race default (human), 1–4 = player colors, 5 Tauran, 6 Shadamar, 7 Shubblar, and for buildings also 8 tech, 9 ruin. |
-| `Difficulty` | One row: credit, damage and deployment multipliers (percent) for easy / average / hard. |
+| `Difficulty` | One row: credit, damage and deployment multipliers (percent) for easy / average / hard. Only `CreditEasy`/`CreditHard` and `DamageEasy`/`DamageHard` are used, interpolated over the difficulty 0–10 (campaign.md "Terms"). |
 | `Ranges` | One row: tile distances that separate the short, medium and long range bands used by the `Hit…Range` columns. |
-| `Tech Ratio` | Tech-point brackets (`MinRange`–`MaxRange`, `-1` = open-ended) with a `Ratio` *(?)*: probably a conversion rate of tech points per bracket. |
+| `Tech Ratio` | Brackets (`MinRange`–`MaxRange`, `-1` = open-ended) with a `Ratio`: the skirmish tech allotment is `One Off Deployment` × the ratio of its bracket (army-tech.md 2.2). Not used by the campaign. |
 
 Saved queries in GLOBAL (`Building Types Query`, `Translation - …`,
 `Units  Anims`, …) are sorted/translated views or bulk updates used while
@@ -189,10 +189,10 @@ One per colony (continent) of the strategic campaign.
 | Table | Meaning |
 |---|---|
 | `Continent Info` | One row: colony number, number of provinces, start cash, name, `PlayerCity` and `AlienCity` (province numbers of the two capitals: the first and the last province), AI automated-unit call chance and budget, `Intro`/`End` (video names, cf. `VIDEO\INTRO1.SMK` …), `SmackProvinces` + frame range (strategic map animation in `COLANMS\C<n>.SMK`), deployment multipliers per difficulty. |
-| `Province List` | One row per province (`NoProvince` 1…n): name, mission title, description and objective text, `MapSize`, `TerrainType` *(?)*, `Credits` and `Tech` reward, four `mapScreen1…4` OLE images (8-bit BMPs whose size depends on the map size, perhaps for four players or zoom levels *(?)*), `Anim` (empty). |
-| `Province List Captured` | Initial state per province: `Captured`, `RandomChosen` (which scenario variant, 1 or 2, is played there; see file naming). |
+| `Province List` | One row per province (`NoProvince` 1…n): name, mission title, description (`story##turn heading##objective`) and objective hint text, `MapSize`, `TerrainType` *(?)*, `Credits` (paid × the difficulty credit factor when the province is taken), `Tech` (informative: the tech centres on its maps), four `mapScreen1…4` OLE images (8-bit BMPs in the game palette, 100–176 px; image *v* shows the map of scenario variant *v*, see strategic-interface.md 3), `Anim` (empty). |
+| `Province List Captured` | Template only: the game re-randomises the variants (`rand() % 2 + 1` per province) and captures only `PlayerCity` when a colony starts (campaign.md 2). |
 | `Adjacent Provinces` | Undirected adjacency pairs (`ProvinceNo`, `AdjacenTo`) of the strategic map. |
-| `Buildings Available` | Building `TypeID`s the player may build in this colony. |
+| `Buildings Available` | Building `TypeID`s the player may build in this colony, in the order of the city screen's list (city-building.md 2). |
 | `AI automated available` | Automated-unit types the AI may call in this colony. |
 
 ## Scenario databases (`SCEN1`, `SCEN2`, `DEATHM` ZIPs)
@@ -322,10 +322,9 @@ of `1`–`3` is open: perhaps a resolution or zoom level.
 
 - Which of the saved queries (if any) the original program executes.
 - Exact semantics of `Units On Map.Turn` / `Probability` / `EnemyUnitType`,
-  `negAP`, `necessary_unit`, `ReinfRes`, `Tech Ratio`, `Building Types.Position`,
-  `burned_min`.
-- Meaning of the numbers in death-match file names, of the `1`–`3` suffix of
-  automated-unit animations, and of the four colony `mapScreen` images.
+  `negAP`, `necessary_unit`, `burned_min`.
+- Meaning of the numbers in death-match file names and of the `1`–`3` suffix
+  of automated-unit animations.
 - Where the objective icons (`OBJ000`…) are stored (not in any `.DBI`;
   `SYMBOLS.DBI` has similar `OBJT…` names).
 - How `GAMEINFO.MDB` is copied/used at run time (`CACHE\` folder).

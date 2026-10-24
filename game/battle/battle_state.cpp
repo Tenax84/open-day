@@ -150,6 +150,37 @@ bool BattleState::inDeployZone(int player, Point p) const {
     return std::any_of(zone.begin(), zone.end(), [&](Point z) { return z.x == p.x && z.y == p.y; });
 }
 
+int BattleState::techLevel(int player, int typeId) const {
+    if (player < 0 || player >= kPlayerSlots) return 0;
+    const auto& m = techLevels[static_cast<std::size_t>(player)];
+    const auto it = m.find(typeId);
+    return it == m.end() ? 0 : it->second;
+}
+
+std::vector<int> BattleState::buyable(int player) const {
+    std::vector<int> out;
+    for (const int id : purchasable) {
+        if (deployNeedsBuildings) {
+            const UnitType* t = unitType(id, -1);
+            if (!t) continue;
+            const bool owned = std::any_of(buildings_.begin(), buildings_.end(), [&](const BattleBuilding& b) {
+                return b.alive && b.owner == player && b.type->id == t->prerequisite;
+            });
+            if (!owned) continue;
+        }
+        out.push_back(id);
+    }
+    return out;
+}
+
+int BattleState::techFound() const {
+    int sum = 0;
+    for (const int b : techHeld)
+        if (b >= 0 && b < static_cast<int>(buildings_.size()) && buildings_[static_cast<std::size_t>(b)].alive)
+            sum += buildings_[static_cast<std::size_t>(b)].type->techReward;
+    return sum;
+}
+
 int BattleState::roadTypeAt(Point p) const {
     const int r = roadAt(p);
     return r < 0 ? -1 : roads_[static_cast<std::size_t>(r)].type;

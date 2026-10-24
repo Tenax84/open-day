@@ -80,27 +80,94 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                        u.name = row.isNull(43) ? std::string() : row.text(43);
                        r.units[{toInt(row, 0), toInt(row, 1)}] = std::move(u);
                    });
+    // Campaign columns of the unit rows.
+    global.forEach("SELECT typeID, unitTechLevel, Prerequisite, CostToNextTL, Category, DamageArea, IsAA, DamageAA "
+                   "FROM \"Unit Types\"",
+                   [&](const data::Row& row) {
+                       const auto it = r.units.find({toInt(row, 0), toInt(row, 1)});
+                       if (it == r.units.end()) return;
+                       UnitType& u = it->second;
+                       u.prerequisite = row.isNull(2) ? 65535 : toInt(row, 2);
+                       u.costToNextTL = row.isNull(3) ? 0 : toInt(row, 3);
+                       u.category = toInt(row, 4);
+                       u.weaponArea = toInt(row, 5);
+                       u.isAA = row.integer(6) != 0;
+                       u.damageAA = toInt(row, 7);
+                   });
     global.forEach("SELECT TypeID, ImageID, SizeX, SizeY, Armor, DamagedImages, ExplosionAnimation_Begin, Race, "
-                   "isDestructible, hasRuin, AIcategory, NameEnglish, TechReward, BuildingCat FROM \"Building Types\"",
+                   "isDestructible, hasRuin, AIcategory, NameEnglish, TechReward, BuildingCat, CanBuild, Prerequisite, "
+                   "UniqueOnMap, TransformIntoUnit, Position, Cost, Recycle, ResProduction FROM \"Building Types\"",
                    [&](const data::Row& row) {
-                       r.buildings[toInt(row, 0)] =
-                           BuildingType{toUpper(row.text(1)), toInt(row, 2),         toInt(row, 3),
-                                        toInt(row, 4),        row.integer(5) != 0,   row.integer(6) != -1,
-                                        toInt(row, 7),        row.integer(8) != 0,   row.integer(9) != 0,
-                                        toInt(row, 0),        toInt(row, 10),        row.isNull(11) ? std::string() : row.text(11),
-                                        toInt(row, 12),       toInt(row, 13)};
+                       BuildingType b{toUpper(row.text(1)), toInt(row, 2),         toInt(row, 3),
+                                      toInt(row, 4),        row.integer(5) != 0,   row.integer(6) != -1,
+                                      toInt(row, 7),        row.integer(8) != 0,   row.integer(9) != 0,
+                                      toInt(row, 0),        toInt(row, 10),        row.isNull(11) ? std::string() : row.text(11),
+                                      toInt(row, 12),       toInt(row, 13)};
+                       b.canBuild = row.integer(14) != 0;
+                       b.prerequisite = toInt(row, 15);
+                       b.uniqueOnMap = row.integer(16) != 0;
+                       b.transformIntoUnit = toInt(row, 17);
+                       b.position = toInt(row, 18);
+                       b.cost = toInt(row, 19);
+                       b.recycle = toInt(row, 20);
+                       b.resProduction = toInt(row, 21);
+                       r.buildings[b.id] = std::move(b);
                    });
-    global.forEach("SELECT RoadType, img_id, ar FROM \"Road Types\"", [&](const data::Row& row) {
-        r.roads[toInt(row, 0)] = RoadType{toUpper(row.text(1)), toInt(row, 2)};
-    });
-    global.forEach("SELECT WallType, img_id, Armor FROM \"Wall Types\"", [&](const data::Row& row) {
-        r.walls[toInt(row, 0)] = WallType{toUpper(row.text(1)), toInt(row, 2)};
-    });
-    global.forEach("SELECT typeID, ImageID, damageType, damageBase, damageRandom FROM \"Mine Types\"",
+    global.forEach("SELECT RoadType, img_id, ar, nameEnglish, canBeBuilt, Cost, Recycle FROM \"Road Types\"",
                    [&](const data::Row& row) {
-                       r.mines[toInt(row, 0)] =
-                           MineType{toUpper(row.text(1)), toInt(row, 2) == 1, toInt(row, 3), toInt(row, 4)};
+                       RoadType t{toUpper(row.text(1)), toInt(row, 2)};
+                       t.id = toInt(row, 0);
+                       t.name = row.text(3);
+                       t.canBuild = row.integer(4) != 0;
+                       t.cost = toInt(row, 5);
+                       t.recycle = toInt(row, 6);
+                       r.roads[t.id] = std::move(t);
                    });
+    global.forEach("SELECT WallType, img_id, Armor, nameEnglish, prerequisite, canBeBuilt, Cost, Recycle FROM \"Wall Types\"",
+                   [&](const data::Row& row) {
+                       WallType t{toUpper(row.text(1)), toInt(row, 2)};
+                       t.id = toInt(row, 0);
+                       t.name = row.text(3);
+                       t.prerequisite = toInt(row, 4);
+                       t.canBuild = row.integer(5) != 0;
+                       t.cost = toInt(row, 6);
+                       t.recycle = toInt(row, 7);
+                       r.walls[t.id] = std::move(t);
+                   });
+    global.forEach("SELECT typeID, ImageID, damageType, damageBase, damageRandom, nameEnglish, prerequisite, CanBuy, Cost, "
+                   "Recycle, deployTerrain, listboxImageID FROM \"Mine Types\"",
+                   [&](const data::Row& row) {
+                       MineType t{toUpper(row.text(1)), toInt(row, 2) == 1, toInt(row, 3), toInt(row, 4)};
+                       t.id = toInt(row, 0);
+                       t.name = row.text(5);
+                       t.prerequisite = toInt(row, 6);
+                       t.canBuy = row.integer(7) != 0;
+                       t.cost = toInt(row, 8);
+                       t.recycle = toInt(row, 9);
+                       t.deployTerrain = toInt(row, 10);
+                       t.listbox = toUpper(row.text(11));
+                       r.mines[t.id] = std::move(t);
+                   });
+    if (global.hasTable("Automated Units"))
+        global.forEach("SELECT typeID, NameEnglish, Race, Category, Cost, Prerequisite, DeployOnce, facingsImageID, cursorID "
+                       "FROM \"Automated Units\"",
+                       [&](const data::Row& row) {
+                           AutomatedType a;
+                           a.id = toInt(row, 0);
+                           a.name = row.text(1);
+                           a.race = toInt(row, 2);
+                           a.category = toInt(row, 3);
+                           a.cost = toInt(row, 4);
+                           a.prerequisite = toInt(row, 5);
+                           a.deployOnce = row.integer(6) != 0;
+                           a.image = toUpper(row.text(7));
+                           a.cursor = toUpper(row.text(8));
+                           r.automated[a.id] = std::move(a);
+                       });
+    if (global.hasTable("Tech Ratio"))
+        global.forEach("SELECT MinRange, MaxRange, Ratio FROM \"Tech Ratio\" ORDER BY MinRange", [&](const data::Row& row) {
+            r.techRatios.push_back({toInt(row, 0), toInt(row, 1), toInt(row, 2)});
+        });
     global.forEach("SELECT id, type, can_fire_through, burned_id, Color_Red, Color_Green, Color_Blue FROM \"Terrain Types\"",
                    [&](const data::Row& row) {
                        r.terrain[toUpper(row.text(0))] =
@@ -120,10 +187,15 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
             if (s >= 0 && s < 12 && t >= 0 && t < 12)
                 r.aiPriority[static_cast<std::size_t>(s)][static_cast<std::size_t>(t)] = toInt(row, 2);
         });
-    global.forEach("SELECT DamageEasy, DamageHard FROM \"Difficulty\"", [&](const data::Row& row) {
-        r.damageEasy = toInt(row, 0);
-        r.damageHard = toInt(row, 1);
-    });
+    global.forEach("SELECT DamageEasy, DamageHard, DamageAvg, CreditEasy, CreditAvg, CreditHard, DeployEasy, DeployAvg, "
+                   "DeployHard FROM \"Difficulty\"",
+                   [&](const data::Row& row) {
+                       r.damageEasy = toInt(row, 0);
+                       r.damageHard = toInt(row, 1);
+                       r.damageAvg = toInt(row, 2);
+                       r.creditPercent = {toInt(row, 3), toInt(row, 4), toInt(row, 5)};
+                       r.deployPercent = {toInt(row, 6), toInt(row, 7), toInt(row, 8)};
+                   });
     global.forEach("SELECT id, can_fire_through, can_move_through FROM \"Ruin Types\"", [&](const data::Row& row) {
         r.ruins[toUpper(row.text(0))] = RuinType{row.integer(1) != 0, row.integer(2) != 0};
     });

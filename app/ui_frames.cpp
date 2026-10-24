@@ -73,6 +73,43 @@ std::vector<ui::AtlasElement> atlasElements(int resolution) {
     for (const int f : {649, 653, 661}) add(e, f, 4, 53, 17);
     add(e, 665, 6, 19, 19);
     add(e, 689, 4, 110, 17);
+
+    // Campaign (docs/mechanics/strategic-interface.md, city-building.md, army-tech.md).
+    add(e, 939, 1, 286, 228);   // new campaign
+    add(e, 940, 4, 100, 24);    // BACK
+    add(e, 944, 4, 100, 24);    // CONTINUE
+    add(e, 1047, 1, 208, 17);   // slider track
+    add(e, 677, 4, 19, 17);     // slider thumb
+    add(e, 176, 16, 19, 17);    // next / previous / down / up arrows
+    add(e, 739, 1, 286, 419);   // load game
+    add(e, 740, 4, 100, 24);
+    add(e, 744, 4, 100, 24);
+    add(e, 750, 1, 286, 419);   // save game
+    add(e, 751, 4, 100, 24);
+    for (const int panel : {100, 192, 41}) add(e, panel, 1, large ? 184 : 136, large ? 768 : 480);
+    add(e, 143, 4, 44, 43);     // city emblem
+    add(e, 105, 4, 110, 17);    // MAP
+    add(e, 109, 6, 19, 19);     // Buildings
+    add(e, 115, 6, 19, 19);     // Defenses
+    add(e, 121, 4, 53, 17);     // list up
+    add(e, 125, 4, 53, 17);     // list down
+    add(e, 147, 6, 53, 17);     // Recycle
+    add(e, 129, 6, 53, 17);     // Move
+    add(e, 135, 4, 53, 17);     // Campaign
+    add(e, 139, 4, 53, 17);     // Army
+    add(e, 214, 4, 44, 43);     // continent emblem
+    add(e, 198, 4, 110, 17);    // INTELLIGENCE
+    add(e, 202, 4, 110, 17);    // ATTACK
+    add(e, 210, 4, 110, 17);    // BACK
+    add(e, 557, 1, 513, 311);   // intelligence
+    add(e, 558, 4, 110, 17);
+    add(e, 157, 1, 588, 451);   // army
+    add(e, 158, 8, 110, 17);    // CONTINUE, UPGRADE
+    add(e, 168, 4, 110, 17);    // BACK
+    add(e, 172, 4, 60, 55);     // encyclopedia
+    add(e, 88, 4, 44, 43);      // overview map emblem
+    add(e, 700, 4, 53, 17);     // overview CONTINUE
+    add(e, 84, 4, 53, 17);      // overview BACK
     return e;
 }
 

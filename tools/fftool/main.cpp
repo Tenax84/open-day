@@ -22,6 +22,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -237,6 +238,30 @@ int cmdSheet(const FfArchive& a, const fs::path& out, const std::string& filter,
     return 0;
 }
 
+// Frames of a stand-alone Smacker file (interface atlases, colony maps).
+int cmdSmk(const fs::path& file, const fs::path& outDir, int first, int count) {
+    std::ifstream f(file, std::ios::binary);
+    if (!f) throw std::runtime_error("cannot open " + file.string());
+    std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    SmkVideo v(std::move(bytes));
+    std::printf("%d x %d, %d frames, %.2f fps\n", v.width(), v.height(), v.frameCount(), 1e6 / v.frameMicros());
+    fs::create_directories(outDir);
+    gOpaque = true;
+    std::vector<std::uint8_t> rgba(static_cast<std::size_t>(v.width()) * static_cast<std::size_t>(v.height()) * 4);
+    int files = 0;
+    while (v.nextFrame()) {
+        if (v.currentFrame() < first) continue;
+        if (v.currentFrame() >= first + count) break;
+        blit(v, rgba, v.width(), 0, 0);
+        char name[32];
+        std::snprintf(name, sizeof name, "%s_%04d.png", file.stem().string().c_str(), v.currentFrame());
+        writePngRgba(outDir / name, v.width(), v.height(), rgba);
+        ++files;
+    }
+    std::printf("wrote %d frames to %s\n", files, outDir.string().c_str());
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -251,6 +276,9 @@ int main(int argc, char** argv) {
     const std::string& cmd = args[0];
     auto arg = [&](std::size_t i) { return i < args.size() ? args[i] : std::string(); };
     try {
+        if (cmd == "smk" && args.size() >= 3)
+            return cmdSmk(args[1], args[2], args.size() >= 4 ? std::stoi(args[3]) : 0,
+                          args.size() >= 5 ? std::stoi(args[4]) : 1 << 30);
         const FfArchive a = FfArchive::open(args[1]);
         if (cmd == "info") return cmdInfo(a);
         if (cmd == "list") return cmdList(a, arg(2));

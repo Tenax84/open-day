@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <memory>
 #include <optional>
 #include <random>
 #include <set>
@@ -15,6 +16,7 @@
 #include "app/screens.hpp"
 #include "battle/combat.hpp"
 #include "battle/objectives.hpp"
+#include "formats/bmp_palette.hpp"
 #include "formats/pe_resources.hpp"
 #include "map/map_objects.hpp"
 
@@ -86,11 +88,26 @@ private:
 
 class AftermathScreen : public Screen {
 public:
-    AftermathScreen(App& app, bool success, int loser, std::array<game::BattleSession::Stats, game::kPlayerSlots> stats,
-                    std::vector<int> players)
-        : Screen(app), success_(success), loser_(loser), stats_(stats), players_(std::move(players)) {
-        continue_ = button({45 + 300, 0 + 419, 110, 17}, 366, "Continue", ui::kKeyEnter,
-                           [this] { app_.reset(makeMainMenu(app_)); });
+    AftermathScreen(App& app, const BattleConfig& config, std::array<game::BattleSession::Stats, game::kPlayerSlots> stats,
+                    std::vector<int> players, std::shared_ptr<const game::BattleState> finalState)
+        : Screen(app), config_(config), stats_(stats), players_(std::move(players)), final_(std::move(finalState)) {
+        const game::BattleState& s = *final_;
+        result_.success = s.success;
+        result_.loser = s.loser;
+        result_.techFound = s.techFound();
+        result_.unitsLost = stats_[kHuman].unitsLost;
+        result_.buildingsLost = stats_[kHuman].buildingsLost;
+        result_.unitsDestroyed = stats_[0].unitsLost;
+        result_.buildingsDestroyed = stats_[0].buildingsLost;
+        result_.finalState = final_.get();
+        continue_ = button({45 + 300, 0 + 419, 110, 17}, 366, "Continue", ui::kKeyEnter, [this] {
+            if (config_.onFinished) {
+                const auto done = config_.onFinished; // the callback may replace this screen
+                done(result_);
+            } else {
+                app_.reset(makeMainMenu(app_));
+            }
+        });
     }
     void handle(const ui::InputEvent& e) override { continue_.handle(e); }
     void draw(render::IndexedSurface& s) override {
@@ -101,12 +118,12 @@ public:
         const ui::Rect area{dlg.x + 20, dlg.y + 20, dlg.w - 40, dlg.h - 50};
         const render::Font& f = *ui.standard;
         f.drawIn(s, area.x, area.y, area.w, f.lineHeight(), text(app_, 513, "Result"), ui.white);
-        std::string result;
-        if (loser_ != 5) result = loser_ == kHuman ? text(app_, 520, "Defeat.") : text(app_, 519, "Victory.");
-        else result = success_ ? text(app_, 519, "Victory.")
-                               : text(app_, 520, "Defeat.");
+        const bool won = result_.loser != 5 ? result_.loser != kHuman : result_.success;
+        const std::string result = won ? (config_.aftermath.empty() ? text(app_, 519, "Victory.") : config_.aftermath)
+                                       : text(app_, 520, "Defeat.");
         int y = area.y + 3 * f.lineHeight();
         for (const std::string& line : f.wrap(result, area.w)) {
+            if (y > dlg.y + 170) break;
             f.drawIn(s, area.x, y, area.w, f.lineHeight(), line, ui.white);
             y += f.lineHeight();
         }
@@ -137,14 +154,19 @@ public:
             f.draw(s, area.x + cols[3], row, "1", ui.white);
             row += f.lineHeight() * 5 / 2;
         }
+        // The tech line (campaign province battles, on a win).
+        if (config_.techLine && won)
+            f.draw(s, area.x + 25, dlg.y + 418 - 30,
+                   fmt(app_, 518, "New technologies found : %1", {std::to_string(result_.techFound)}), ui.white);
         continue_.draw(s, ui);
     }
 
 private:
-    bool success_;
-    int loser_;
+    BattleConfig config_;
     std::array<game::BattleSession::Stats, game::kPlayerSlots> stats_;
     std::vector<int> players_;
+    std::shared_ptr<const game::BattleState> final_;
+    BattleResult result_;
     ui::Button continue_;
 };
 
@@ -152,8 +174,9 @@ private:
 
 class BattleScreen : public Screen {
 public:
-    BattleScreen(App& app, ScenarioEntry entry, std::unique_ptr<game::BattleSession> session)
-        : Screen(app), entry_(std::move(entry)), session_(std::move(session)), colors_(app.data().palette) {
+    BattleScreen(App& app, BattleConfig config, std::unique_ptr<game::BattleSession> session)
+        : Screen(app), config_(std::move(config)), entry_(config_.entry), session_(std::move(session)),
+          colors_(app.data().palette) {
         large_ = app.settings().resolution == 1;
         width_ = large_ ? 1024 : 640;
         height_ = large_ ? 768 : 480;
@@ -171,7 +194,9 @@ public:
         if (std::getenv("OPENDAY_LOG"))
             session_->log = [](const game::Event& e) { std::fprintf(stderr, "event %zu\n", e.index()); };
         if (!session_->state().deploying) session_->begin();
-        openGoal(); // the objectives first *(OpenDay: the original only shows them on GOAL)*
+        loadOverviewPicture();
+        if (session_->state().deploying) openOverview(true); // the pre-battle overview map
+        else openGoal();
     }
 
     int width() const override { return width_; }
@@ -248,9 +273,12 @@ public:
             if (lastMode_ == Mode::Wait && mode == Mode::Tactic) showMessage(fmt(app_, 897, "Turn: %1", {playerName(kHuman)}), 2000);
             lastMode_ = mode;
         }
+        if (session_->state().techHeld.size() > techHeld_) app_.sound("TECH.WAV");
+        techHeld_ = session_->state().techHeld.size();
         if (session_->displayedOver() && !session_->animations().busy()) {
             const game::BattleState& s = session_->state();
-            app_.replace(std::make_unique<AftermathScreen>(app_, s.success, s.loser, session_->stats(), s.players));
+            app_.replace(std::make_unique<AftermathScreen>(app_, config_, session_->stats(), s.players,
+                                                           std::make_shared<game::BattleState>(session_->server().state())));
         }
     }
 
@@ -277,18 +305,19 @@ public:
         } else {
             drawDeployList(s, ui);
         }
+        if (dialog_ == Dialog::Overview) drawOverview(s, ui);
         if (dialog_ == Dialog::Goal) drawGoal(s, ui);
         if (dialog_ == Dialog::Menu) drawMenu(s, ui);
     }
 
 private:
     enum class Mode { Deploy, Tactic, Wait };
-    enum class Dialog { None, Goal, Menu };
+    enum class Dialog { None, Goal, Menu, Overview };
 
     Mode mode() const {
         if (session_->state().deploying) return Mode::Deploy;
         if (session_->displayedPlayer() == kHuman && !session_->animations().busy() && !session_->state().over)
-            return Mode::Tactic;
+            return reinforcing_ ? Mode::Deploy : Mode::Tactic;
         return Mode::Wait;
     }
 
@@ -404,11 +433,11 @@ private:
         // Deployment view (5.1).
         deployButtons_ = {
             disabled(button(at(5, 0, 44, 43), 25, "", ui::kKeyF1, nullptr)),
-            disabled(button(at(9, 172, 53, 17), 5, "Map", ui::kKeyF4, nullptr)),
+            button(at(9, 172, 53, 17), 5, "Map", ui::kKeyF4, [this] { openOverview(false); }),
             button(at(68, 172, 53, 17), 9, "Goal", ui::kKeyF5, [this] { openGoal(); }),
             button(at(9, 406, 53, 17), 13, "Up", 0, [this] { deployList_.scroll(-1); }),
             button(at(66, 406, 53, 17), 17, "Down", 0, [this] { deployList_.scroll(1); }),
-            disabled(button(at(9, 430, 110, 17), 29, "Army", 'a', nullptr)),
+            button(at(9, 430, 110, 17), 29, "Army", 'a', [this] { openArmy(); }),
             button(at(9, 456, 110, 17), 21, "Continue", ui::kKeyEnter, [this] { finishDeployment(); }),
         };
         strip(deployButtons_);
@@ -419,7 +448,7 @@ private:
         // Tactical view (2.1).
         tacticButtons_ = {
             disabled(button(at(5, 0, 44, 43), 294, "", ui::kKeyF1, nullptr)),
-            disabled(button(at(10, 169, 53, 17), 231, "Map", ui::kKeyF4, nullptr)),
+            button(at(10, 169, 53, 17), 231, "Map", ui::kKeyF4, [this] { openOverview(false); }),
             button(at(71, 169, 53, 17), 235, "Goal", ui::kKeyF5, [this] { openGoal(); }),
             button(at(10, 252, 53, 17), 241, "Group", 'g', [this] { toggleGroup(); }, true),
             button(at(71, 252, 53, 17), 298, "Center", ui::kKeyF6, [this] { centerSelection(); }),
@@ -432,7 +461,7 @@ private:
             button(at(103, 374, 19, 17), 274, ">", ' ', [this] { cycle(1); }),
             button(at(12, 402, 110, 17), 286, "Automated", 'a',
                    [this] { showMessage(text(app_, 71, "No automated units"), 5000); }),
-            disabled(button(at(12, 428, 110, 17), 282, "Reinforcement", 'r', nullptr)),
+            button(at(12, 428, 110, 17), 282, "Reinforcement", 'r', [this] { startReinforcement(); }),
             button(at(11, 456, 53, 17), 290, "End turn", ui::kKeyEnter, [this] { endTurn(); }),
         };
         strip(tacticButtons_);
@@ -440,7 +469,7 @@ private:
         // Waiting view (4.2).
         waitButtons_ = {
             disabled(button(at(5, 0, 44, 43), 323, "", ui::kKeyF1, nullptr)),
-            disabled(button(at(10, 169, 53, 17), 315, "Map", ui::kKeyF4, nullptr)),
+            button(at(10, 169, 53, 17), 315, "Map", ui::kKeyF4, [this] { openOverview(false); }),
             button(at(71, 169, 53, 17), 319, "Goal", ui::kKeyF5, [this] { openGoal(); }),
         };
         strip(waitButtons_);
@@ -472,8 +501,9 @@ private:
         deployTypes_.clear();
         // Only the human side's own race can be bought *(OpenDay: the list in
         // the scenario names both races)*.
-        for (const int id : s.purchasable)
-            if (const game::UnitType* t = s.unitType(id, -1); t && t->race == 0) deployTypes_.push_back(t);
+        for (const int id : s.buyable(kHuman))
+            if (const game::UnitType* t = s.unitType(id, s.techLevel(kHuman, id)); t && t->race == 0)
+                deployTypes_.push_back(t);
         std::stable_sort(deployTypes_.begin(), deployTypes_.end(), [&](const game::UnitType* a, const game::UnitType* b) {
             if (rank(a->movement) != rank(b->movement)) return rank(a->movement) < rank(b->movement);
             return a->cost < b->cost;
@@ -492,7 +522,7 @@ private:
         }
         const int u = s.unitAt(tile);
         if (u >= 0) {
-            if (std::find(deployed_.begin(), deployed_.end(), u) == deployed_.end()) return;
+            if (!s.deploying || std::find(deployed_.begin(), deployed_.end(), u) == deployed_.end()) return;
             if (session_->send(game::UndeployRequest{kHuman, u}).empty()) {
                 showMessage(fmt(app_, 450, "%1 taken back", {s.unit(u).type->name}), 5000);
                 std::erase(deployed_, u);
@@ -518,8 +548,41 @@ private:
     }
 
     void finishDeployment() {
+        if (reinforcing_) {
+            reinforcing_ = false;
+            return;
+        }
         session_->begin();
         selection_.clear();
+    }
+
+    void startReinforcement() {
+        reinforcing_ = true;
+        selection_.clear();
+        preview_.clear();
+        plannedTarget_.reset();
+        fire_ = false;
+        buildDeployList();
+    }
+
+    void openArmy() {
+        ArmyConfig a;
+        a.variant = ArmyConfig::Variant::Deployment;
+        for (const game::UnitType* t : deployTypes_) a.units.push_back(t->typeId);
+        armyLevels_ = session_->state().techLevels[kHuman];
+        a.levels = &armyLevels_;
+        a.canUpgrade = false;
+        a.resolution = large_ ? 1 : 0;
+        a.onClose = [this](int type) {
+            for (std::size_t i = 0; i < deployTypes_.size(); ++i)
+                if (deployTypes_[i]->typeId == type) {
+                    deployList_.selected = static_cast<int>(i);
+                    if (deployList_.selected < deployList_.top) deployList_.top = deployList_.selected;
+                    if (deployList_.selected >= deployList_.top + deployList_.visibleRows())
+                        deployList_.top = deployList_.selected - deployList_.visibleRows() + 1;
+                }
+        };
+        app_.push(makeArmy(app_, std::move(a)));
     }
 
     // --- Tactical orders -----------------------------------------------------
@@ -716,6 +779,7 @@ private:
     ui::Rect menuRect() const { return {(viewW_ - 403) / 2, (viewH_ - 371) / 2, 403, 371}; }
 
     void handleDialog(const ui::InputEvent& e) {
+        if (dialog_ == Dialog::Overview) return handleOverview(e);
         if (dialog_ == Dialog::Goal) dialogButtons_[1].checked = markers_;
         for (ui::Button& b : dialogButtons_)
             if (b.handle(e)) return;
@@ -755,6 +819,138 @@ private:
         soundGroup_.draw(s, ui);
         animGroup_.draw(s, ui);
         scrollGroup_.draw(s, ui);
+    }
+
+    // --- Overview map (strategic-interface.md 4) ------------------------------
+
+    void loadOverviewPicture() {
+        try {
+            const data::SqliteDb db(entry_.database);
+            const char* column = large_ ? "mapScreen1024" : "mapScreen640";
+            db.forEach(std::string("SELECT ") + column + " FROM \"Scenario Info\"", [&](const data::Row& r) {
+                const std::vector<std::uint8_t> bmp = r.blob(0);
+                if (!bmp.empty()) overviewPicture_ = formats::readBmpImage(bmp);
+            });
+        } catch (const std::exception&) {
+            overviewPicture_ = {};
+        }
+    }
+
+    // The map square: side min(view w, view h), centred in the viewport.
+    ui::Rect overviewSquare() const {
+        const int side = std::min(viewW_, viewH_);
+        return {(viewW_ - side) / 2, (viewH_ - side) / 2, side, side};
+    }
+
+    void openOverview(bool first) {
+        dialog_ = Dialog::Overview;
+        overviewFirst_ = first;
+        const int px = viewW_;
+        overviewButtons_.clear();
+        overviewButtons_.push_back(first ? button({px + 10, 458, 53, 17}, 700, "Continue", ui::kKeyEscape, [this] { closeOverview(); })
+                                         : button({px + 10, 458, 53, 17}, 84, "Back", ui::kKeyEscape, [this] { closeOverview(); }));
+        overviewButtons_.push_back(button({px + 8, 431, 53, 17}, 13, "Up", 0, [this] { overviewList_.scroll(-1); }));
+        overviewButtons_.push_back(button({px + 75, 431, 53, 17}, 17, "Down", 0, [this] { overviewList_.scroll(1); }));
+        overviewArmy_ = {};
+        overviewArmy_.items.push_back(button({px + 10, 73, 19, 19}, 52, "", 0, nullptr, true));
+        overviewArmy_.items.push_back(button({px + 29, 73, 19, 19}, 46, "", 0, nullptr, true));
+        overviewArmy_.check(0);
+        overviewArmy_.onChange = [this](int) { fillOverviewList(); };
+        overviewList_.rect = {px + 12, 96, 116, 330};
+        overviewList_.rowHeight = 17;
+        fillOverviewList();
+    }
+
+    int overviewOwner() const { return overviewArmy_.checked() == 1 ? 0 : kHuman; }
+
+    void fillOverviewList() {
+        std::map<std::string, int> counts;
+        for (const game::BattleUnit& u : session_->state().units())
+            if (u.alive && u.owner == overviewOwner() && !u.type->isConvoy) ++counts[u.type->name];
+        overviewList_.rows.clear();
+        for (const auto& [name, n] : counts) overviewList_.rows.push_back("  " + name + " x" + std::to_string(n));
+        overviewList_.selected = -1;
+        overviewList_.top = 0;
+    }
+
+    void closeOverview() {
+        dialog_ = Dialog::None;
+        if (overviewFirst_) openGoal();
+    }
+
+    void handleOverview(const ui::InputEvent& e) {
+        for (ui::Button& b : overviewButtons_)
+            if (b.handle(e)) return;
+        if (overviewArmy_.handle(e) || overviewList_.handle(e)) return;
+        // A click on the map centres the view there and closes the screen.
+        const ui::Rect sq = overviewSquare();
+        if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1 && sq.contains(e.x, e.y)) {
+            const int n = session_->state().size();
+            const int pic = overviewPicture_.width > 0 ? overviewPicture_.width : sq.w;
+            const int ox = sq.x + (sq.w - pic) / 2, oy = sq.y + (sq.h - pic) / 2;
+            const int tx = (e.x - ox) * n / pic, ty = (e.y - oy) * n / pic;
+            if (tx >= 0 && ty >= 0 && tx < n && ty < n) {
+                centerOn({tx, ty});
+                closeOverview();
+            }
+        }
+    }
+
+    void drawOverview(render::IndexedSurface& s, const ui::UiContext& ui) {
+        fillRect(s, {0, 0, viewW_, viewH_}, ui.black);
+        const ui::Rect sq = overviewSquare();
+        const int n = session_->state().size();
+        const int pic = overviewPicture_.width > 0 ? overviewPicture_.width : sq.w;
+        const int ox = sq.x + (sq.w - pic) / 2, oy = sq.y + (sq.h - pic) / 2;
+        if (overviewPicture_.width > 0)
+            for (int y = 0; y < overviewPicture_.height && oy + y < s.height(); ++y)
+                std::copy_n(overviewPicture_.pixels.begin() + static_cast<std::ptrdiff_t>(y) * overviewPicture_.width,
+                            overviewPicture_.width, s.row(oy + y) + ox);
+        const game::BattleState& st = session_->state();
+        const double sc = static_cast<double>(pic) / n;
+        const int dot = std::max(1, static_cast<int>(std::ceil(sc)));
+        auto square = [&](game::Point p, std::uint8_t c) {
+            fillRect(s, {ox + static_cast<int>(p.x * sc), oy + static_cast<int>(p.y * sc), dot, dot}, c);
+        };
+        // Deployment zone, objective zone and markers in OpenDay's own shapes.
+        if (st.deploying)
+            for (const game::Point z : st.deployZone[kHuman])
+                if ((z.x + z.y) % 2 == 0) square(z, objectColor(1, kHuman, 0));
+        for (const game::Point z : st.objective.zone)
+            if ((z.x + z.y) % 2 == 0) square(z, colors_(255, 140, 0));
+        const bool blink = (clockMs_ / 175) % 2 == 0;
+        std::string marked;
+        if (overviewList_.selected >= 0 && overviewList_.selected < static_cast<int>(overviewList_.rows.size())) {
+            marked = overviewList_.rows[static_cast<std::size_t>(overviewList_.selected)];
+            marked = marked.substr(2, marked.rfind(" x") - 2);
+        }
+        for (const game::BattleBuilding& b : st.buildings())
+            if (b.alive)
+                for (int dy = 0; dy < b.type->sizeY; ++dy)
+                    for (int dx = 0; dx < b.type->sizeX; ++dx) square({b.pos.x + dx, b.pos.y + dy}, objectColor(0, b.owner, b.type->race));
+        for (const game::BattleUnit& u : st.units())
+            if (u.alive) {
+                const bool highlight = blink && u.owner == overviewOwner() && u.type->name == marked;
+                square(u.pos, highlight ? ui.white : objectColor(1, u.owner, u.type->race));
+            }
+        for (const int b : st.techHeld)
+            if (b >= 0 && b < static_cast<int>(st.buildings().size())) square(st.building(b).pos, colors_(255, 255, 0));
+        // Side panel.
+        ui::drawFrame(s, ui, 41, {viewW_, 0, width_ - viewW_, height_});
+        ui::Button emblem = button({viewW_ + 5, 0, 44, 43}, 88, "", 0, nullptr);
+        emblem.enabled = false;
+        emblem.draw(s, ui);
+        const ui::Rect ind{viewW_ + 64, 26, 40, 14};
+        fillRect(s, ind, ui.black);
+        ui.standard->drawIn(s, ind.x, ind.y - 1, ind.w, ind.h + 2, std::to_string(st.deployBudget[kHuman]), ui.white);
+        const ui::Rect name{viewW_ + 6, 53, 121, 15};
+        fillRect(s, name, ui.black);
+        ui.standard->drawIn(s, name.x + 2, name.y, name.w - 4, name.h, overviewOwner() == 0 ? text(app_, 65, "Alien") : playerName(kHuman),
+                            ui.white, render::Align::Left);
+        fillRect(s, overviewList_.rect, ui.black);
+        overviewArmy_.draw(s, ui);
+        overviewList_.draw(s, ui);
+        for (const ui::Button& b : overviewButtons_) b.draw(s, ui);
     }
 
     // --- Map -----------------------------------------------------------------
@@ -811,6 +1007,8 @@ private:
         if (mode != Mode::Deploy)
             for (const int u : selection_)
                 if (s.unit(u).alive) marker(markers, s.unit(u).pos, "SU00" + std::to_string(std::clamp(s.unit(u).owner, 0, 4)));
+        for (const int b : s.techHeld)
+            if (b >= 0 && b < static_cast<int>(s.buildings().size()) && s.building(b).alive) marker(markers, s.building(b).pos, "LILBULB");
         game::SceneExtras extras = session_->animations().extras();
         extras.overlays.insert(extras.overlays.end(), markers.begin(), markers.end());
         viewport_.fill(0);
@@ -1057,6 +1255,7 @@ private:
 
     // --- State ---------------------------------------------------------------
 
+    BattleConfig config_;
     ScenarioEntry entry_;
     std::unique_ptr<game::BattleSession> session_;
     ColorMatcher colors_;
@@ -1072,6 +1271,14 @@ private:
     Mode lastMode_ = Mode::Deploy;
     Dialog dialog_ = Dialog::None;
     bool markers_ = true;
+    bool reinforcing_ = false;
+    std::size_t techHeld_ = 0;
+    std::map<int, int> armyLevels_;
+    formats::BmpImage overviewPicture_;
+    bool overviewFirst_ = false;
+    std::vector<ui::Button> overviewButtons_;
+    ui::RadioGroup overviewArmy_;
+    ui::ListBox overviewList_;
     std::vector<ui::Button> deployButtons_, tacticButtons_, waitButtons_, dialogButtons_;
     ui::RadioGroup soundGroup_, animGroup_, scrollGroup_;
     ui::ListBox deployList_;
@@ -1089,11 +1296,21 @@ private:
 
 } // namespace
 
+std::unique_ptr<Screen> makeBattle(App& app, BattleConfig config) {
+    auto session = game::BattleSession::load(config.entry.database, app.data().rules, app.data().clips.get(),
+                                             static_cast<std::uint32_t>(std::random_device{}()), config.options,
+                                             config.prepare);
+    return std::make_unique<BattleScreen>(app, std::move(config), std::move(session));
+}
+
 std::unique_ptr<Screen> makeBattle(App& app, const ScenarioEntry& entry) {
     // Skirmish, single player: the human plays slot 1; units of the other
     // human slots join it *(OpenDay choice)*, and the budget is the catalog's
     // One Off Deployment (share 100 % for one player, battle-flow.md 1.2).
-    auto prepare = [&](game::BattleState& s) {
+    BattleConfig config;
+    config.entry = entry;
+    config.options.aiDamage = false; // only campaign battles scale AI damage (campaign.md 4.1)
+    config.prepare = [entry](game::BattleState& s) {
         for (std::size_t i = 0; i < s.units().size(); ++i) {
             game::BattleUnit& u = s.unit(static_cast<int>(i));
             if (u.owner >= 2) u.owner = kHuman;
@@ -1107,11 +1324,7 @@ std::unique_ptr<Screen> makeBattle(App& app, const ScenarioEntry& entry) {
         s.deployBudget[kHuman] = entry.budget;
         s.deploying = !s.deployZone[kHuman].empty();
     };
-    game::CombatOptions options;
-    auto session = game::BattleSession::load(entry.database, app.data().rules, app.data().clips.get(),
-                                             static_cast<std::uint32_t>(std::random_device{}()), options, prepare);
-    auto screen = std::make_unique<BattleScreen>(app, entry, std::move(session));
-    return screen;
+    return makeBattle(app, std::move(config));
 }
 
 } // namespace openday::app

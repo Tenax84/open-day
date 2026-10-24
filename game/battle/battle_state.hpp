@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -175,6 +176,30 @@ public:
     std::array<int, kPlayerSlots> deployBudget{};
     std::vector<int> purchasable; // One Off Units Available: unit typeIDs
     bool inDeployZone(int player, Point p) const;
+    // After deployment the budget is the player's reinforcement resource
+    // (battle-flow.md 4.2): it grows by `income` at the start of each of his
+    // turns. In a city battle (campaign.md 6.4) the income is recomputed
+    // from the deployment centres and HQ still standing instead.
+    std::array<int, kPlayerSlots> income{};
+    struct CityIncome {
+        int deployType = -1;  // Building TypeID of the colony's deployment centre; -1 = not a city battle
+        int deployProduction = 0;
+        int hqProduction = 0;
+        int multiplier = 100; // M(d)
+        int share = 100;      // human-player share in percent
+    } cityIncome;
+    // City battle: a type can only be bought while its prerequisite building
+    // stands on the map (campaign.md 6.4).
+    bool deployNeedsBuildings = false;
+    // Tech level per unit type for a player's deployments; missing = 0.
+    std::array<std::map<int, int>, kPlayerSlots> techLevels{};
+    int techLevel(int player, int typeId) const;
+    // Unit types the player may buy now.
+    std::vector<int> buyable(int player) const;
+    // Tech buildings held by the human side (battle-flow.md 5.2): indices
+    // into buildings().
+    std::vector<int> techHeld;
+    int techFound() const;
     // Hold Position bookkeeping (battle-flow.md 2.3); server only.
     int holdCount = 0;
     int lastHeldTurn = -1;

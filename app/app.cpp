@@ -52,6 +52,8 @@ GameData GameData::load(const fs::path& gameDir, const fs::path& dataDir) {
         if (!e.is_regular_file() || lower(e.path().extension().string()) != ".sqlite") continue;
         const std::string stem = lower(e.path().stem().string());
         if (stem == "global") global = e.path();
+        else if (stem.size() == 2 && stem[0] == 'c' && stem[1] >= '1' && stem[1] <= '4')
+            d.colonies[stem[1] - '0'] = e.path();
         else if (!d.scenarios.count(stem) && data::SqliteDb(e.path()).hasTable("Map")) d.scenarios[stem] = e.path();
     }
     if (global.empty()) throw data::DbError("GLOBAL.sqlite not found in " + dataDir.string());

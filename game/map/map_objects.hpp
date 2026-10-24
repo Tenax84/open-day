@@ -79,6 +79,36 @@ std::vector<MapSprite> roadSprites(const std::vector<RoadPiece>& roads, const Gl
 // Wall sprites; updates each piece's `previous` number.
 std::vector<MapSprite> wallSprites(std::vector<WallPiece>& walls, const GlobalRules& rules, const TerrainMap& terrain);
 
+// The objects of a scenario map, as stored in its "... On Map" tables.
+struct ScenarioObjects {
+    struct Mine {
+        int type = 0, x = 0, y = 0;
+    };
+    struct Ruin {
+        std::string name;
+        int x = 0, y = 0;
+    };
+    struct Building {
+        int type = 0, owner = 0, x = 0, y = 0, armor = 0;
+    };
+    struct Unit {
+        int type = 0, techLevel = 0, owner = 0, facing = 0, x = 0, y = 0;
+    };
+    std::vector<RoadPiece> roads;
+    std::vector<WallPiece> walls;
+    std::vector<Mine> mines;
+    std::vector<Ruin> ruins;
+    std::vector<Building> buildings;
+    std::vector<Unit> units;
+};
+
+ScenarioObjects readScenarioObjects(const data::SqliteDb& scenario);
+
+// Object sprites of a map. When `entities` is given, it receives the units
+// and buildings, and their sprites refer to them through MapSprite::entity.
+std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRules& rules, const TerrainMap& terrain,
+                                        MapEntities* entities = nullptr);
+
 // Builds the object sprites of a scenario from its "... On Map" tables.
 // When `entities` is given, it receives the units and buildings, and their
 // sprites refer to them through MapSprite::entity.

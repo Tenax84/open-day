@@ -5,6 +5,7 @@
 #include <iterator>
 
 #include "app/app.hpp"
+#include "app/campaign.hpp"
 #include "app/screens.hpp"
 #include "formats/smk.hpp"
 
@@ -20,10 +21,13 @@ void clear(render::IndexedSurface& s, std::uint8_t color) { s.fill(color); }
 
 // ---------------------------------------------------------------------------
 
-class IntroScreen : public Screen {
+// A full-screen video (strategic-interface.md 7): centred, black around,
+// skipped by a mouse button, Esc, Enter or Space.
+class VideoScreen : public Screen {
 public:
-    explicit IntroScreen(App& app) : Screen(app) {
-        const fs::path path = app.data().gameDir / "VIDEO" / "FH2INTRO.SMK";
+    VideoScreen(App& app, const std::string& name, std::function<void()> onDone) : Screen(app), next_(std::move(onDone)) {
+        fs::path path = app.data().gameDir / "VIDEO" / (game::toUpper(name) + ".SMK");
+        if (!fs::exists(path)) path = app.data().gameDir / "VIDEO" / (name + ".SMK");
         std::ifstream f(path, std::ios::binary);
         if (!f) return;
         std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -37,7 +41,10 @@ public:
     }
 
     void handle(const ui::InputEvent& e) override {
-        if (e.type == ui::InputEvent::Type::KeyDown || e.type == ui::InputEvent::Type::MouseUp) done();
+        if (e.type == ui::InputEvent::Type::MouseDown ||
+            (e.type == ui::InputEvent::Type::KeyDown &&
+             (e.key == ui::kKeyEscape || e.key == ui::kKeyEnter || e.key == ' ')))
+            done();
     }
 
     void update(int ms) override {
@@ -72,9 +79,10 @@ private:
         if (finished_) return;
         finished_ = true;
         app_.audio().stopSounds(); // cut the video's sound
-        app_.replace(makeMainMenu(app_));
+        if (next_) next_();
     }
 
+    std::function<void()> next_;
     std::unique_ptr<formats::SmkVideo> video_;
     formats::Palette palette_{};
     long long clock_ = 0;
@@ -94,8 +102,8 @@ public:
             bool enabled;
         };
         const Item items[] = {
-            {711, "New campaign", 0, nullptr, false},
-            {715, "Load campaign", 0, nullptr, false},
+            {711, "New campaign", 0, [this] { app_.push(makeNewCampaignMenu(app_)); }, campaignAvailable(app.data())},
+            {715, "Load campaign", 0, [this] { app_.push(makeLoadMenu(app_)); }, campaignAvailable(app.data())},
             {765, "Skirmish", 0, [this] { app_.push(makeSkirmishMenu(app_)); }, true},
             {719, "Multi player", 0, nullptr, false},
             {723, "Intro", 0, [this] { app_.replace(makeIntro(app_)); }, true},
@@ -281,7 +289,12 @@ private:
 
 } // namespace
 
-std::unique_ptr<Screen> makeIntro(App& app) { return std::make_unique<IntroScreen>(app); }
+std::unique_ptr<Screen> makeIntro(App& app) {
+    return std::make_unique<VideoScreen>(app, "FH2INTRO", [&app] { app.replace(makeMainMenu(app)); });
+}
+std::unique_ptr<Screen> makeVideo(App& app, const std::string& name, std::function<void()> next) {
+    return std::make_unique<VideoScreen>(app, name, std::move(next));
+}
 std::unique_ptr<Screen> makeMainMenu(App& app) { return std::make_unique<MainMenu>(app); }
 std::unique_ptr<Screen> makeResolutionMenu(App& app) { return std::make_unique<ResolutionMenu>(app); }
 std::unique_ptr<Screen> makeSkirmishMenu(App& app) { return std::make_unique<SkirmishMenu>(app); }

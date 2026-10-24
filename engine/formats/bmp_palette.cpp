@@ -1,5 +1,6 @@
 #include "formats/bmp_palette.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 
@@ -27,6 +28,30 @@ Palette readBmpPalette(const std::vector<std::uint8_t>& bytes) {
         p[i] = Rgb{d[off + 2], d[off + 1], d[off]};
     }
     return p;
+}
+
+BmpImage readBmpImage(const std::vector<std::uint8_t>& bytes) {
+    using namespace binary;
+    const Bytes d = bytes;
+    BmpImage img;
+    img.palette = readBmpPalette(bytes); // also checks the header
+    const std::uint32_t dataOffset = readU32(d, 10);
+    const auto width = static_cast<std::int32_t>(readU32(d, 18));
+    const auto height = static_cast<std::int32_t>(readU32(d, 22));
+    if (readU32(d, 30) != 0) throw BmpError("compressed BMP not supported");
+    if (width <= 0 || height == 0 || width > 8192 || height > 8192 || height < -8192) throw BmpError("bad BMP size");
+    img.width = width;
+    img.height = height < 0 ? -height : height;
+    const std::size_t stride = (static_cast<std::size_t>(width) + 3) & ~std::size_t{3};
+    if (d.size() < dataOffset + stride * static_cast<std::size_t>(img.height)) throw BmpError("BMP pixels truncated");
+    img.pixels.resize(static_cast<std::size_t>(img.width) * static_cast<std::size_t>(img.height));
+    for (int y = 0; y < img.height; ++y) {
+        const int src = height < 0 ? y : img.height - 1 - y; // bottom-up unless the height is negative
+        const std::size_t off = dataOffset + stride * static_cast<std::size_t>(src);
+        std::copy_n(bytes.begin() + static_cast<std::ptrdiff_t>(off), img.width,
+                    img.pixels.begin() + static_cast<std::ptrdiff_t>(y) * img.width);
+    }
+    return img;
 }
 
 Palette loadBmpPalette(const std::filesystem::path& path) {

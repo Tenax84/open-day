@@ -1,6 +1,10 @@
 add_executable(openday
     app.cpp
     battle_screen.cpp
+    campaign_army.cpp
+    campaign_city.cpp
+    campaign_continent.cpp
+    campaign_flow.cpp
     game.cpp
     main.cpp
     menus.cpp

@@ -7,8 +7,9 @@ OpenRA, OpenXcom and fheroes2.
 **Primary target:** macOS on Apple Silicon (arm64). Windows and Linux are
 secondary targets.
 
-> **Status:** early research. Nothing playable yet. Current work: documenting
-> the original data formats (`docs/formats/`) and writing extraction tools.
+> **Status:** work in progress. The single-player campaign and skirmish
+> battles are playable; automated units, the encyclopedia and multiplayer
+> are not there yet.
 
 ## Disclaimer
 
@@ -46,14 +47,17 @@ ctest --test-dir build -C Release
 ```
 
 If `OPENDAY_GAME_DIR` is set at configure time, an extra test decodes the
-graphics of your installation.
+graphics of your installation; with `OPENDAY_DATA_DIR` (the converted
+databases) another test starts a campaign and prepares its battles.
 
 ## Tools
 
 - `dbitool` — inspect and extract `IMGS\*.DBI` sprite archives
   (`info`, `list`, `extract`, `sheet`).
 - `fftool` — inspect and extract the `ANMSUNIT\ANMSUNIT.FF` unit animation
-  container (Smacker videos; frames as PNG, audio as WAV).
+  container (Smacker videos; frames as PNG, audio as WAV); `fftool smk`
+  writes the frames of a stand-alone `.SMK` file (interface atlases, colony
+  maps) as PNG.
 - `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
   (Python standard library only).
 - `mapview` — SDL3 viewer for every scenario map: terrain, roads, walls,
@@ -85,10 +89,16 @@ graphics of your installation.
   captures an animation in progress.
 
 - `openday` — the game program (work in progress): intro video, main menu,
-  skirmish battles with deployment, the original tactical interface (side
-  panel, minimap, unit information, path preview, objectives dialog,
-  options), the computer player, and the battle report. Campaign, saving
-  and multiplayer are not there yet.
+  the single-player **campaign** (four colonies: continent screen with the
+  animated colony map, province intelligence, city building, unit upgrades
+  on the army screen, province battles, counter-attacks on the city, colony
+  intros and the closing videos; saving and loading in ten slots), skirmish
+  battles with the army screen and deployment, the original tactical
+  interface (side panel, minimap, overview map, unit information, path
+  preview, objectives dialog, reinforcements, options), the computer
+  player, and the battle report. Multiplayer is not there yet. Saved
+  campaigns are written to the user's settings folder (`OPENDAY_SAVE_DIR`
+  overrides it).
 
   ```
   openday --game-dir "<game dir>" --data ~/openday-data

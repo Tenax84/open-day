@@ -41,6 +41,7 @@ struct GameData {
     std::map<int, std::string> strings; // language DLL string table
     std::vector<ScenarioEntry> skirmish;
     std::map<std::string, fs::path> scenarios; // lower-case name -> database
+    std::map<int, fs::path> colonies;          // 1-4 -> converted C<n> database
 
     std::string text(int id) const;
     fs::path scenario(const std::string& name) const;

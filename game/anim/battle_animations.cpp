@@ -17,7 +17,11 @@ int after(int end, const render::Animation* shown) { return shown ? end + 1 : en
 BattleAnimations::BattleAnimations(MapScene& scene, MapEntities& entities, const GlobalRules& rules,
                                    render::AnimationCache* clips)
     : scene_(scene), entities_(entities), rules_(rules), clips_(clips), unitHidden_(entities.units.size(), 0),
-      buildingHidden_(entities.buildings.size(), false) {}
+      buildingHidden_(entities.buildings.size(), false) {
+    for (const MapUnit& u : entities.units) planned_.push_back({{u.x, u.y}, u.facing});
+}
+
+Point BattleAnimations::plannedTile(int unit) const { return planned_[static_cast<std::size_t>(unit)].tile; }
 
 const render::Animation* BattleAnimations::clip(const std::string& name) {
     return clips_ && !name.empty() ? clips_->get(name) : nullptr;
@@ -44,6 +48,7 @@ int BattleAnimations::addUnit(MapUnit unit) {
     const int index = static_cast<int>(entities_.units.size());
     entities_.units.push_back(unit);
     unitHidden_.push_back(1);
+    planned_.push_back({{unit.x, unit.y}, unit.facing});
     schedule([this, index] {
         refreshUnit(index);
         showUnit(index);
@@ -108,7 +113,7 @@ void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optio
 
     AnimTrack begin;
     begin.start = startTick();
-    begin.clips[0] = unitClip(type, u.color, UnitAction::MoveStart, u.facing);
+    begin.clips[0] = unitClip(type, u.color, UnitAction::MoveStart, planned_[static_cast<std::size_t>(unit)].facing);
     begin.duration = lastFrame(begin.clips[0]);
     begin.pos = framePosition(from.x, from.y, n, begin.clips[0] ? begin.clips[0]->width : 0,
                               begin.clips[0] ? begin.clips[0]->height : 0);
@@ -150,6 +155,7 @@ void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optio
     };
     const render::Animation* endClip = end.clips[0];
     finish(animator_.add(std::move(end)), endClip);
+    planned_[static_cast<std::size_t>(unit)] = {to, lastFacing};
 }
 
 void BattleAnimations::attack(int unit, Point target, std::vector<Point> impacts) {
@@ -159,8 +165,9 @@ void BattleAnimations::attack(int unit, Point target, std::vector<Point> impacts
     if (!u.alive) return;
     const UnitType& type = *u.type;
     const int n = scene_.terrain().size;
-    const Point from{u.x, u.y};
+    const Point from = plannedTile(unit);
     const int facing = type.hasFacings ? facingToward(from, target) : 0;
+    planned_[static_cast<std::size_t>(unit)].facing = facing;
     auto place = [&](AnimTrack& t, Point tile) {
         const render::Animation* c = t.clips[0];
         t.pos = framePosition(tile.x, tile.y, n, c ? c->width : 0, c ? c->height : 0);
@@ -236,8 +243,9 @@ void BattleAnimations::destroyUnit(int unit, std::optional<std::string> wreck) {
     t.clips[0] = unitClip(*u.type, u.color, UnitAction::Explosion, 0);
     t.duration = lastFrame(t.clips[0]);
     const render::Animation* c = t.clips[0];
-    t.pos = framePosition(u.x, u.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
-    t.tile = {u.x, u.y};
+    const Point at = plannedTile(unit);
+    t.pos = framePosition(at.x, at.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
+    t.tile = at;
     t.sound = c;
     t.onStart = [this, unit] { hideUnit(unit); };
     t.onEnd = [this, unit, wreck] {

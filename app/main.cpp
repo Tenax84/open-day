@@ -5,7 +5,8 @@
 //
 // --game-dir  the game installation (default: $OPENDAY_GAME_DIR)
 // --data      output folder of tools/mdb/mdb2sqlite.py (default: $OPENDAY_DATA_DIR)
-// --scale     window scale of the 640 x 480 screen (default 2)
+// --scale     window scale of the 640 x 480 screen (default: the largest that
+//             fits the screen)
 // --cheats    enables the battle cheat keys Tab + W (win) and Tab + L (lose)
 // --script    test input, steps separated by ';': click:X,Y (left), rclick:X,Y,
 //             move:X,Y, key:NAME (a letter, enter, esc, tab, up, down, left,
@@ -105,13 +106,46 @@ int scriptKey(const std::string& k) {
     return k.empty() ? 0 : static_cast<unsigned char>(k[0]);
 }
 
+// Sizes the (hidden) window so that it fits the usable area of its display,
+// title bar and taskbar included, and shows it centred there. scale > 0 asks
+// for that multiple of 640 x 480 (reduced when it does not fit); 0 picks the
+// largest whole multiple that fits, or the largest 4:3 size below 2x.
+void placeWindow(SDL_Window* window, int scale) {
+    SDL_Rect area{};
+    if (!SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &area) || area.w <= 0 || area.h <= 0) {
+        SDL_SetWindowSize(window, 640 * std::max(scale, 1), 480 * std::max(scale, 1));
+        SDL_ShowWindow(window);
+        return;
+    }
+    int top = 0, left = 0, bottom = 0, right = 0;
+    if (!SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right) || top == 0) {
+        top = 32; // typical title bar when the borders are not known yet
+        left = right = bottom = 8;
+    }
+    const int maxW = area.w - left - right, maxH = area.h - top - bottom;
+    const int fit = std::max(1, std::min(maxW / 640, maxH / 480));
+    int w = 0, h = 0;
+    if (scale > 0 || fit >= 2) {
+        const int s = scale > 0 ? std::min(scale, fit) : fit;
+        w = 640 * s;
+        h = 480 * s;
+    } else {
+        h = std::max(240, std::min(maxH, maxW * 3 / 4));
+        w = h * 4 / 3;
+    }
+    SDL_SetWindowSize(window, w, h);
+    SDL_SetWindowPosition(window, area.x + left + std::max(0, (maxW - w) / 2), area.y + top + std::max(0, (maxH - h) / 2));
+    SDL_ShowWindow(window);
+}
+
 int run(app::GameData& data, int scale, bool intro, bool mute, bool cheats, std::deque<Step> script, const fs::path& shot) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
-    if (!SDL_CreateWindowAndRenderer("OpenDay", 640 * scale, 480 * scale, SDL_WINDOW_RESIZABLE, &window, &renderer)) {
+    if (!SDL_CreateWindowAndRenderer("OpenDay", 640, 480, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN, &window, &renderer)) {
         std::fprintf(stderr, "SDL_CreateWindowAndRenderer failed: %s\n", SDL_GetError());
         return 1;
     }
+    placeWindow(window, scale);
     SDL_SetRenderVSync(renderer, 1);
     {
         platform::AudioPlayer audio;
@@ -280,7 +314,7 @@ int run(app::GameData& data, int scale, bool intro, bool mute, bool cheats, std:
 
 int main(int argc, char** argv) {
     fs::path gameDir = envPath("OPENDAY_GAME_DIR"), dataDir = envPath("OPENDAY_DATA_DIR");
-    int scale = 2;
+    int scale = 0; // 0 = fit the screen
     bool intro = true, mute = false, cheats = false;
     std::string script;
     fs::path shot;

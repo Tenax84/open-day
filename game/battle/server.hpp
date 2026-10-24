@@ -47,6 +47,10 @@ private:
     // battle-flow.md 1.3: objective check, next participant, new turn.
     void beginNextTurn();
     void placeReinforcements();
+    // Re-evaluates the tech buildings held by the human side.
+    void updateTech();
+    // Reinforcement income of a human player at the start of his turn.
+    int turnIncome(int player) const;
 
     // Walks a unit along a path with all interruptions. Returns true when
     // the whole path was walked.

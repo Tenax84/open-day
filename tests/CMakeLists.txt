@@ -42,3 +42,11 @@ add_test(NAME battle_test COMMAND battle_test)
 add_executable(ui_test ui_test.cpp)
 target_link_libraries(ui_test PRIVATE openday_ui openday_warnings)
 add_test(NAME ui_test COMMAND ui_test)
+
+add_executable(campaign_test campaign_test.cpp)
+target_link_libraries(campaign_test PRIVATE openday_game openday_warnings)
+add_test(NAME campaign_test COMMAND campaign_test)
+
+if(DEFINED ENV{OPENDAY_DATA_DIR})
+    add_test(NAME campaign_game_files COMMAND campaign_test --data "$ENV{OPENDAY_DATA_DIR}")
+endif()

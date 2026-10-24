@@ -632,13 +632,11 @@ is on, so the player sees the zone and the targets while deploying.
 
 ### 5.5 ARMY button
 
-Opens the army screen (`CArmyDeployInterf`, a variant of the strategic
-army screen `CArmyInterf`, dialog frame 157): the player can raise the tech
-level of unit types with technical resources before deploying (strings
-848–852: maximum level, "Not enough technical resources to upgrade this
-unit", "Next tech:", "Cost:"). When it closes, the deployment list is
-rebuilt. The army screen itself belongs to the strategic interface and is
-not described here.
+Opens the army screen in its deployment variant (`CArmyDeployInterf`,
+dialog frame 157, [army-tech.md](army-tech.md) 4): a **browsing** screen
+without UPGRADE and without the information text. When it closes, the
+deployment list selects the unit type that was selected on the army screen
+(the list is not rebuilt).
 
 ### 5.6 Accepting
 
@@ -787,7 +785,8 @@ Text area = the rectangle inset by 20 px (left, top, right) and 30 px
    The first row starts two text lines below the header; each player takes
    two lines plus half a line of spacing (row step = 2.5 × font height).
    One row per human player of the result message (slots in order).
-4. Won campaign / counter-attack battles only: string 518 ("New
+4. Won campaign province battles only (not counter-attacks or the first
+   city attack): string 518 ("New
    technologies found : %1!d!") at y = 418, x = 25 from the text area's
    left edge.
 5. CONTINUE button at (300, 419)–(410, 436) relative to the dialog, 110×17,
@@ -831,15 +830,22 @@ views, objectives dialog, in-game options, battle report) on top of
   names both races) *(OpenDay choices)*.
 - Deployment is sent to the server one placement at a time (place and
   recall are immediate) instead of in one request at CONTINUE.
-- The objectives dialog opens once when the battle screen opens.
+- When the deployment view opens, the pre-battle overview map comes first
+  (strategic-interface.md 4), then the objectives dialog; MAP opens the
+  overview map again (with BACK).
+- REINFORCEMENT switches to the deployment view during the player's own
+  turn: units bought there are placed at once without AP (battle-flow.md
+  4.2); CONTINUE returns to the tactical view.
+- ARMY opens the army screen's deployment variant.
+- Held tech buildings show the `LILBULB` symbol and play `TECH` when taken.
 - Info card, minimap (terrain colours of `Terrain Types`, objects from
   `Colors`, nearest palette entries), unit information box, tile cursors,
   path preview, two-click movement, fire mode, GROUP, CENTER, MOVE ALL,
   unit cycling, GUARD, END TURN, the overwatch and auto-fire lamps (stored
   as options; the overwatch AP reserve is not applied yet) and the cheat
   keys Tab + W / L (only with `--cheats`) work as described.
-- Not implemented yet: MAP screen, encyclopedia (emblem), ARMY, automated
-  units, reinforcements, turning a unit by clicking it, chat, the turn time
+- Not implemented yet: encyclopedia (emblem), automated units, turning a
+  unit by clicking it, chat, the turn time
   limit, the ability icons of the info card, statistics beyond units and
   buildings lost and destroyed (the RANK column shows 1).
 
@@ -854,8 +860,6 @@ views, objectives dialog, in-game options, battle report) on top of
   inferred).
 - Whether *done* marks (GUARD, 0-AP units) are cleared every turn.
 - The second (red) number of the turn counter box.
-- Source of the deployment list on the client in campaign mode; how tech
-  levels and costs reach it.
 - Scroll-button positions of the deployment and automated-unit list boxes;
   the first deployment view also creates a 450×250 surface from panel frame
   0 whose use was not found.
@@ -866,5 +870,6 @@ views, objectives dialog, in-game options, battle report) on top of
 - Positions of the objectives dialog and the battle report at 1024×768.
 - Terrain → minimap colour conversion (assumed nearest palette entry of
   `Color_Red/Green/Blue`) and whether mines appear on the minimap.
-- Condition for the campaign closing videos (`FH2END` / `FH2LOSE`).
-- Order of the counter-attack video and waiting screen 6.
+- (Answered in campaign.md 7 and strategic-interface.md 7: the closing
+  videos follow the battle report when the campaign ends; the counter-attack
+  video comes before waiting screen 6.)
