@@ -25,8 +25,8 @@ struct ScriptedOrder {
     int turn = 0;  // last turn of the order
     int probability = 100;
     int enemyType = 65535;
-    std::vector<Point> positions; // Unit Order Pos List: waypoints, patrol route
-    std::vector<int> ids;         // Unit Order ID List: escorted / defended / attacked objects
+    std::vector<Point> positions{}; // Unit Order Pos List: waypoints, patrol route
+    std::vector<int> ids{};         // Unit Order ID List: escorted / defended / attacked objects
 };
 
 struct BattleUnit {
@@ -39,7 +39,7 @@ struct BattleUnit {
     Point pos;
     int facing = 0;
     bool alive = true;
-    ScriptedOrder order;
+    ScriptedOrder order{};
 
     int availableAp() const { return ap > negAp ? ap - negAp : 0; }
 };
