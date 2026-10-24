@@ -36,6 +36,33 @@ struct PathStep {
     int facing = 0;        // direction of the step
 };
 
+// The path search of section 3.1 for one unit, done once and then asked
+// for any number of destinations.
+class PathMap {
+public:
+    PathMap(const BattleState& state, int unit, const PlanContext* context = nullptr);
+    // The unit can stop on `target` and get there (not its own tile).
+    bool reachable(Point target) const;
+    // Path to `target` (start tile excluded); empty when not reachable.
+    std::vector<PathStep> pathTo(Point target) const;
+    const TileEval& tile(Point p) const;
+
+private:
+    std::size_t at(int x, int y) const { return static_cast<std::size_t>(y * n_ + x); }
+
+    const BattleState* state_;
+    PlanContext context_;
+    Point start_;
+    int n_ = 0;
+    bool teleport_ = false;
+    std::vector<TileEval> eval_;
+    std::vector<int> value_;
+};
+
+// Destination of one unit of a group order: `target`, or else the nearest
+// free tile around it (section 3.5). False when there is none.
+bool groupTile(const BattleState& state, const BattleUnit& unit, Point target, const PlanContext& context, Point& out);
+
 // Shortest path from the unit's tile to `target` (start tile excluded), not
 // limited by AP. Empty when the target is not enterable or not reachable.
 // Teleport units get one step straight to the target.

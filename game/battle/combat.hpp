@@ -15,6 +15,7 @@ struct CombatOptions {
     bool coop = true;      // human players are allies
     bool aiDamage = true;  // the difficulty factor scales AI damage (campaign, skirmish)
     int difficulty = 5;    // 0-10 *(?)*
+    bool computerAi = true; // the computer player plays slot 0 (else slot 0 is played like a human)
 };
 
 // Relation of two units (section 1.1), convoys counting by race.

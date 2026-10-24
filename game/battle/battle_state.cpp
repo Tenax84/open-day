@@ -134,6 +134,15 @@ void BattleState::removeMine(int i) {
     if (mineAt(mines_[static_cast<std::size_t>(i)].pos) == i) mark(mineGrid_, mines_[static_cast<std::size_t>(i)].pos, -1);
 }
 
+const UnitType* BattleState::unitType(int typeId, int techLevel) const {
+    if (techLevel >= 0) {
+        const auto it = rules_->units.find({typeId, techLevel});
+        return it == rules_->units.end() ? nullptr : &it->second;
+    }
+    const auto it = rules_->units.lower_bound({typeId, -1000});
+    return it != rules_->units.end() && it->first.first == typeId ? &it->second : nullptr;
+}
+
 int BattleState::roadTypeAt(Point p) const {
     const int r = roadAt(p);
     return r < 0 ? -1 : roads_[static_cast<std::size_t>(r)].type;
@@ -174,15 +183,62 @@ BattleState loadBattle(const data::SqliteDb& scenario, const GlobalRules& rules,
                          if (type == rules.buildings.end()) return;
                          s.addBuilding({toInt(r, 0), &type->second, toInt(r, 2), toInt(r, 3), {toInt(r, 4), toInt(r, 5)}});
                      });
-    scenario.forEach("SELECT ID, unitType, unitTL, playerOwner, facing, currentAR, currentAP, negAP, PosX, PosY "
-                     "FROM \"Units On Map\"",
+    const bool orders = hasColumn(scenario, "Units On Map", "OrderID");
+    scenario.forEach(std::string("SELECT ID, unitType, unitTL, playerOwner, facing, currentAR, currentAP, negAP, PosX, PosY") +
+                         (orders ? ", OrderID, Turn, Probability, EnemyUnitType" : "") + " FROM \"Units On Map\"",
                      [&](const data::Row& r) {
                          const auto type = rules.units.find({toInt(r, 1), toInt(r, 2)});
                          const Point p{toInt(r, 8), toInt(r, 9)};
                          if (type == rules.units.end() || !s.inside(p)) return;
-                         s.addUnit({toInt(r, 0), &type->second, toInt(r, 3), toInt(r, 6), toInt(r, 7), toInt(r, 5), p,
-                                    toInt(r, 4) & 7});
+                         BattleUnit u;
+                         u.id = toInt(r, 0);
+                         u.type = &type->second;
+                         u.owner = toInt(r, 3);
+                         u.ap = toInt(r, 6);
+                         u.negAp = toInt(r, 7);
+                         u.armor = toInt(r, 5);
+                         u.pos = p;
+                         u.facing = toInt(r, 4) & 7;
+                         if (orders)
+                             u.order = {r.isNull(10) ? 0 : toInt(r, 10), r.isNull(11) ? 0 : toInt(r, 11),
+                                        r.isNull(12) ? 100 : toInt(r, 12), r.isNull(13) ? 65535 : toInt(r, 13)};
+                         s.addUnit(u);
                      });
+    // Order parameters, by unit id.
+    auto unitById = [&](int id) -> BattleUnit* {
+        for (std::size_t i = 0; i < s.units().size(); ++i)
+            if (s.units()[i].id == id) return &s.unit(static_cast<int>(i));
+        return nullptr;
+    };
+    if (scenario.hasTable("Unit Order Pos List"))
+        scenario.forEach("SELECT \"Unit ID\", PosX, PosY FROM \"Unit Order Pos List\" ORDER BY Counter",
+                         [&](const data::Row& r) {
+                             if (BattleUnit* u = unitById(toInt(r, 0))) u->order.positions.push_back({toInt(r, 1), toInt(r, 2)});
+                         });
+    if (scenario.hasTable("Unit Order ID List"))
+        scenario.forEach("SELECT \"Unit ID\", Id FROM \"Unit Order ID List\" ORDER BY Counter", [&](const data::Row& r) {
+            if (BattleUnit* u = unitById(toInt(r, 0))) u->order.ids.push_back(toInt(r, 1));
+        });
+    if (scenario.hasTable("Objective")) {
+        scenario.forEach("SELECT ObjectifId, TurnNumber FROM \"Objective\"", [&](const data::Row& r) {
+            s.objective.kind = toInt(r, 0);
+            s.objective.turns = r.isNull(1) ? 0 : toInt(r, 1);
+        });
+        if (scenario.hasTable("Objectives ID List"))
+            scenario.forEach("SELECT Id FROM \"Objectives ID List\"",
+                             [&](const data::Row& r) { s.objective.ids.push_back(toInt(r, 0)); });
+        if (scenario.hasTable("Objectives Pos List"))
+            scenario.forEach("SELECT PosX, PosY FROM \"Objectives Pos List\"",
+                             [&](const data::Row& r) { s.objective.zone.push_back({toInt(r, 0), toInt(r, 1)}); });
+    }
+    // Death match (objective kinds 8-10) has no computer player.
+    s.computerPlayer = s.objective.kind < 8 || s.objective.kind > 10;
+    if (scenario.hasTable("Reinforcement"))
+        scenario.forEach("SELECT UnitID, type, posX, posY, turn, \"order\" FROM \"Reinforcement\"",
+                         [&](const data::Row& r) {
+                             s.reinforcements.push_back({toInt(r, 0), toInt(r, 1), {toInt(r, 2), toInt(r, 3)}, toInt(r, 4),
+                                                         r.integer(5) != 0});
+                         });
     if (scenario.hasTable("Scenario Info"))
         scenario.forEach("SELECT turn_qty FROM \"Scenario Info\"",
                          [&](const data::Row& r) { s.turnLimit = r.isNull(0) ? 0 : toInt(r, 0); });
@@ -208,7 +264,7 @@ void startBattle(BattleState& state) {
     for (const BattleBuilding& b : state.buildings())
         if (b.owner >= 0 && b.owner < kPlayerSlots) slots.insert(b.owner);
     state.players.assign(slots.begin(), slots.end());
-    state.currentPlayer = state.players.size() > 1 ? state.players[1] : 0;
+    state.currentPlayer = 0;
     state.turn = 0;
     state.over = false;
     for (const int p : state.players) refillAp(state, p);

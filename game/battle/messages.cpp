@@ -67,7 +67,24 @@ void applyEvent(BattleState& s, const Event& event) {
                    [&](const BattleOver& e) {
                        s.turn = e.turn;
                        s.over = true;
+                       s.success = e.success;
+                       s.loser = e.loser;
                    },
+                   [&](const UnitAdded& e) {
+                       BattleUnit u;
+                       u.id = e.id;
+                       u.type = s.unitType(e.typeId, e.techLevel);
+                       if (!u.type) return;
+                       u.owner = e.owner;
+                       u.ap = u.type->actionPoints;
+                       u.armor = u.type->armor;
+                       u.pos = e.pos;
+                       u.facing = e.facing;
+                       u.order = e.order;
+                       s.addUnit(u);
+                       std::erase_if(s.reinforcements, [&](const Reinforcement& r) { return r.unitId == e.id; });
+                   },
+                   [&](const OrderChanged& e) { s.unit(e.unit).order = e.order; },
                    [&](const RequestRejected&) {},
                },
                event);

@@ -38,6 +38,9 @@ public:
     void destroyUnit(int unit, std::optional<std::string> wreck = std::nullopt);
     // Places `rubble` (Ruin layer sprites) when the explosion ends.
     void destroyBuilding(int building, std::vector<MapSprite> rubble = {});
+    // Adds a unit that appears when the actions scheduled so far have
+    // played. Returns its entity index.
+    int addUnit(MapUnit unit);
     // Runs `fn` when the actions scheduled so far have played.
     void schedule(std::function<void()> fn);
 

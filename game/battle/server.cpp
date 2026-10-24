@@ -4,6 +4,8 @@
 #include <cstdlib>
 
 #include "anim/unit_animation.hpp"
+#include "battle/ai.hpp"
+#include "battle/objectives.hpp"
 
 namespace openday::game {
 namespace {
@@ -57,8 +59,77 @@ void BattleServer::emit(Event e) {
 
 std::vector<Event> BattleServer::start() {
     out_.clear();
-    emit(TurnStarted{state_.currentPlayer, state_.turn});
+    // The pointer starts before the first player: at slot 0, or in death
+    // match at slot 1 or 2 at random (battle-flow.md 1.3).
+    state_.turn = 1;
+    state_.currentPlayer = state_.computerPlayer ? 0 : 1 + random(2);
+    beginNextTurn();
+    runComputerTurns();
     return std::move(out_);
+}
+
+bool BattleServer::checkEnd() {
+    if (state_.over) return true;
+    const ObjectiveResult r = checkObjective(state_);
+    if (!r.decided) return false;
+    emit(BattleOver{state_.turn, r.success, r.loser});
+    return true;
+}
+
+void BattleServer::beginNextTurn() {
+    if (checkEnd()) return;
+    const std::vector<int>& order = state_.players;
+    if (order.empty()) return;
+    int turn = state_.turn;
+    auto next = [&](int current) {
+        const auto it = std::upper_bound(order.begin(), order.end(), current);
+        return it == order.end() ? order.front() : *it;
+    };
+    int player = next(state_.currentPlayer);
+    if (player == 0 && !state_.computerPlayer) {
+        ++turn; // the round counter steps over the missing computer player
+        player = next(player);
+    }
+    // The computer player's scripted orders may lapse (Probability).
+    if (player == 0 && state_.computerPlayer) {
+        for (int i = 0; i < static_cast<int>(state_.units().size()); ++i) {
+            const BattleUnit& u = state_.unit(i);
+            if (!u.alive) continue;
+            const int r = random(100);
+            if (u.order.order != 0 && u.order.probability < r) emit(OrderChanged{i, {}});
+        }
+    }
+    emit(TurnStarted{player, turn});
+}
+
+void BattleServer::placeReinforcements() {
+    const int size = state_.size();
+    const std::vector<Reinforcement> pending = state_.reinforcements;
+    for (const Reinforcement& r : pending) {
+        if (r.turn > state_.turn) continue;
+        const UnitType* type = state_.unitType(r.type, -1);
+        if (!type) continue;
+        BattleUnit probe;
+        probe.type = type;
+        if (!evaluateTile(state_, probe, r.pos).enterable) continue; // tried again next round
+        UnitAdded e{r.unitId, r.type, -1, 0, r.pos, facingToward(r.pos, {size / 2, size / 2}), {}};
+        if (r.order) {
+            // The order follows from the objective kind (battle-flow.md 4.1).
+            const Objective& o = state_.objective;
+            int order = 0;
+            switch (o.kind) {
+            case 0: order = o.ids.empty() ? 5 : 3; break;
+            case 1:
+            case 3: order = 5; break;
+            case 2:
+            case 5: order = 6; break;
+            case 4: order = 3; break;
+            default: break;
+            }
+            e.order = {order, 99, 100, 65535};
+        }
+        emit(std::move(e));
+    }
 }
 
 std::vector<Event> BattleServer::handle(const Request& request) {
@@ -70,6 +141,7 @@ std::vector<Event> BattleServer::handle(const Request& request) {
     std::visit(Overloaded{[&](const MoveRequest& r) { handleMove(r); }, [&](const ShootRequest& r) { handleShoot(r); },
                           [&](const EndTurnRequest& r) { handleEndTurn(r); }},
                request);
+    runComputerTurns();
     return std::move(out_);
 }
 
@@ -84,7 +156,8 @@ void BattleServer::handleMove(const MoveRequest& r) {
             return;
         }
         // The rest of a group order is dropped after an interruption.
-        if (!walk(o.unit, o.path) || state_.over) return;
+        const bool complete = walk(o.unit, o.path);
+        if (checkEnd() || !complete) return;
     }
 }
 
@@ -253,19 +326,44 @@ void BattleServer::handleShoot(const ShootRequest& r) {
             emit(RequestRejected{shotErrorText(c.error)});
             continue;
         }
-        const BattleUnit& s = state_.unit(o.unit);
-        while (true) {
-            fire(o.unit, c.aim);
-            if (!r.autofire || !s.alive || state_.over) break;
-            if (s.type->apDamage) {
-                const int t = state_.unitAt(r.target);
-                if (t < 0 || state_.unit(t).availableAp() == 0) break;
-            } else if (targetGone()) {
-                break;
-            }
-            c = checkShot(state_, o.unit, r.target, options_.coop);
-            if (!c.ok()) break;
+        fireAt(o.unit, r.target, r.autofire);
+        if (checkEnd()) return;
+    }
+}
+
+bool BattleServer::fireAt(int shooter, Point target, bool repeat) {
+    ShotCheck c = checkShot(state_, shooter, target, options_.coop);
+    if (!c.ok()) return false;
+    const int targetUnit = state_.unitAt(target);
+    const int targetBuilding = state_.buildingAt(target);
+    auto targetGone = [&] {
+        if (targetBuilding >= 0) return !state_.building(targetBuilding).alive;
+        if (targetUnit >= 0) return !state_.unit(targetUnit).alive;
+        return false;
+    };
+    const BattleUnit& s = state_.unit(shooter);
+    while (true) {
+        fire(shooter, c.aim);
+        if (!repeat || !s.alive || state_.over) break;
+        if (s.type->apDamage) {
+            const int t = state_.unitAt(target);
+            if (t < 0 || state_.unit(t).availableAp() == 0) break;
+        } else if (targetGone()) {
+            break;
         }
+        c = checkShot(state_, shooter, target, options_.coop);
+        if (!c.ok()) break;
+    }
+    return true;
+}
+
+void BattleServer::runComputerTurns() {
+    if (!options_.computerAi || !state_.computerPlayer) return;
+    // Without a human participant the computer player would play alone forever.
+    const bool humans = std::any_of(state_.players.begin(), state_.players.end(), [](int p) { return p != 0; });
+    for (int guard = 0; humans && guard < 100 && !state_.over && state_.currentPlayer == 0; ++guard) {
+        TacticalAi(*this).playTurn();
+        if (!state_.over) handleEndTurn(EndTurnRequest{0});
     }
 }
 
@@ -412,16 +510,9 @@ void BattleServer::destroyBuilding(int buildingIndex) {
 
 void BattleServer::handleEndTurn(const EndTurnRequest& r) {
     if (r.player != state_.currentPlayer) return emit(RequestRejected{"not your turn"});
-    const auto& order = state_.players;
-    auto it = std::find(order.begin(), order.end(), r.player);
-    const int next = (it == order.end() || it + 1 == order.end()) ? order.front() : *(it + 1);
-    int turn = state_.turn;
-    if (r.player == 0) ++turn; // a round ends with the AI side's turn
-    if (state_.turnLimit > 0 && turn > 0 && turn > state_.turnLimit) {
-        emit(BattleOver{turn});
-        return;
-    }
-    emit(TurnStarted{next, turn});
+    if (r.player == 0 && state_.computerPlayer) placeReinforcements();
+    if (r.player == 0) ++state_.turn; // round counter step; sent with the next TurnStarted
+    beginNextTurn();
 }
 
 } // namespace openday::game

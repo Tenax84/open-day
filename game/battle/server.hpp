@@ -30,18 +30,30 @@ public:
     std::vector<Event> handle(const Request& request);
 
 private:
+    friend class TacticalAi;
+
     void emit(Event e);
+    // Plays the computer player's turns while it is its turn.
+    void runComputerTurns();
     int roll(int n) { return n > 1 ? random(n) : 0; }
 
     void handleMove(const MoveRequest& r);
     void handleShoot(const ShootRequest& r);
     void handleEndTurn(const EndTurnRequest& r);
+    // Runs the objective check; ends the battle when it is decided.
+    bool checkEnd();
+    // battle-flow.md 1.3: objective check, next participant, new turn.
+    void beginNextTurn();
+    void placeReinforcements();
 
     // Walks a unit along a path with all interruptions. Returns true when
     // the whole path was walked.
     bool walk(int unit, const std::vector<PathStep>& path);
     // Fires one shot at `target` (legality already checked).
     void fire(int shooter, Point aim);
+    // Fires at a tile if the shot is legal; with `repeat`, keeps firing as
+    // autofire does (tactical-combat.md 2). Returns false if it could not fire.
+    bool fireAt(int shooter, Point target, bool repeat);
     void reactionFire(int mover);
     void damageArea(Point impact, int damage, int area, bool apDamage);
     void damageTile(Point tile, int damage, bool apDamage);

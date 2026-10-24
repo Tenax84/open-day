@@ -399,9 +399,12 @@ it was not traced)*. The turn is ended with `CRequestEndTactTurnMsg`.
 - Keep AP charging (tile cost only, no diagonal +1) separate from the
   planning weight.
 - Clamp the AP charge at the available AP for all classes.
+- Turn counter and player order: see [battle-flow.md](battle-flow.md) 1.3,
+  which supersedes section 4 here. The counter starts at **1** (0 only
+  during deployment), the human slots move first in slot order and the
+  computer player (slot 0) last; the counter steps when slot 0's turn ends
+  (or where it would be, in death match).
 - Choices where the original is not known or not followed:
-  - The first player after the start is the lowest human slot (slot 0 when
-    there is none); every unit gets its AP at the start.
   - The checks of section 5 are only made on tiles the unit can stop on, so
     a move never ends over a fly-over tile.
   - Group replacement tiles are tried orthogonal neighbors first, then the

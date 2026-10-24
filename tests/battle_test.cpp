@@ -5,6 +5,7 @@
 #include "battle/combat.hpp"
 #include "battle/messages.hpp"
 #include "battle/movement.hpp"
+#include "battle/objectives.hpp"
 #include "battle/server.hpp"
 
 #include <cstdio>
@@ -29,7 +30,7 @@ int failures = 0;
         }                                                                                 \
     } while (0)
 
-enum TypeId { kTank = 1, kTrooper, kChopper, kBoat, kArtillery, kParalyzer };
+enum TypeId { kTank = 1, kTrooper, kChopper, kBoat, kArtillery, kParalyzer, kAlienTank };
 
 UnitType armed(int movement, int ap, int armor, int range, int shotAp, int base, int random) {
     UnitType t;
@@ -79,6 +80,11 @@ GlobalRules makeRules() {
     UnitType paralyzer = armed(1, 100, 20, 6, 30, 50, 0);
     paralyzer.apDamage = true;
     r.units[{kParalyzer, 0}] = paralyzer;
+    UnitType alien = armed(1, 100, 50, 6, 30, 30, 10);
+    alien.race = 2;
+    alien.typeId = kAlienTank;
+    r.units[{kAlienTank, 0}] = alien;
+    for (auto& row : r.aiPriority) row.fill(50);
     return r;
 }
 
@@ -111,6 +117,13 @@ BattleUnit owned(const UnitType& t, int owner) {
     u.type = &t;
     u.owner = owner;
     return u;
+}
+
+// Every slot played by requests, as in the viewer's hot-seat mode.
+CombatOptions hotSeat() {
+    CombatOptions o;
+    o.computerAi = false;
+    return o;
 }
 
 bool same(Point a, Point b) { return a.x == b.x && a.y == b.y; }
@@ -446,13 +459,15 @@ void testTurns() {
     const int b = add(s, kTank, 2, {1, 0});
     const int c = add(s, kTank, 0, {11, 11}); // out of reaction range
     s.unit(c).negAp = 30;
-    s.turnLimit = 1;
+    s.turnLimit = 2;
     startBattle(s);
-    CHECK(s.players == (std::vector<int>{0, 1, 2}) && s.currentPlayer == 1);
+    CHECK(s.players == (std::vector<int>{0, 1, 2}));
     CHECK(s.unit(c).ap == 70 && s.unit(c).negAp == 0);
     const BattleState initial = s;
-    BattleServer server(s, {}, 1);
+    BattleServer server(s, hotSeat(), 1);
+    // Humans first in slot order, the computer player last; T starts at 1.
     std::vector<Event> all = server.start();
+    CHECK(first<TurnStarted>(all) && first<TurnStarted>(all)->player == 1 && first<TurnStarted>(all)->turn == 1);
 
     std::vector<Event> ev = server.handle(EndTurnRequest{2});
     CHECK(count<RequestRejected>(ev) == 1);
@@ -467,19 +482,286 @@ void testTurns() {
         all.insert(all.end(), e.begin(), e.end());
         return e;
     };
-    ev = endTurn(1);
-    CHECK(first<TurnStarted>(ev) && first<TurnStarted>(ev)->player == 2 && first<TurnStarted>(ev)->turn == 0);
-    ev = endTurn(2);
-    CHECK(first<TurnStarted>(ev) && first<TurnStarted>(ev)->player == 0 && first<TurnStarted>(ev)->turn == 0);
-    ev = endTurn(0);
-    CHECK(first<TurnStarted>(ev) && first<TurnStarted>(ev)->player == 1 && first<TurnStarted>(ev)->turn == 1);
+    auto started = [](const std::vector<Event>& e, int player, int turn) {
+        const TurnStarted* t = first<TurnStarted>(e);
+        return t && t->player == player && t->turn == turn;
+    };
+    CHECK(started(endTurn(1), 2, 1));
+    CHECK(started(endTurn(2), 0, 1));
+    CHECK(started(endTurn(0), 1, 2));
     CHECK(server.state().unit(a).ap == 100); // refilled at its owner's turn
     endTurn(1);
     endTurn(2);
-    ev = endTurn(0); // turn 2 > turn_qty 1
-    CHECK(count<BattleOver>(ev) == 1 && server.state().over);
+    ev = endTurn(0); // T = 3 > turn_qty 2: the turn limit ends the battle
+    const BattleOver* over = first<BattleOver>(ev);
+    CHECK(over && !over->success && server.state().over && count<TurnStarted>(ev) == 0);
     CHECK(count<RequestRejected>(server.handle(EndTurnRequest{1})) == 1);
     checkReplica(initial, all, server.state());
+
+    // Death match: no computer player; slot 0 is skipped, the round counter
+    // still steps there.
+    BattleState d = world(open(6));
+    add(d, kTank, 1, {0, 0});
+    add(d, kTank, 2, {5, 5});
+    d.computerPlayer = false;
+    d.objective.kind = 10;
+    d.turnLimit = 10;
+    startBattle(d);
+    BattleServer dm(d, {}, 1);
+    Script rng;
+    dm.random = [&](int n) { return rng(n); };
+    rng.values = {0}; // pointer at slot 1: player 2 moves first
+    CHECK(started(dm.start(), 2, 1));
+    CHECK(started(dm.handle(EndTurnRequest{2}), 1, 2));
+    BattleServer dm2(d, {}, 1);
+    dm2.random = [&](int n) { return rng(n); };
+    rng.values = {1}; // pointer at slot 2: wraps over slot 0, T is already 2
+    CHECK(started(dm2.start(), 1, 2));
+}
+
+// Runs the objective check on a state at turn t.
+ObjectiveResult checkAt(BattleState& s, int t) {
+    s.turn = t;
+    return checkObjective(s);
+}
+
+void testObjectives() {
+    // Destroy: listed units and every road / mine in the zone.
+    BattleState d = world(open(8));
+    add(d, kTank, 1, {0, 0});
+    const int target = add(d, kTank, 0, {5, 5});
+    d.objective = {0, 0, {d.unit(target).id}, {{3, 3}}};
+    d.turnLimit = 5;
+    d.addMine({0, 0, {3, 3}});
+    CHECK(!checkAt(d, 1).decided);
+    d.removeUnit(target);
+    CHECK(!checkAt(d, 1).decided);
+    d.removeMine(0);
+    ObjectiveResult r = checkAt(d, 1);
+    CHECK(r.decided && r.success);
+    d.objective.ids = {999999};
+    CHECK(checkAt(d, 1).success); // an unknown id counts as gone
+
+    // Turn limit: lost after turn_qty rounds.
+    BattleState l = world(open(8));
+    add(l, kTank, 0, {5, 5});
+    l.objective = {6, 0, {}, {}};
+    l.turnLimit = 3;
+    CHECK(!checkAt(l, 3).decided);
+    r = checkAt(l, 4);
+    CHECK(r.decided && !r.success);
+
+    // Hold Position, N = 2: counted once per round, one empty round tolerated.
+    BattleState h = world(open(8));
+    const int holder = add(h, kTank, 1, {0, 0});
+    h.objective = {1, 2, {}, {{2, 2}}};
+    h.turnLimit = 10;
+    CHECK(!checkAt(h, 1).decided && h.holdCount == 0);
+    h.moveUnit(holder, {2, 2});
+    checkAt(h, 2);
+    checkAt(h, 2);
+    CHECK(h.holdCount == 1);
+    checkAt(h, 3);
+    h.moveUnit(holder, {0, 0});
+    checkAt(h, 4); // one empty round: kept
+    CHECK(h.holdCount == 2);
+    checkAt(h, 5); // a second one: lost
+    CHECK(h.holdCount == 0);
+    h.moveUnit(holder, {2, 2});
+    checkAt(h, 6);
+    checkAt(h, 7);
+    r = checkAt(h, 8);
+    CHECK(r.decided && r.success && h.holdCount == 3);
+
+    // Protect: an AI unit in the zone in the last round loses; surviving it wins.
+    BattleState p = world(open(8));
+    const int intruder = add(p, kTank, 0, {4, 4});
+    p.objective = {3, 0, {}, {{4, 4}}};
+    p.turnLimit = 5;
+    CHECK(!checkAt(p, 4).decided);
+    r = checkAt(p, 5);
+    CHECK(r.decided && !r.success);
+    p.removeUnit(intruder);
+    CHECK(!checkAt(p, 5).decided);
+    CHECK(checkAt(p, 6).success);
+
+    // Escort / Intercept / Keep.
+    BattleState e = world(open(8));
+    const int truck = add(e, kTank, 0, {0, 0});
+    e.objective = {2, 0, {e.unit(truck).id}, {{7, 7}}};
+    e.turnLimit = 10;
+    CHECK(!checkAt(e, 1).decided);
+    e.moveUnit(truck, {7, 7});
+    CHECK(checkAt(e, 1).success);
+    e.objective.kind = 4; // the same unit in the zone now loses
+    r = checkAt(e, 1);
+    CHECK(r.decided && !r.success);
+    e.removeUnit(truck);
+    CHECK(checkAt(e, 1).success);
+    e.objective.kind = 5; // Keep: losing a listed object loses
+    r = checkAt(e, 1);
+    CHECK(r.decided && !r.success);
+
+    // Destroy All Except: destroying an exempt unit loses.
+    BattleState x = world(open(8));
+    const int tower = add(x, kTank, 0, {1, 1});
+    const int other = add(x, kTank, 0, {2, 2});
+    x.objective = {6, 0, {x.unit(tower).id}, {}};
+    x.turnLimit = 10;
+    CHECK(!checkAt(x, 1).decided);
+    x.removeUnit(other);
+    CHECK(checkAt(x, 1).success);
+    x.removeUnit(tower);
+    CHECK(!checkAt(x, 1).success);
+
+    // Death match, two cities.
+    BattleState c = world(open(8));
+    BuildingType hq;
+    hq.id = 130;
+    c.addBuilding({1, &hq, 1, 100, {0, 0}});
+    const int hq2 = c.addBuilding({2, &hq, 2, 100, {5, 5}});
+    c.objective = {8, 0, {}, {}};
+    c.turnLimit = 10;
+    CHECK(!checkAt(c, 1).decided);
+    c.removeBuilding(hq2);
+    r = checkAt(c, 1);
+    CHECK(r.decided && r.loser == 2);
+}
+
+void testReinforcements() {
+    BattleState s = world(open(8));
+    add(s, kTank, 1, {0, 0});
+    const int blocker = add(s, kTank, 0, {6, 6});
+    s.reinforcements = {{500, kTank, {7, 7}, 1, true}, {501, kTank, {6, 6}, 1, false}, {502, kTank, {5, 7}, 3, false}};
+    s.objective = {1, 3, {}, {{1, 1}}};
+    s.turnLimit = 20;
+    startBattle(s);
+    BattleServer server(s, hotSeat(), 1);
+    std::vector<Event> all = server.start();
+    auto endTurn = [&](int player) {
+        std::vector<Event> e = server.handle(EndTurnRequest{player});
+        all.insert(all.end(), e.begin(), e.end());
+        return e;
+    };
+    endTurn(1);
+    // End of the computer player's turn in round 1: the free tile is used,
+    // the occupied one waits, round 3's row is not due.
+    std::vector<Event> ev = endTurn(0);
+    CHECK(count<UnitAdded>(ev) == 1);
+    const UnitAdded* added = first<UnitAdded>(ev);
+    CHECK(added && added->id == 500 && added->order.order == 5); // Hold Position -> patrol
+    CHECK(server.state().units().size() == 3 && server.state().reinforcements.size() == 2);
+    // The blocker leaves; next round the waiting row is placed.
+    endTurn(1);
+    {
+        BattleState& st = const_cast<BattleState&>(server.state()); // test shortcut: clear the tile
+        st.moveUnit(blocker, {3, 6});
+    }
+    ev = endTurn(0);
+    CHECK(count<UnitAdded>(ev) == 1 && first<UnitAdded>(ev)->id == 501);
+    endTurn(1);
+    ev = endTurn(0);
+    CHECK(count<UnitAdded>(ev) == 1 && first<UnitAdded>(ev)->id == 502 && server.state().reinforcements.empty());
+
+    // Probability: orders lapse at the start of the computer player's turn.
+    BattleState o = world(open(8));
+    add(o, kTank, 1, {0, 0});
+    const int keeps = add(o, kTank, 0, {7, 7});
+    const int drops = add(o, kTank, 0, {7, 6});
+    o.unit(keeps).order = {1, 99, 100, 65535};
+    o.unit(drops).order = {1, 99, 30, 65535};
+    o.turnLimit = 20;
+    startBattle(o);
+    BattleServer os(o, hotSeat(), 1);
+    Script rng;
+    os.random = [&](int n) { return rng(n); };
+    os.start();
+    rng.values = {0, 99, 99}; // one draw per unit, in unit order
+    ev = os.handle(EndTurnRequest{1});
+    CHECK(count<OrderChanged>(ev) == 1 && first<OrderChanged>(ev)->unit == drops);
+    CHECK(os.state().unit(keeps).order.order == 1 && os.state().unit(drops).order.order == 0);
+}
+
+
+// Runs the computer player's first turn: player 1 ends its turn at once.
+std::vector<Event> aiTurn(BattleServer& server) {
+    server.start();
+    return server.handle(EndTurnRequest{1});
+}
+
+void testAi() {
+    // A free alien unit walks toward the enemy and fires.
+    BattleState h = world(open(14));
+    add(h, kTrooper, 1, {12, 0}); // range 4: cannot react at 6
+    const int hunter = add(h, kAlienTank, 0, {0, 0});
+    h.turnLimit = 20;
+    startBattle(h);
+    const BattleState hInitial = h;
+    BattleServer s1(h, {}, 1);
+    std::vector<Event> all = s1.start();
+    std::vector<Event> ev = s1.handle(EndTurnRequest{1});
+    all.insert(all.end(), ev.begin(), ev.end());
+    const UnitMoved* moved = first<UnitMoved>(ev);
+    const UnitShot* shot = first<UnitShot>(ev);
+    CHECK(moved && moved->unit == hunter && shot && shot->unit == hunter);
+    // The AI ended its turn: player 1 again, round 2.
+    const TurnStarted* next = nullptr;
+    for (const Event& e : ev)
+        if (const TurnStarted* t = std::get_if<TurnStarted>(&e)) next = t;
+    CHECK(next && next->player == 1 && next->turn == 2 && s1.state().currentPlayer == 1);
+    checkReplica(hInitial, all, s1.state());
+
+    // Within range already: it fires from where it stands (stationary fire).
+    BattleState st = world(open(10));
+    add(st, kTank, 1, {5, 0});
+    const int gunner = add(st, kAlienTank, 0, {0, 0});
+    startBattle(st);
+    BattleServer s2(st, {}, 1);
+    ev = aiTurn(s2);
+    CHECK(count<UnitShot>(ev) >= 1 && first<UnitShot>(ev)->unit == gunner);
+    CHECK(same(s2.state().unit(gunner).pos, {0, 0}) || count<UnitMoved>(ev) > 0);
+    CHECK(count<UnitShot>(ev) == 3); // autofire: 100 AP / 30 per shot
+
+    // Goto: walks to its waypoint, which is then done.
+    BattleState g = world(open(16));
+    add(g, kTank, 1, {15, 15});
+    const int walker = add(g, kAlienTank, 0, {0, 0});
+    g.unit(walker).order = {1, 99, 100, 65535, {{4, 0}}, {}};
+    startBattle(g);
+    BattleServer s3(g, {}, 1);
+    ev = aiTurn(s3);
+    CHECK(same(s3.state().unit(walker).pos, {4, 0}) && s3.state().unit(walker).order.order == 0);
+
+    // An expired order is dropped; the unit then hunts like a free unit.
+    BattleState x = world(open(16));
+    add(x, kTank, 1, {15, 15});
+    const int late = add(x, kAlienTank, 0, {0, 0});
+    x.unit(late).order = {5, 0, 100, 65535, {{0, 0}, {1, 0}}, {}};
+    startBattle(x);
+    BattleServer s4(x, {}, 1);
+    ev = aiTurn(s4);
+    CHECK(first<OrderChanged>(ev) && first<OrderChanged>(ev)->order.order == 0);
+
+    // Defend: a defender inside its area stays put.
+    BattleState d = world(open(16));
+    add(d, kTank, 1, {15, 15});
+    const int guard = add(d, kAlienTank, 0, {3, 3});
+    BuildingType depot;
+    depot.sizeX = depot.sizeY = 2;
+    d.addBuilding({1000001, &depot, 0, 100, {4, 4}});
+    d.unit(guard).order = {4, 99, 100, 65535, {}, {1000001}};
+    startBattle(d);
+    BattleServer s5(d, {}, 1);
+    aiTurn(s5);
+    CHECK(same(s5.state().unit(guard).pos, {3, 3}));
+
+    // Without a human participant the computer player does not play alone.
+    BattleState alone = world(open(8));
+    add(alone, kAlienTank, 0, {0, 0});
+    startBattle(alone);
+    BattleServer s6(alone, {}, 1);
+    ev = s6.start();
+    CHECK(first<TurnStarted>(ev) && first<TurnStarted>(ev)->player == 0 && !s6.state().over);
 }
 
 void testSides() {
@@ -505,6 +787,9 @@ int main() {
     testDamage();
     testInterruptions();
     testTurns();
+    testObjectives();
+    testReinforcements();
+    testAi();
     testSides();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

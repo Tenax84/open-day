@@ -40,6 +40,17 @@ void BattleAnimations::schedule(std::function<void()> fn) {
     finish(animator_.add(std::move(t)), nullptr);
 }
 
+int BattleAnimations::addUnit(MapUnit unit) {
+    const int index = static_cast<int>(entities_.units.size());
+    entities_.units.push_back(unit);
+    unitHidden_.push_back(1);
+    schedule([this, index] {
+        refreshUnit(index);
+        showUnit(index);
+    });
+    return index;
+}
+
 void BattleAnimations::hideUnit(int unit) { ++unitHidden_[static_cast<std::size_t>(unit)]; }
 
 void BattleAnimations::showUnit(int unit) {

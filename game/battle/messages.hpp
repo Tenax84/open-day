@@ -118,6 +118,25 @@ struct TurnStarted {
 
 struct BattleOver {
     int turn = 0;
+    bool success = false; // the human side won
+    int loser = 5;        // death match: the slot that lost; 5 = none
+};
+
+// A unit placed during the battle (reinforcements).
+struct UnitAdded {
+    int id = 0;
+    int typeId = 0;
+    int techLevel = -1; // -1 = lowest level of the type
+    int owner = 0;
+    Point pos;
+    int facing = 0;
+    ScriptedOrder order;
+};
+
+// A unit's scripted order changed (for example dropped by its Probability).
+struct OrderChanged {
+    int unit = -1;
+    ScriptedOrder order;
 };
 
 // A request that was refused as a whole; the state is unchanged.
@@ -127,7 +146,7 @@ struct RequestRejected {
 
 using Event = std::variant<UnitMoved, UnitShot, UnitDamaged, BuildingDamaged, WallDamaged, UnitDestroyed,
                            BuildingDestroyed, WallDestroyed, RoadDestroyed, MineDestroyed, MineExploded, MinesRevealed,
-                           TerrainBurned, TurnStarted, BattleOver, RequestRejected>;
+                           TerrainBurned, TurnStarted, BattleOver, UnitAdded, OrderChanged, RequestRejected>;
 
 // Applies an event to a state. The server changes its own state only
 // through this function, so client copies stay identical.

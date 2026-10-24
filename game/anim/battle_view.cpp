@@ -73,6 +73,10 @@ void BattleView::apply(const std::vector<Event>& events) {
                                rubble.push_back({r.pos.x, r.pos.y, Layer::Ruin, SpriteSet::Ruins, r.name});
                            anim_.destroyBuilding(e.building, std::move(rubble));
                        },
+                       [&](const UnitAdded& e) {
+                           if (const UnitType* t = state_.unitType(e.typeId, e.techLevel))
+                               anim_.addUnit({t, e.owner, e.facing, e.pos.x, e.pos.y, true});
+                       },
                        [&](const TerrainBurned& e) {
                            anim_.schedule([this, e] { scene_.setTerrain(e.tile.x, e.tile.y, e.terrain); });
                        },

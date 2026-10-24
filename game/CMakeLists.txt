@@ -3,10 +3,12 @@ add_library(openday_game
     anim/battle_animations.cpp
     anim/battle_view.cpp
     anim/unit_animation.cpp
+    battle/ai.cpp
     battle/battle_state.cpp
     battle/combat.cpp
     battle/messages.cpp
     battle/movement.cpp
+    battle/objectives.cpp
     battle/server.cpp
     map/terrain_map.cpp
     map/map_objects.cpp

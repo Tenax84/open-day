@@ -58,9 +58,10 @@ graphics of your installation.
   (Python standard library only).
 - `mapview` — SDL3 viewer for every scenario map: terrain, roads, walls,
   mines, buildings and units, with palette cycling (animated water), and a
-  hot-seat tactical battle on the map: movement with path finding and
-  action points, shooting with hit rolls, damage and destruction, reaction
-  fire, mines, and turns. Every side is played from the same window. It
+  tactical battle on the map: movement with path finding and action
+  points, shooting with hit rolls, damage and destruction, reaction fire,
+  mines, turns, scenario objectives, reinforcements and the computer
+  player. The human sides take turns in the same window (hot seat). It
   needs the converted databases:
 
   ```
@@ -74,8 +75,10 @@ graphics of your installation.
   (Shift + click builds a group), and the path to the tile under the mouse
   is previewed. Right click moves there or fires at an enemy unit or
   building (Ctrl + right click fires at any tile). F toggles autofire,
-  Enter ends the turn. The window title shows the turn, the player, the
-  selected unit and the hit chance.
+  Enter ends the turn; the computer player then plays its turn. The
+  window title shows the turn, the objective, the player, the selected
+  unit, the hit chance and the result. `--no-ai` lets you play slot 0
+  yourself.
   `--screenshot out.png` renders the whole map to a file instead of
   opening a window; `--do move:X,Y:TX,TY` (or `attack:X,Y:TX,TY`, `end`)
   sends orders first and prints the server's events, and `--ticks N`

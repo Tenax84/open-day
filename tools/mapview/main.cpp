@@ -17,12 +17,15 @@
 // --ticks     (screenshot) animation ticks (1/15 s) to run after the last
 //             order; default: until all animations have finished.
 // --seed      random seed of the battle (default: 1).
+// --no-ai     slot 0 is played from the window too, instead of by the
+//             computer player.
 //
 // Controls: arrow keys / WASD or drag with the mouse to scroll, PageUp /
 // PageDown for the previous / next scenario, 1-4 to set the zoom, C to toggle
 // palette cycling (water, lights), O to toggle objects, M to toggle sound,
 // Esc to quit.
-// Battle (hot seat: every side is played from this window): left click
+// Battle: the human slots take turns in this window (hot seat), the
+// computer player plays slot 0 (with --no-ai, slot 0 too). Left click
 // selects a unit of the player whose turn it is, Shift + left click adds or
 // removes units of a group; the path to the tile under the mouse is shown.
 // Right click moves there, or fires at an enemy unit or building; Ctrl +
@@ -34,6 +37,7 @@
 #include "anim/battle_view.hpp"
 #include "battle/combat.hpp"
 #include "battle/movement.hpp"
+#include "battle/objectives.hpp"
 #include "battle/server.hpp"
 #include "data/sqlite_db.hpp"
 #include "formats/bmp_palette.hpp"
@@ -78,6 +82,7 @@ struct Options {
     int ticks = -1;
     int scale = 2;
     std::uint32_t seed = 1;
+    bool ai = true;
     bool objects = true;
     bool sound = true;
 };
@@ -135,9 +140,10 @@ struct LoadedMap {
     std::function<void(const game::Event&)> log; // optional
 
     LoadedMap(std::string n, game::TerrainMap terrain, std::vector<game::MapSprite> objects, game::MapEntities ent,
-              game::BattleState state, const game::GlobalRules& rules, render::AnimationCache* clips, std::uint32_t seed)
+              game::BattleState state, const game::GlobalRules& rules, render::AnimationCache* clips, std::uint32_t seed,
+              game::CombatOptions options)
         : name(std::move(n)), entities(std::move(ent)), scene(std::move(terrain), std::move(objects)),
-          battle(scene, entities, rules, clips), server(state, game::CombatOptions{}, seed),
+          battle(scene, entities, rules, clips), server(state, options, seed),
           view(std::move(state), scene, battle) {
         view.apply(server.start());
     }
@@ -156,15 +162,17 @@ struct LoadedMap {
 };
 
 std::unique_ptr<LoadedMap> loadMap(const fs::path& path, const game::GlobalRules& rules, render::AnimationCache* clips,
-                                   std::uint32_t seed) {
+                                   std::uint32_t seed, bool ai) {
     const data::SqliteDb db(path);
     game::TerrainMap terrain = game::loadTerrainMap(db);
     game::MapEntities entities;
     std::vector<game::MapSprite> objects = game::loadMapObjects(db, rules, terrain, &entities);
     game::BattleState state = game::loadBattle(db, rules, terrain);
     game::startBattle(state);
+    game::CombatOptions options;
+    options.computerAi = ai;
     return std::make_unique<LoadedMap>(path.stem().string(), std::move(terrain), std::move(objects), std::move(entities),
-                                       std::move(state), rules, clips, seed);
+                                       std::move(state), rules, clips, seed, options);
 }
 
 // Requests built from the client's state.
@@ -197,7 +205,7 @@ bool isEnemyTarget(const game::BattleState& s, game::Point t) {
 }
 
 int usage() {
-    std::fprintf(stderr, "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N] [--mute] [--seed N]\n"
+    std::fprintf(stderr, "usage: mapview [--game-dir DIR] [--data DIR] [--scenario NAME] [--scale N] [--mute] [--seed N] [--no-ai]\n"
                          "               [--screenshot OUT.png] [--no-objects] [--do ACTION]... [--ticks N]\n");
     return 2;
 }
@@ -242,7 +250,14 @@ std::string describe(const game::BattleState& s, const game::Event& event) {
             else if constexpr (std::is_same_v<T, game::TerrainBurned>) return tileText(e.tile) + " burns to " + e.terrain;
             else if constexpr (std::is_same_v<T, game::TurnStarted>)
                 return "turn " + std::to_string(e.turn) + ", player " + std::to_string(e.player);
-            else if constexpr (std::is_same_v<T, game::BattleOver>) return "battle over";
+            else if constexpr (std::is_same_v<T, game::BattleOver>)
+                return std::string("battle over: ") + (e.loser != 5 ? "player " + std::to_string(e.loser) + " lost"
+                                                       : e.success      ? "victory"
+                                                                        : "defeat");
+            else if constexpr (std::is_same_v<T, game::UnitAdded>)
+                return "reinforcement #" + std::to_string(e.id) + " arrives at " + tileText(e.pos);
+            else if constexpr (std::is_same_v<T, game::OrderChanged>)
+                return unit(e.unit) + " order now " + std::to_string(e.order.order);
             else return "refused: " + e.reason;
         },
         event);
@@ -411,7 +426,7 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
         bool autofire = false;
         std::string message; // last refusal, shown in the title
         auto open = [&](std::size_t index) {
-            map = loadMap(scenarios[index], rules, clips, opt.seed);
+            map = loadMap(scenarios[index], rules, clips, opt.seed, opt.ai);
             map->battle.animator().playSound = [&sound](const render::Animation& a) { sound.play(a.audio); };
             bounds = game::iso::mapBounds(map->scene.terrain().size);
             selection.clear();
@@ -591,7 +606,13 @@ int run(const std::vector<fs::path>& scenarios, std::size_t current, const game:
             // Title: battle status.
             std::string title = "OpenDay - " + map->name + " - turn " + std::to_string(state.turn);
             if (state.turnLimit > 0) title += "/" + std::to_string(state.turnLimit);
-            title += state.over ? " - battle over" : " - player " + std::to_string(state.currentPlayer);
+            title += " - " + std::string(game::objectiveName(state.objective.kind));
+            if (state.over)
+                title += state.loser != 5 ? " - player " + std::to_string(state.loser) + " lost"
+                         : state.success  ? " - VICTORY"
+                                          : " - DEFEAT";
+            else
+                title += " - player " + std::to_string(state.currentPlayer);
             if (selection.size() == 1) {
                 const game::BattleUnit& u = state.unit(selection[0]);
                 title += " - " + u.type->image + " AP " + std::to_string(u.availableAp()) + "/" +
@@ -650,6 +671,10 @@ int main(int argc, char** argv) {
             opt.sound = false;
             continue;
         }
+        if (a == "--no-ai") {
+            opt.ai = false;
+            continue;
+        }
         if (i + 1 >= argc) return usage();
         if (a == "--game-dir") opt.gameDir = argv[++i];
         else if (a == "--data") opt.dataDir = argv[++i];
@@ -696,7 +721,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s not found: actions run without animations\n", ff.string().c_str());
 
         if (!opt.screenshot.empty()) {
-            const std::unique_ptr<LoadedMap> map = loadMap(scenarios[current], rules, clips.get(), opt.seed);
+            const std::unique_ptr<LoadedMap> map = loadMap(scenarios[current], rules, clips.get(), opt.seed, opt.ai);
             return screenshot(*map, sprites, palettes, opt);
         }
         return run(scenarios, current, rules, sprites, clips.get(), palettes, opt);

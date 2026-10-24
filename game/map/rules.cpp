@@ -40,7 +40,7 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                    "ShootProjectileAnimation_Begin, ShootImpactAnimation_Begin, ExplosionAnimation_Begin, "
                    "actionPoints, SizeX, SizeY, MineDetectionRange, Armor, UnitHasWeapon, weaponType, weaponRange, "
                    "weaponMinimumRange, HitShortRange, HitMediumRange, HitLongRange, actionPointsShoot, damageType, "
-                   "damageBase, damageRandom, DamageArea, canOverwatch, Jammer "
+                   "damageBase, damageRandom, DamageArea, canOverwatch, Jammer, Cost, AIcategory "
                    "FROM \"Unit Types\"",
                    [&](const data::Row& row) {
                        UnitType u;
@@ -73,15 +73,19 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                        u.damageArea = std::max(1, toInt(row, 38));
                        u.canOverwatch = row.integer(39) != 0;
                        u.jammer = toInt(row, 40);
+                       u.cost = toInt(row, 41);
+                       u.aiCategory = toInt(row, 42);
+                       u.typeId = toInt(row, 0);
                        r.units[{toInt(row, 0), toInt(row, 1)}] = std::move(u);
                    });
     global.forEach("SELECT TypeID, ImageID, SizeX, SizeY, Armor, DamagedImages, ExplosionAnimation_Begin, Race, "
-                   "isDestructible, hasRuin FROM \"Building Types\"",
+                   "isDestructible, hasRuin, AIcategory FROM \"Building Types\"",
                    [&](const data::Row& row) {
                        r.buildings[toInt(row, 0)] =
                            BuildingType{toUpper(row.text(1)), toInt(row, 2),         toInt(row, 3),
                                         toInt(row, 4),        row.integer(5) != 0,   row.integer(6) != -1,
-                                        toInt(row, 7),        row.integer(8) != 0,   row.integer(9) != 0};
+                                        toInt(row, 7),        row.integer(8) != 0,   row.integer(9) != 0,
+                                        toInt(row, 0),        toInt(row, 10)};
                    });
     global.forEach("SELECT RoadType, img_id, ar FROM \"Road Types\"", [&](const data::Row& row) {
         r.roads[toInt(row, 0)] = RoadType{toUpper(row.text(1)), toInt(row, 2)};
@@ -100,6 +104,12 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
     });
     global.forEach("SELECT Short, Medium FROM \"Ranges\"",
                    [&](const data::Row& row) { r.ranges = {toInt(row, 0), toInt(row, 1)}; });
+    if (global.hasTable("AI Priority"))
+        global.forEach("SELECT AiSource, AiTarget, Priority FROM \"AI Priority\"", [&](const data::Row& row) {
+            const int s = toInt(row, 0), t = toInt(row, 1);
+            if (s >= 0 && s < 12 && t >= 0 && t < 12)
+                r.aiPriority[static_cast<std::size_t>(s)][static_cast<std::size_t>(t)] = toInt(row, 2);
+        });
     global.forEach("SELECT DamageEasy, DamageHard FROM \"Difficulty\"", [&](const data::Row& row) {
         r.damageEasy = toInt(row, 0);
         r.damageHard = toInt(row, 1);

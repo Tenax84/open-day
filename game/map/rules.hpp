@@ -24,6 +24,8 @@ struct BuildingType {
     int race = 0;
     bool destructible = true;
     bool hasRuin = false;
+    int id = 0; // TypeID; 130 = Headquarters
+    int aiCategory = 9; // AI Category Lookup
 };
 
 // Unit actions with their own animation clip, in the program's order
@@ -61,6 +63,10 @@ struct UnitType {
     int damageArea = 1;
     bool canOverwatch = false;
     int jammer = 0;
+    // Computer player, docs/mechanics/tactical-ai.md.
+    int typeId = 0;
+    int cost = 0;
+    int aiCategory = 0; // AI Category Lookup
 };
 
 struct WallType {
@@ -101,6 +107,7 @@ struct GlobalRules {
     std::unordered_map<std::string, RuinType> ruins;      // RUINS.DBI name -> properties
     std::array<int, 2> ranges{3, 6};                      // Ranges: Short, Medium
     int damageEasy = 100, damageHard = 100;               // Difficulty, percent
+    std::array<std::array<int, 12>, 12> aiPriority{};     // AI Priority [source][target] category
 
     TerrainClass classOf(const std::string& terrainName) const;
     const TerrainType* terrainType(const std::string& terrainName) const;

@@ -113,37 +113,32 @@ TileEval evaluateTile(const BattleState& state, const BattleUnit& unit, Point ti
     return e;
 }
 
-std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point target, const PlanContext* context) {
+PathMap::PathMap(const BattleState& state, int unitIndex, const PlanContext* context)
+    : state_(&state), context_(context ? *context : PlanContext{}) {
     const BattleUnit& unit = state.unit(unitIndex);
-    const Point start = unit.pos;
+    start_ = unit.pos;
+    n_ = state.size();
     const int movement = unit.type->movement;
-    if (movement == kNoneGround || movement == kNoneWater) return {};
-    if (!state.inside(target) || (target.x == start.x && target.y == start.y)) return {};
-    const TileEval dest = evaluateTile(state, unit, target, context);
-    if (!dest.enterable) return {};
-
-    // 3.6 Teleport: one step, no search. The facing is chosen by the server.
-    if (movement == kTeleport) return {{target, dest.cost, true, 0}};
+    eval_.resize(static_cast<std::size_t>(n_ * n_));
+    for (int y = 0; y < n_; ++y)
+        for (int x = 0; x < n_; ++x) eval_[at(x, y)] = evaluateTile(state, unit, {x, y}, &context_);
+    value_.assign(eval_.size(), 0);
+    if (movement == kNoneGround || movement == kNoneWater || !state.inside(start_)) return;
+    teleport_ = movement == kTeleport;
+    if (teleport_) return;
 
     // 3.1 Values: start = INT_MAX, unreached = 0, otherwise INT_MAX minus
     // the planning cost. Relaxed by sweeps until nothing changes.
-    const int n = state.size();
-    auto at = [n](int x, int y) { return static_cast<std::size_t>(y * n + x); };
-    std::vector<TileEval> eval(static_cast<std::size_t>(n * n));
-    for (int y = 0; y < n; ++y)
-        for (int x = 0; x < n; ++x) eval[at(x, y)] = evaluateTile(state, unit, {x, y}, context);
-    std::vector<int> value(eval.size(), 0);
-    value[at(start.x, start.y)] = INT_MAX;
-
+    value_[at(start_.x, start_.y)] = INT_MAX;
     bool changed = false;
     auto update = [&](int x, int y) {
-        const TileEval& t = eval[at(x, y)];
+        const TileEval& t = eval_[at(x, y)];
         if (!t.crossable()) return;
         int best = 0, bestFacing = -1;
         for (int f = 0; f < 8; ++f) {
             const int nx = x + kStep[f].x, ny = y + kStep[f].y;
-            if (nx < 0 || ny < 0 || nx >= n || ny >= n) continue;
-            const int v = value[at(nx, ny)];
+            if (nx < 0 || ny < 0 || nx >= n_ || ny >= n_) continue;
+            const int v = value_[at(nx, ny)];
             if (v > best) {
                 best = v;
                 bestFacing = f;
@@ -151,11 +146,12 @@ std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point ta
         }
         if (bestFacing < 0) return;
         const int candidate = best - (t.cost + (bestFacing & 1));
-        if (candidate > value[at(x, y)]) {
-            value[at(x, y)] = candidate;
+        if (candidate > value_[at(x, y)]) {
+            value_[at(x, y)] = candidate;
             changed = true;
         }
     };
+    const int n = n_;
     do {
         changed = false;
         for (int x = 1; x <= n - 2; ++x)
@@ -167,10 +163,26 @@ std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point ta
         for (int y = 0; y < n; ++y) update(n - 1, y);
         for (int y = 0; y < n; ++y) update(0, y);
     } while (changed);
+}
+
+bool PathMap::reachable(Point target) const {
+    if (!state_->inside(target) || (target.x == start_.x && target.y == start_.y)) return false;
+    const TileEval& e = eval_[at(target.x, target.y)];
+    if (!e.enterable) return false;
+    if (teleport_) return true;
+    return value_[at(target.x, target.y)] > 0;
+}
+
+std::vector<PathStep> PathMap::pathTo(Point target) const {
+    if (!reachable(target)) return {};
+    const TileEval& dest = eval_[at(target.x, target.y)];
+    // 3.6 Teleport: one step, no search. The facing is chosen by the server.
+    if (teleport_) return {{target, dest.cost, true, 0}};
 
     // 3.3 Walk back from the target to the neighbor with the largest value;
     // on equal values a later neighbor wins only if it is closer to the
     // start in x or in y.
+    const Point start = start_;
     std::vector<Point> tiles{target};
     Point cur = target;
     while (cur.x != start.x || cur.y != start.y) {
@@ -178,13 +190,13 @@ std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point ta
         Point best;
         for (int f = 0; f < 8; ++f) {
             const Point p{cur.x + kStep[f].x, cur.y + kStep[f].y};
-            if (!state.inside(p)) continue;
-            const int v = value[at(p.x, p.y)];
-            if (v <= value[at(cur.x, cur.y)]) continue;
-            if (bestFacing < 0 || v > value[at(best.x, best.y)]) {
+            if (!state_->inside(p)) continue;
+            const int v = value_[at(p.x, p.y)];
+            if (v <= value_[at(cur.x, cur.y)]) continue;
+            if (bestFacing < 0 || v > value_[at(best.x, best.y)]) {
                 bestFacing = f;
                 best = p;
-            } else if (v == value[at(best.x, best.y)] &&
+            } else if (v == value_[at(best.x, best.y)] &&
                        (std::abs(p.x - start.x) < std::abs(best.x - start.x) ||
                         std::abs(p.y - start.y) < std::abs(best.y - start.y))) {
                 bestFacing = f;
@@ -203,10 +215,35 @@ std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point ta
         int facing = 0;
         for (int f = 0; f < 8; ++f)
             if (kStep[f].x == d.x && kStep[f].y == d.y) facing = f;
-        const TileEval& e = eval[at(tiles[i].x, tiles[i].y)];
+        const TileEval& e = eval_[at(tiles[i].x, tiles[i].y)];
         path.push_back({tiles[i], e.cost, e.enterable, facing});
     }
     return path;
+}
+
+const TileEval& PathMap::tile(Point p) const { return eval_[at(p.x, p.y)]; }
+
+std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point target, const PlanContext* context) {
+    if (!state.inside(target)) return {};
+    return PathMap(state, unitIndex, context).pathTo(target);
+}
+
+bool groupTile(const BattleState& state, const BattleUnit& unit, Point target, const PlanContext& context, Point& out) {
+    if (evaluateTile(state, unit, target, &context).enterable) {
+        out = target;
+        return true;
+    }
+    // The nearest free tile around the target: orthogonal neighbors first,
+    // then the diagonals, each in x-then-y order.
+    static constexpr Point kAround[8] = {{-1, 0}, {0, -1}, {0, 1}, {1, 0}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
+    for (const Point d : kAround) {
+        const Point p{target.x + d.x, target.y + d.y};
+        if (evaluateTile(state, unit, p, &context).enterable) {
+            out = p;
+            return true;
+        }
+    }
+    return false;
 }
 
 int affordableSteps(const std::vector<PathStep>& path, int availableAp) {
@@ -246,22 +283,8 @@ std::vector<PlannedMove> planGroupMove(const BattleState& state, const std::vect
     for (const int unit : units) {
         if (out.size() >= 64) break;
         const BattleUnit& u = state.unit(unit);
-        // The clicked tile, or else the nearest free tile around it
-        // (orthogonal neighbors first, then x and y ascending).
-        Point dest = target;
-        if (!evaluateTile(state, u, target, &context).enterable) {
-            static constexpr Point kAround[8] = {{-1, 0}, {0, -1}, {0, 1}, {1, 0}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
-            bool found = false;
-            for (const Point d : kAround) {
-                const Point p{target.x + d.x, target.y + d.y};
-                if (evaluateTile(state, u, p, &context).enterable) {
-                    dest = p;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) continue;
-        }
+        Point dest;
+        if (!groupTile(state, u, target, context, dest)) continue;
         PlannedMove m;
         m.unit = unit;
         m.target = dest;
