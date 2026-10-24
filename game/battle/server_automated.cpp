@@ -188,9 +188,8 @@ void BattleServer::automatedMines(AutomatedCall& call, Point target) {
     }
     if (found.empty()) return;
     // The computer player clears hidden_AI; a human clears all four human flags.
-    if (call.owner == 0) emit(MinesRevealed{0, found});
-    else
-        for (int p = 1; p < kPlayerSlots; ++p) emit(MinesRevealed{p, found});
+    // (applyEvent clears all human flags for a human slot).
+    emit(MinesRevealed{call.owner, found});
 }
 
 void BattleServer::automatedDrop(AutomatedCall& call, Point target) {

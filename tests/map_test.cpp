@@ -15,6 +15,8 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
 
 using namespace openday;
 
@@ -221,6 +223,125 @@ void testMapObjects() {
     CHECK(building && unit && building < unit);
 }
 
+// Color table, mine suffix, damaged threshold, tower names, draw modes and
+// the deferred / border drawing of the scene.
+void testDrawRules() {
+    // Identity, then the local slot and its chosen color swapped.
+    const game::ColorTable identity;
+    CHECK(identity(0) == 0 && identity(1) == 1 && identity(4) == 4 && identity(7) == 0);
+    const game::ColorTable t = game::makeColorTable(2, 4);
+    CHECK(t(0) == 0 && t(1) == 1 && t(2) == 4 && t(3) == 3 && t(4) == 2);
+    const game::ColorTable single = game::makeColorTable(1, 1);
+    CHECK(single.color == identity.color);
+
+    game::MineType mine;
+    mine.image = "GMINE";
+    CHECK(game::mineSpriteName(mine, true) == "GMINE001" && game::mineSpriteName(mine, false) == "GMINE000");
+
+    // currentAR <= 0.33 x Armor.
+    CHECK(game::isDamaged(33, 100) && !game::isDamaged(34, 100));
+    CHECK(game::isDamaged(19, 60) && !game::isDamaged(20, 60) && game::isDamaged(0, 60));
+
+    game::GlobalRules rules;
+    game::UnitType tower;
+    tower.image = "HLAS";
+    tower.typeId = 39;
+    rules.units[{39, 0}] = tower;
+    game::TerrainMap terrain;
+    terrain.size = 8;
+    terrain.tiles.assign(64, "GRASS");
+    game::BuildingType barracks{"HBAR", 2, 1, 90, true, true};
+    game::MapBuilding b{&barracks, 2, 3, true, 3, 29}; // 29 <= 0.33 x 90
+    std::vector<game::MapSprite> s = game::buildingSprites(b, 5, rules, terrain);
+    CHECK(s.size() == 2 && s[0].name == "HBAR3100" && s[1].name == "HBAR3110" && s[1].x == 3 && s[0].entity == 5);
+    b.armor = 30; // above 29.7: the intact sprite
+    CHECK(game::buildingSprites(b, 5, rules, terrain)[0].name == "HBAR3000");
+    barracks.damagedImages = false;
+    b.armor = 1;
+    CHECK(game::buildingSprites(b, 5, rules, terrain)[0].name == "HBAR3000");
+    // A tower: the unit type's code, facing 0, never damaged.
+    game::BuildingType towerBuilding{"HLAS", 1, 1, 100, true, false};
+    towerBuilding.transformIntoUnit = 39;
+    const game::MapBuilding tb{&towerBuilding, 0, 0, true, 1, 1};
+    CHECK(game::buildingSprites(tb, 0, rules, terrain)[0].name == "HLAS1000");
+
+    // Units without enough AP to fire are darkened.
+    game::UnitType tank;
+    tank.image = "HTNK";
+    tank.shotAp = 6;
+    game::MapUnit u{&tank, 1, 0, 1, 1};
+    CHECK(game::unitDrawMode(u) == 0); // AP unknown
+    u.ap = 5;
+    CHECK(game::unitDrawMode(u) == 0); // 5 >= 4
+    u.ap = 3;
+    CHECK(game::unitDrawMode(u) == 1);
+    tank.shotAp = 2;
+    CHECK(game::unitDrawMode(u) == 0); // can still fire
+    u.mode = 1;
+    CHECK(game::unitDrawMode(u) == 1); // explicit (deployment)
+    CHECK(game::unitSprite(u, 0, terrain, rules, false).mode == 1);
+
+    // Checkerboard blits: odd (column + row) pixels become 0 / 249 / 250 /
+    // 79 or stay untouched (mode 2).
+    formats::DbiSprite sq{"SQ", 2, 2, {7, 7, 7, 7}, {1, 1, 1, 1}};
+    for (const auto& [mode, odd] : {std::pair{1, 0}, std::pair{2, 9}, std::pair{3, 249}, std::pair{4, 250}, std::pair{5, 79}}) {
+        render::IndexedSurface surface(2, 2, 9);
+        surface.blit(sq, 0, 0, mode);
+        CHECK(surface.at(0, 0) == 7 && surface.at(1, 1) == 7 && surface.at(1, 0) == odd && surface.at(0, 1) == odd);
+    }
+    render::IndexedSurface clipped(4, 4, 9);
+    clipped.blit(sq, 1, 1, 0, 2, 2, 1, 1); // only the pixel (2, 2)
+    CHECK(clipped.at(2, 2) == 7 && clipped.at(1, 1) == 9 && clipped.at(2, 1) == 9);
+
+    // Scene: a marker drawn on top stays visible over the unit of the cell
+    // in front; an ordinary one of a lower layer is covered by it. The map
+    // is framed by BLACK cells.
+    formats::DbiSprite block{"BLOCK", game::iso::kSpriteWidth, game::iso::kSpriteHeight, {}, {}};
+    block.pixels.assign(static_cast<std::size_t>(block.width * block.height), 3);
+    block.opaque.assign(block.pixels.size(), 1);
+    const formats::Palette pal{};
+    auto archive = std::make_shared<const formats::DbiArchive>(
+        formats::DbiArchive::fromBytes(formats::writeDbi({flatTile("GRASS", 1), flatTile("BLACK", 2), block}, pal, true)));
+    game::SpriteLibrary lib;
+    lib.set(game::SpriteSet::Terrain, archive);
+    lib.set(game::SpriteSet::UnitsBuildings, archive);
+    lib.set(game::SpriteSet::Symbols, archive);
+    game::TerrainMap small;
+    small.size = 3;
+    small.tiles.assign(9, "GRASS");
+    // A full block on (1, 1), in front of (0, 0).
+    const game::MapScene scene(small, {{1, 1, game::Layer::Unit, game::SpriteSet::UnitsBuildings, "BLOCK"}});
+    const formats::DbiSprite* marker = lib.get(game::SpriteSet::Symbols, "GRASS");
+    const game::Point o = game::iso::tileOrigin(0, 0, 3);
+    game::SceneExtras extras;
+    extras.overlays.push_back({0, 0, o.x, o.y, marker, 7, 0});
+    const game::Rect bounds = game::iso::mapBounds(3);
+    // A pixel of tile (0, 0)'s diamond that the block on (1, 1) covers.
+    const game::Point p{o.x + 27, o.y + 50};
+    render::IndexedSurface surface(bounds.w, bounds.h, 0);
+    scene.draw(surface, bounds, lib, true, &extras);
+    CHECK(surface.at(p.x, p.y) == 3);
+    extras.overlays[0].mode = game::kDrawOnTop;
+    scene.draw(surface, bounds, lib, true, &extras);
+    CHECK(surface.at(p.x, p.y) == 1);
+    // Outside the map: the BLACK border (tile (-1, 0) left of (0, 0)).
+    const game::Point left = game::iso::tileOrigin(-1, 0, 3);
+    CHECK(surface.at(left.x + 27, left.y + 42) == 2);
+
+    // An animation frame is repaired by the cells in front of it: the block
+    // on (1, 1) covers the part of the frame inside its refresh rectangle.
+    render::IndexedSurface anim(bounds.w, bounds.h, 0);
+    const formats::DbiSprite* frame = lib.get(game::SpriteSet::Symbols, "BLACK");
+    extras.overlays.clear();
+    extras.frames.push_back({o.x, o.y + 14, frame, {{1, 1, 0, 0, 54, 28}}});
+    scene.draw(anim, bounds, lib, true, &extras);
+    const game::Point o11 = game::iso::tileOrigin(1, 1, 3);
+    CHECK(anim.at(o11.x + 27, o11.y + 20) == 3); // inside the refresh rectangle: the block again
+    extras.frames[0].refresh.clear();
+    scene.draw(anim, bounds, lib, true, &extras);
+    CHECK(anim.at(o11.x + 27, o11.y + 20) == 2); // without the repair the frame covers it
+}
+
 } // namespace
 
 int main() {
@@ -229,6 +350,7 @@ int main() {
         testLoadAndRender();
         testRoadVariants();
         testMapObjects();
+        testDrawRules();
     } catch (const std::exception& e) {
         std::fprintf(stderr, "exception: %s\n", e.what());
         ++failures;

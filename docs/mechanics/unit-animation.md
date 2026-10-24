@@ -613,19 +613,32 @@ Deliberate differences of the OpenDay implementation (`game/anim/`):
 
 - When the computed clip does not exist, the variants `P1` and then `P0`
   are tried, so the gaps above still show a picture.
-- Animations are drawn inside the depth-sorted cell pass, on the cell of
-  the tile being entered (moves) or of the clip's tile, instead of being
-  drawn on top and repaired with the occlusion tables. Projectiles are
-  drawn on top of the map. (The original's sort order and refresh tables
-  in section 8 are complete now, should exact fidelity be wanted.)
+- Animations are drawn after the map as in section 8: every tick the frames
+  are sorted by group, frame top and frame left (`Animator::frames`), and
+  each group-0 frame is followed by its refresh list (`refreshAtRest`,
+  `refreshTranslate` in `unit_animation.cpp`; `MapScene::draw` repaints the
+  terrain of `Overlapping` cells and the cell features, clipped). The move
+  end part `N` uses the refresh list of its own (destination) tile.
 - The tick clock does not need `TICK.SMK`: a 15 Hz timer gives the same
-  ticks. Movement begin parts should still start at `3 × (record id − 1)`
-  so that group moves are staggered as in the original.
-- On a facing change during a slide the new facing's `M` clip restarts at
-  frame 0.
+  ticks, and the timeline (`Animator`) runs on across phases. A phase is
+  the answer to one request (`BattleAnimations::beginPhase`); its tick 0 is
+  the first tick after the animations already scheduled, and every event is
+  one record. In the answer to a move order the begin parts start at
+  `3 × (record id − 1)`; other records follow the previous record instead of
+  their exact parent. The computer player's whole turn comes as one answer,
+  so its moves are not staggered.
+- On a facing change during a slide the previous facing's `M` clip is
+  rewound, so the new facing starts at frame 0.
 - The parts of a sequence follow each other one tick apart when the
   earlier part showed frames, so no two parts of one unit are visible in
   the same tick.
+- Mine clips: an explosion record starts one tick after the previous record;
+  a triggered mine (explosion + destroyed) plays one clip, a mine destroyed
+  by a hit plays one too. The clip's start removes the mine sprite; the
+  mines layer is rebuilt after the clip.
+- Building explosions: without a clip (towers) the building is not hidden
+  first; removal and rubble follow at once. Wrecks appear at the end of the
+  `E` clip.
 - The move sound plays once at the start of the move instead of looping.
 
 ## Open questions

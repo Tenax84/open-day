@@ -1,5 +1,6 @@
 #include "anim/battle_view.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace openday::game {
@@ -15,8 +16,35 @@ template <class... Fs> Overloaded(Fs...) -> Overloaded<Fs...>;
 BattleView::BattleView(BattleState initial, MapScene& scene, BattleAnimations& animations, int viewer)
     : state_(std::move(initial)), scene_(scene), anim_(animations), viewer_(viewer),
       wallShape_(state_.walls().size(), -1) {
+    if (state_.currentPlayer > 0) lastHuman_ = state_.currentPlayer;
+    else
+        for (const int p : state_.players)
+            if (p > 0) {
+                lastHuman_ = p;
+                break;
+            }
     wallLayer(); // remember the loaded shapes
     scene_.replaceLayer(Layer::Mine, mineLayer());
+    syncUnits(true);
+}
+
+void BattleView::syncUnits(bool immediately) {
+    const std::size_t n = state_.units().size();
+    shownAp_.resize(n, -2);
+    shownMode_.resize(n, -1);
+    deployed_.resize(n, false);
+    for (std::size_t i = 0; i < n; ++i) {
+        const BattleUnit& u = state_.units()[i];
+        if (!u.alive) continue;
+        if (!state_.deploying) deployed_[i] = false;
+        // Units placed in the deployment view are drawn darkened (mode 1);
+        // the others by their AP (map-objects.md, "Draw mode").
+        const int ap = u.availableAp(), mode = deployed_[i] ? 1 : 0;
+        if (ap == shownAp_[i] && mode == shownMode_[i]) continue;
+        shownAp_[i] = ap;
+        shownMode_[i] = mode;
+        anim_.setUnitState(static_cast<int>(i), ap, mode, immediately);
+    }
 }
 
 std::vector<MapSprite> BattleView::roadLayer() const {
@@ -47,7 +75,7 @@ std::vector<MapSprite> BattleView::mineLayer() const {
         if (!m.alive || (v >= 0 && v < kPlayerSlots && m.hidden[static_cast<std::size_t>(v)])) continue;
         const auto type = state_.rules().mines.find(m.type);
         if (type != state_.rules().mines.end())
-            out.push_back({m.pos.x, m.pos.y, Layer::Mine, SpriteSet::Mines, type->second.image + "000"});
+            out.push_back({m.pos.x, m.pos.y, Layer::Mine, SpriteSet::Mines, mineSpriteName(type->second, m.armed)});
     }
     return out;
 }
@@ -58,12 +86,17 @@ void BattleView::redraw(Layer layer, std::vector<MapSprite> sprites) {
 
 void BattleView::apply(const std::vector<Event>& events) {
     for (const Event& event : events) {
+        anim_.nextRecord();
         // Animations are started from the state before the event.
         std::visit(Overloaded{
                        [&](const UnitMoved& e) {
                            std::vector<Point> path{state_.unit(e.unit).pos};
                            path.insert(path.end(), e.tiles.begin(), e.tiles.end());
-                           anim_.move(e.unit, path, e.facing);
+                           const BattleUnit& u = state_.unit(e.unit);
+                           const int ap = std::max(0, e.ap - u.negAp);
+                           anim_.move(e.unit, path, e.facing, ap);
+                           // The end of the move shows the new AP already.
+                           if (static_cast<std::size_t>(e.unit) < shownAp_.size()) shownAp_[static_cast<std::size_t>(e.unit)] = ap;
                        },
                        [&](const UnitShot& e) { anim_.attack(e.unit, e.aim, {e.impact}); },
                        [&](const UnitDestroyed& e) { anim_.destroyUnit(e.unit, e.wreck); },
@@ -74,8 +107,26 @@ void BattleView::apply(const std::vector<Event>& events) {
                            anim_.destroyBuilding(e.building, std::move(rubble));
                        },
                        [&](const UnitAdded& e) {
-                           if (const UnitType* t = state_.unitType(e.typeId, e.techLevel))
-                               anim_.addUnit({t, e.owner, e.facing, e.pos.x, e.pos.y, true});
+                           if (const UnitType* t = state_.unitType(e.typeId, e.techLevel)) {
+                               const std::size_t index = state_.units().size();
+                               deployed_.resize(index + 1, false);
+                               deployed_[index] = state_.deploying;
+                               anim_.addUnit({t, anim_.colors()(e.owner), e.facing, e.pos.x, e.pos.y, true});
+                           }
+                       },
+                       [&](const MineExploded& e) {
+                           const BattleMine& m = state_.mine(e.mine);
+                           const auto type = state_.rules().mines.find(m.type);
+                           if (type != state_.rules().mines.end()) anim_.mineExplosion(m.pos, type->second, true);
+                           lastExploded_ = e.mine;
+                       },
+                       [&](const MineDestroyed& e) {
+                           // A triggered mine plays its clip once, with the
+                           // explosion record *(OpenDay choice)*.
+                           const BattleMine& m = state_.mine(e.mine);
+                           const auto type = state_.rules().mines.find(m.type);
+                           if (lastExploded_ != e.mine && type != state_.rules().mines.end())
+                               anim_.mineExplosion(m.pos, type->second, false);
                        },
                        [&](const UnitRemoved& e) { anim_.removeUnit(e.unit); },
                        [&](const TerrainBurned& e) {
@@ -108,13 +159,19 @@ void BattleView::apply(const std::vector<Event>& events) {
                        },
                        [&](const Repaired& e) {
                            if (e.wall >= 0) redraw(Layer::Wall, wallLayer());
+                           if (e.building >= 0) anim_.setBuildingArmor(e.building, e.buildingArmor);
                        },
-                       [&](const TurnStarted&) {
-                           if (viewer_ < 0) redraw(Layer::Mine, mineLayer());
+                       [&](const BuildingDamaged& e) { anim_.setBuildingArmor(e.building, e.armor); },
+                       [&](const TurnStarted& e) {
+                           if (e.player > 0 && e.player != lastHuman_) {
+                               lastHuman_ = e.player;
+                               if (viewer_ < 0) redraw(Layer::Mine, mineLayer());
+                           }
                        },
                        [&](const auto&) {},
                    },
                    event);
+        syncUnits(false);
     }
 }
 

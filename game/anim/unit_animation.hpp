@@ -49,4 +49,13 @@ std::vector<SlideStep> slidePositions(const std::vector<Point>& path, int pixSpe
 std::vector<Point> projectilePath(Point from, Point to, const UnitType& type, int mapSize, int frameWidth,
                                   int frameHeight);
 
+// Occlusion repair (unit-animation.md 8): the parts of the cells in front of
+// a unit clip played at rest on `tile`, and of a move frame entering tile
+// `entered` with `facing`.
+std::vector<RefreshCell> refreshAtRest(Point tile);
+std::vector<RefreshCell> refreshTranslate(Point entered, int facing);
+
+// MINE\<ImageID>.SMK, or "" when the mine type has no explosion clip.
+std::string mineClipName(const MineType& type);
+
 } // namespace openday::game

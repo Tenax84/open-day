@@ -28,16 +28,36 @@ public:
     void tick() { animator_.tick(); }
 
     // Actions play one after another, each starting when the previous one
-    // has ended.
+    // has ended, except the moves of a staggered phase.
     //
-    // Moves a unit along a path (start tile first).
-    void move(int unit, const std::vector<Point>& path, std::optional<int> arrivalFacing = std::nullopt);
+    // A phase is the answer to one request (unit-animation.md 4, "Start
+    // ticks within a phase"); every event of it is one record. With
+    // `staggerMoves` the moves start at tick 3 x (record id - 1) of the
+    // phase instead of after the previous record (the units of a group
+    // order set off 3 ticks apart).
+    void beginPhase(bool staggerMoves);
+    void nextRecord() { ++record_; }
+
+    // Moves a unit along a path (start tile first). `ap`: the unit's usable
+    // AP on arrival, -1 = unchanged.
+    void move(int unit, const std::vector<Point>& path, std::optional<int> arrivalFacing = std::nullopt, int ap = -1);
     // Aims at `aim` and fires one shot per impact tile (default: one at `aim`).
     void attack(int unit, Point aim, std::vector<Point> impacts = {});
     // Leaves `wreck` (RUINS.DBI) on the tile; by default the type's ruinImageID.
     void destroyUnit(int unit, std::optional<std::string> wreck = std::nullopt);
     // Places `rubble` (Ruin layer sprites) when the explosion ends.
     void destroyBuilding(int building, std::vector<MapSprite> rubble = {});
+    // A mine explosion clip on `tile` (unit-animation.md 7). Its start
+    // removes the mine's sprite. `explosionRecord`: the record of a
+    // triggered mine, which starts one tick after the previous record.
+    void mineExplosion(Point tile, const MineType& type, bool explosionRecord);
+    // Changes that redraw a unit or a building when the actions scheduled so
+    // far have played: the usable AP and the explicit draw mode of a unit
+    // (the darkened sprite), the armor of a building (the damaged sprite).
+    void setUnitState(int unit, int ap, int mode, bool immediately = false);
+    void setBuildingArmor(int building, int armor);
+    // The color table of the scene's owners.
+    const ColorTable& colors() const { return entities_.colors; }
     // Adds a unit that appears when the actions scheduled so far have
     // played. Returns its entity index.
     int addUnit(MapUnit unit);
@@ -97,6 +117,9 @@ private:
     };
     std::vector<Planned> planned_;
     std::vector<bool> buildingHidden_;
+    int phaseStart_ = 0;   // tick 0 of the current phase
+    int record_ = 0;       // record id of the current event in the phase
+    bool stagger_ = false; // moves of this phase start 3 ticks apart
     int autoClipEnd_ = -1; // last tick of the latest automated-unit clip
     int aaTick_ = 0;       // when the AA units of the current call fire
     Point aaAim_{};        // the tile they face

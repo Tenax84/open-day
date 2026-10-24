@@ -578,9 +578,9 @@ the resolution). Choices and differences:
 - Anti-air fire against automated units (6.3) is implemented with the
   automated units (automated-units.md).
 - Not implemented yet: the `TechReward` of destroyed buildings, statistics (now specified in
-  battle-flow.md 5.3), objectives, damaged
-  building sprites after a hit, mine explosion animations, "move to fire"
-  orders of the AI.
+  battle-flow.md 5.3), objectives, "move to fire"
+  orders of the AI. (Damaged building sprites and mine explosion clips are
+  drawn, map-objects.md and unit-animation.md implementation notes.)
 - Game options: `coop` true, AI damage scaling on, difficulty 5 (average)
   by default.
 

@@ -854,7 +854,7 @@ private:
         const game::BattleState& s = session_->state();
         if (t->kind() == game::AutomatedCategory::Build)
             for (const game::Point p : s.bridgeSites)
-                if (s.roadAt(p) < 0) marker(markers, p, game::bridgePlacementOk(s, p) ? "BRIDGE" : "BRIDG001");
+                if (s.roadAt(p) < 0) marker(markers, p, game::bridgePlacementOk(s, p) ? "BRIDGE" : "BRIDG001", 13);
         const std::string race = t->image.empty() ? "H" : t->image.substr(0, 1);
         if (!autoPoints_.empty()) marker(markers, autoPoints_.front(), race + "TRANSPS");
         if (!s.inside(hover)) return;
@@ -989,27 +989,33 @@ private:
 
     // --- Map -----------------------------------------------------------------
 
+    // Color value of a player slot (map-objects.md, "Color variant").
+    int colors(int owner) const { return session_->animations().colors()(owner); }
+
     const formats::DbiSprite* symbol(const std::string& name) {
         return app_.data().sprites.get(game::SpriteSet::Symbols, name);
     }
 
-    void marker(std::vector<game::Overlay>& out, game::Point t, const std::string& name) {
+    // A SYMBOLS.DBI marker on a tile, drawn as a feature of `layer`
+    // (tactical-interface.md 2.10); kDrawOnTop draws it after all cells.
+    void marker(std::vector<game::Overlay>& out, game::Point t, const std::string& name, int layer = kCursorLayer, int mode = 0) {
         const game::Point o = game::iso::tileOrigin(t.x, t.y, session_->scene().terrain().size);
-        if (const formats::DbiSprite* sp = symbol(name)) out.push_back({t.x, t.y, o.x, o.y, sp});
+        if (const formats::DbiSprite* sp = symbol(name)) out.push_back({t.x, t.y, o.x, o.y, sp, layer, mode});
     }
+    static constexpr int kCursorLayer = 8;
 
     void drawMap() {
         const game::BattleState& s = session_->state();
         const Mode mode = this->mode();
         std::vector<game::Overlay> markers;
         if (markers_) {
-            for (const game::Point z : s.objective.zone) marker(markers, z, "OBJT000");
+            for (const game::Point z : s.objective.zone) marker(markers, z, "OBJT000", 2);
             const std::string obj = s.objective.kind == 0 || s.objective.kind == 4 ? "OBJT001" : "OBJT002";
             for (const int id : s.objective.ids) {
                 for (const game::BattleUnit& u : s.units())
-                    if (u.alive && u.id == id) marker(markers, u.pos, obj);
+                    if (u.alive && u.id == id) marker(markers, u.pos, obj, 14, game::kDrawOnTop);
                 for (const game::BattleBuilding& b : s.buildings())
-                    if (b.alive && b.id == id) marker(markers, b.pos, obj);
+                    if (b.alive && b.id == id) marker(markers, b.pos, obj, 14, game::kDrawOnTop);
             }
         }
         const game::Point hover = mouseX_ >= 0 && mouseX_ < viewW_ && mouseY_ < viewH_ ? tileAt(mouseX_, mouseY_) : game::Point{-1, -1};
@@ -1020,7 +1026,8 @@ private:
                 if (s.inDeployZone(kHuman, {z.x + 1, z.y})) mask |= 4;
                 if (s.inDeployZone(kHuman, {z.x, z.y - 1})) mask |= 2;
                 if (s.inDeployZone(kHuman, {z.x, z.y + 1})) mask |= 1;
-                marker(markers, z, "DEPL" + std::to_string(kHuman) + twoDigits(deployMarker(mask)));
+                // In the local player's own color (map-objects.md).
+                marker(markers, z, "DEPL" + std::to_string(colors(kHuman)) + twoDigits(deployMarker(mask)), 3);
             }
             if (s.inside(hover) && s.inDeployZone(kHuman, hover)) {
                 const int u = s.unitAt(hover);
@@ -1032,7 +1039,9 @@ private:
         if (mode == Mode::Tactic) {
             for (const game::PlannedMove& m : preview_) {
                 const std::vector<std::string> names = game::previewSprites(m);
-                for (std::size_t i = 0; i < names.size(); ++i) marker(markers, m.path[i].pos, names[i]);
+                // The crossable-only markers stay visible over what they cross.
+                for (std::size_t i = 0; i < names.size(); ++i)
+                    marker(markers, m.path[i].pos, names[i], 7, names[i] == "PATH0002" || names[i] == "PATH0003" ? game::kDrawOnTop : 0);
             }
             if (s.inside(hover)) {
                 const std::string cursor = tileCursor(hover);
@@ -1041,9 +1050,11 @@ private:
         }
         if (mode != Mode::Deploy)
             for (const int u : selection_)
-                if (s.unit(u).alive) marker(markers, s.unit(u).pos, "SU00" + std::to_string(std::clamp(s.unit(u).owner, 0, 4)));
+                if (s.unit(u).alive)
+                    marker(markers, s.unit(u).pos, "SU00" + std::to_string(colors(s.unit(u).owner)), 17, game::kDrawOnTop);
         for (const int b : s.techHeld)
-            if (b >= 0 && b < static_cast<int>(s.buildings().size()) && s.building(b).alive) marker(markers, s.building(b).pos, "LILBULB");
+            if (b >= 0 && b < static_cast<int>(s.buildings().size()) && s.building(b).alive)
+                marker(markers, s.building(b).pos, "LILBULB", 16, game::kDrawOnTop);
         game::SceneExtras extras = session_->animations().extras();
         extras.overlays.insert(extras.overlays.end(), markers.begin(), markers.end());
         viewport_.fill(0);

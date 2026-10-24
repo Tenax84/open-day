@@ -55,8 +55,14 @@ void applyEvent(BattleState& s, const Event& event) {
                    [&](const MineDestroyed& e) { s.removeMine(e.mine); },
                    [&](const MineExploded&) {},
                    [&](const MinesRevealed& e) {
+                       // Slot 0 clears only hidden_AI; human players share
+                       // their knowledge of mines (map-objects.md, "Mines").
                        if (e.player < 0 || e.player >= kPlayerSlots) return;
-                       for (const int m : e.mines) s.mine(m).hidden[static_cast<std::size_t>(e.player)] = false;
+                       for (const int m : e.mines) {
+                           if (e.player == 0) s.mine(m).hidden[0] = false;
+                           else
+                               for (int p = 1; p < kPlayerSlots; ++p) s.mine(m).hidden[static_cast<std::size_t>(p)] = false;
+                       }
                    },
                    [&](const TerrainBurned& e) { s.setTerrain(e.tile, e.terrain); },
                    [&](const TurnStarted& e) {

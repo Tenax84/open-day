@@ -125,6 +125,7 @@ struct MineType {
     int recycle = 0;
     int deployTerrain = 3; // TerrainType Lookup class where it can be laid
     std::string listbox{}; // LISTBOX.DBI name
+    bool hasExplosion = true; // ExplosionAnimation != -1: MINE\<ImageID>.SMK is played
 };
 
 // Automated Category Lookup (docs/mechanics/automated-units.md 0).
@@ -184,6 +185,7 @@ struct TerrainType {
     bool canFireThrough = true;
     std::string burned; // TERRAINS.DBI name after burning; empty = cannot burn
     Rgb color{};        // minimap color
+    bool overlapping = false; // tall sprite that can cover animations (isometric-map.md)
 };
 
 struct RuinType {

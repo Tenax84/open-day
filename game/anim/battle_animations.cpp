@@ -21,6 +21,47 @@ BattleAnimations::BattleAnimations(MapScene& scene, MapEntities& entities, const
     : scene_(scene), entities_(entities), rules_(rules), clips_(clips), unitHidden_(entities.units.size(), 0),
       buildingHidden_(entities.buildings.size(), false) {
     for (const MapUnit& u : entities.units) planned_.push_back({{u.x, u.y}, u.facing});
+    scene_.useRules(rules_); // Overlapping terrain for the occlusion repair
+}
+
+void BattleAnimations::beginPhase(bool staggerMoves) {
+    phaseStart_ = startTick();
+    record_ = 0;
+    stagger_ = staggerMoves;
+}
+
+void BattleAnimations::setUnitState(int unit, int ap, int mode, bool immediately) {
+    auto apply = [this, unit, ap, mode] {
+        MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
+        u.ap = ap;
+        u.mode = mode;
+        refreshUnit(unit);
+    };
+    if (immediately) apply();
+    else schedule(apply);
+}
+
+void BattleAnimations::setBuildingArmor(int building, int armor) {
+    schedule([this, building, armor] {
+        MapBuilding& b = entities_.buildings[static_cast<std::size_t>(building)];
+        b.armor = armor;
+        if (b.alive) scene_.replaceEntity(Layer::Building, building, buildingSprites(b, building, rules_, scene_.terrain()));
+    });
+}
+
+void BattleAnimations::mineExplosion(Point tile, const MineType& type, bool explosionRecord) {
+    AnimTrack t;
+    // The explosion record starts at its parent's end + 1.
+    t.start = startTick() + (explosionRecord ? 1 : 0);
+    t.clips[0] = clip(mineClipName(type));
+    t.duration = lastFrame(t.clips[0]);
+    const render::Animation* c = t.clips[0];
+    t.pos = framePosition(tile.x, tile.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
+    t.tile = tile;
+    t.group = 1; // on top, no occlusion repair
+    t.sound = c;
+    if (c) t.onStart = [this, tile] { scene_.removeObjects(tile.x, tile.y, Layer::Mine); };
+    finish(animator_.add(std::move(t)), c);
 }
 
 Point BattleAnimations::plannedTile(int unit) const { return planned_[static_cast<std::size_t>(unit)].tile; }
@@ -101,7 +142,7 @@ int BattleAnimations::buildingAt(Point tile) const {
     return -1;
 }
 
-void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optional<int> arrivalFacing) {
+void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optional<int> arrivalFacing, int ap) {
     if (unit < 0 || path.size() < 2) return;
     MapUnit& u = entities_.units[static_cast<std::size_t>(unit)];
     if (!u.alive) return;
@@ -114,12 +155,14 @@ void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optio
                                          : facingToward(path[path.size() - 2], to);
 
     AnimTrack begin;
-    begin.start = startTick();
+    // In a staggered phase the begin part starts at tick 3 x (record id - 1).
+    begin.start = stagger_ ? std::max(phaseStart_ + 3 * std::max(0, record_ - 1), animator_.now() + 1) : startTick();
     begin.clips[0] = unitClip(type, u.color, UnitAction::MoveStart, planned_[static_cast<std::size_t>(unit)].facing);
     begin.duration = lastFrame(begin.clips[0]);
     begin.pos = framePosition(from.x, from.y, n, begin.clips[0] ? begin.clips[0]->width : 0,
                               begin.clips[0] ? begin.clips[0]->height : 0);
     begin.tile = from;
+    begin.occlusion = Occlusion::AtRest;
     begin.sound = begin.clips[0];
     begin.onStart = [this, unit] { hideUnit(unit); };
     const render::Animation* beginClip = begin.clips[0];
@@ -128,6 +171,7 @@ void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optio
     AnimTrack slide;
     slide.start = after(beginEnd, beginClip);
     slide.loop = true;
+    slide.occlusion = Occlusion::Translate;
     const render::Animation* any = nullptr;
     for (int f = 0; f < 8; ++f) {
         slide.clips[static_cast<std::size_t>(f)] = unitClip(type, u.color, UnitAction::Move, f);
@@ -145,13 +189,15 @@ void BattleAnimations::move(int unit, const std::vector<Point>& path, std::optio
     end.clips[0] = unitClip(type, u.color, UnitAction::MoveEnd, lastFacing);
     end.duration = lastFrame(end.clips[0]);
     end.pos = framePosition(to.x, to.y, n, end.clips[0] ? end.clips[0]->width : 0, end.clips[0] ? end.clips[0]->height : 0);
-    end.tile = to;
+    end.tile = to; // the refresh list of the destination *(OpenDay choice)*
+    end.occlusion = Occlusion::AtRest;
     end.sound = end.clips[0];
-    end.onEnd = [this, unit, to, lastFacing] {
+    end.onEnd = [this, unit, to, lastFacing, ap] {
         MapUnit& mu = entities_.units[static_cast<std::size_t>(unit)];
         mu.x = to.x;
         mu.y = to.y;
         mu.facing = lastFacing;
+        if (ap >= 0) mu.ap = ap;
         refreshUnit(unit);
         showUnit(unit);
     };
@@ -170,11 +216,14 @@ void BattleAnimations::attack(int unit, Point target, std::vector<Point> impacts
     const Point from = plannedTile(unit);
     const int facing = type.hasFacings ? facingToward(from, target) : 0;
     planned_[static_cast<std::size_t>(unit)].facing = facing;
+    // Unit clips are ground animations with the at-rest refresh list; the
+    // projectile and the impact float on top.
     auto place = [&](AnimTrack& t, Point tile) {
         const render::Animation* c = t.clips[0];
         t.pos = framePosition(tile.x, tile.y, n, c ? c->width : 0, c ? c->height : 0);
         t.tile = tile;
         t.sound = c;
+        t.occlusion = Occlusion::AtRest;
     };
 
     AnimTrack begin;
@@ -206,6 +255,7 @@ void BattleAnimations::attack(int unit, Point target, std::vector<Point> impacts
         prevClip = shotClip;
 
         AnimTrack proj;
+        proj.group = 1;
         proj.start = shotStart + type.projectileStart;
         proj.clips[0] = projClip;
         if (projClip)
@@ -221,6 +271,8 @@ void BattleAnimations::attack(int unit, Point target, std::vector<Point> impacts
         impact.clips[0] = impactClip;
         impact.duration = lastFrame(impactClip);
         place(impact, impactTile);
+        impact.group = 1;
+        impact.occlusion = Occlusion::None;
         lastImpact = std::max(lastImpact, animator_.add(std::move(impact)));
         lastImpactClip = impactClip;
     }
@@ -248,6 +300,7 @@ void BattleAnimations::destroyUnit(int unit, std::optional<std::string> wreck) {
     const Point at = plannedTile(unit);
     t.pos = framePosition(at.x, at.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
     t.tile = at;
+    t.group = 1;
     t.sound = c;
     t.onStart = [this, unit] { hideUnit(unit); };
     t.onEnd = [this, unit, wreck] {
@@ -273,9 +326,11 @@ void BattleAnimations::destroyBuilding(int building, std::vector<MapSprite> rubb
     const render::Animation* c = t.clips[0];
     t.pos = buildingFramePosition(b.x, b.y, type.sizeX, type.sizeY, scene_.terrain().size, c ? c->width : 0,
                                   c ? c->height : 0);
-    t.tile = {b.x + type.sizeX - 1, b.y + type.sizeY - 1}; // in front of the whole footprint
+    t.group = 1;
     t.sound = c;
-    t.onStart = [this, building] { buildingHidden_[static_cast<std::size_t>(building)] = true; };
+    // With a clip the building disappears while the clip plays; without one
+    // (towers) it stays until it is removed.
+    if (c) t.onStart = [this, building] { buildingHidden_[static_cast<std::size_t>(building)] = true; };
     t.onEnd = [this, building, rubble = std::move(rubble)] {
         entities_.buildings[static_cast<std::size_t>(building)].alive = false;
         scene_.replaceEntity(Layer::Building, building, {});
@@ -293,7 +348,7 @@ SceneExtras BattleAnimations::extras() const {
         if (s.layer == Layer::Building) return i < buildingHidden_.size() && buildingHidden_[i];
         return false;
     };
-    e.overlays = animator_.overlays();
+    e.frames = animator_.frames();
     return e;
 }
 
@@ -317,7 +372,7 @@ void BattleAnimations::automated(const AutomatedType& type, int outcome, Point t
     t.duration = lastFrame(t.clips[0]);
     const render::Animation* c = t.clips[0];
     t.pos = framePosition(tile.x, tile.y, n, c ? c->width : 0, c ? c->height : 0);
-    t.tile = {-1, -1}; // drawn over everything
+    t.group = 1; // drawn over everything
     t.sound = c;
     t.onStart = [this, tile] {
         if (onCenter) onCenter(tile);
@@ -352,6 +407,7 @@ void BattleAnimations::antiAir(int unit) {
     const render::Animation* c = t.clips[0];
     t.pos = framePosition(from.x, from.y, scene_.terrain().size, c ? c->width : 0, c ? c->height : 0);
     t.tile = from;
+    t.occlusion = Occlusion::AtRest;
     t.sound = c;
     t.onStart = [this, unit, facing] {
         hideUnit(unit);
