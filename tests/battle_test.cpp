@@ -1045,7 +1045,7 @@ void testSupport() {
     CHECK(count<MinesRevealed>(ev) == 0); // (6, 6) is outside x - 5 ... x + 4
     ev = server.handle(AutomatedRequest{1, 2, {{3, 3}}});
     all.insert(all.end(), ev.begin(), ev.end());
-    CHECK(count<MinesRevealed>(ev) == 4 && !server.state().mine(0).hidden[1] && !server.state().mine(0).hidden[4]);
+    CHECK(count<MinesRevealed>(ev) == 1 && !server.state().mine(0).hidden[1] && !server.state().mine(0).hidden[4]);
     CHECK(server.state().mine(0).alive);
     checkReplica(initial, all, server.state());
 

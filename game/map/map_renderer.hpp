@@ -94,16 +94,36 @@ struct RenderStats {
 RenderStats drawTerrain(render::IndexedSurface& target, const Rect& view, const TerrainMap& map,
                         SpriteCache& terrain);
 
-// A sprite drawn in addition to the scene for one frame (animation frames).
+// A sprite drawn in addition to the scene for one frame (interface markers:
+// paths, cursors, zones). It is drawn in the cell pass of its tile like an
+// object of `layer` (map-objects.md, "Per-cell feature lists").
 struct Overlay {
-    int tileX = -1, tileY = -1; // drawn after the objects of this tile; a tile outside the map = after everything
+    int tileX = -1, tileY = -1; // a tile outside the map = drawn after everything
     int x = 0, y = 0;           // map pixel position of the sprite's top-left corner
     const formats::DbiSprite* sprite = nullptr;
+    int layer = 255; // the default: after every object of the tile
+    int mode = 0;    // draw mode; kDrawOnTop = after all cells
+};
+
+// Part of a map cell that is drawn again after an animation frame, so that
+// what stands in front of the animation covers it (unit-animation.md 8).
+struct RefreshCell {
+    int x = 0, y = 0;               // the cell
+    int rx = 0, ry = 0, w = 0, h = 0; // rectangle inside the cell's 54 x 56 sprite
+};
+
+// An animation frame of the current tick. Frames are drawn after the map,
+// in the given order, each followed by its refresh list.
+struct AnimDraw {
+    int x = 0, y = 0; // map pixel position of the sprite's top-left corner
+    const formats::DbiSprite* sprite = nullptr;
+    std::vector<RefreshCell> refresh{};
 };
 
 struct SceneExtras {
     std::function<bool(const MapSprite&)> hidden; // objects not to draw (optional)
     std::vector<Overlay> overlays;
+    std::vector<AnimDraw> frames{};
 };
 
 // Draws terrain and objects together, tile by tile in depth order; objects
@@ -122,15 +142,33 @@ public:
     // Replaces every sprite of a layer (roads, walls and mines are redrawn
     // as a whole because neighbors change their shape).
     void replaceLayer(Layer layer, std::vector<MapSprite> sprites);
+    // Removes the sprites of a layer on one tile.
+    void removeObjects(int x, int y, Layer layer);
     void setTerrain(int x, int y, const std::string& name);
+    // Takes the Overlapping flags of the terrain from the rules (and again
+    // in setTerrain). Without rules no terrain counts as overlapping.
+    void useRules(const GlobalRules& rules);
+    bool overlapping(int x, int y) const;
 
     RenderStats draw(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects = true,
                      const SceneExtras* extras = nullptr) const;
 
 private:
     void reindex();
+    // Draws the terrain and the features of one cell (clipped to `clip` in
+    // target coordinates); features drawn on top are added to `deferred`.
+    struct Deferred {
+        const formats::DbiSprite* sprite;
+        int x, y, mode;
+        Rect clip;
+    };
+    void drawCell(render::IndexedSurface& target, const Rect& view, SpriteLibrary& sprites, bool showObjects,
+                  const SceneExtras* extras, int x, int y, const Rect& clip, bool terrain,
+                  const std::vector<const Overlay*>* overlays, std::vector<Deferred>& deferred, RenderStats& stats) const;
 
     TerrainMap terrain_;
+    const GlobalRules* rules_ = nullptr;
+    std::vector<std::uint8_t> overlapping_; // per tile
     std::vector<MapSprite> objects_;      // sorted by tile, then layer
     std::vector<std::uint32_t> firstObject_; // per tile: index into objects_, size*size + 1 entries
 };

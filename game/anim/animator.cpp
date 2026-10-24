@@ -1,6 +1,7 @@
 #include "anim/animator.hpp"
 
 #include <algorithm>
+#include <tuple>
 
 namespace openday::game {
 
@@ -21,6 +22,12 @@ void Animator::tick() {
 
     ++now_;
     visible_.clear();
+    struct Keyed {
+        int group;
+        Point frame; // uncropped frame top-left, the sort key
+        AnimDraw draw;
+    };
+    std::vector<Keyed> drawn;
     // Start actions may schedule more tracks; iterate by index.
     for (std::size_t i = 0; i < tracks_.size(); ++i) {
         Running& r = tracks_[i];
@@ -37,19 +44,18 @@ void Animator::tick() {
         const AnimTrack& t = cur.track;
         const int step = now_ - t.start;
         int facing = 0;
-        Overlay ov;
+        Point pos = t.pos, tile = t.tile;
         if (!t.path.empty()) {
             const SlideStep& s = t.path[static_cast<std::size_t>(std::min<int>(step, static_cast<int>(t.path.size()) - 1))];
             facing = s.facing & 7;
-            ov.x = s.pos.x;
-            ov.y = s.pos.y;
-            ov.tileX = s.tile.x;
-            ov.tileY = s.tile.y;
-        } else {
-            ov.x = t.pos.x;
-            ov.y = t.pos.y;
-            ov.tileX = t.tile.x;
-            ov.tileY = t.tile.y;
+            pos = s.pos;
+            tile = s.tile;
+        }
+        if (t.loop) {
+            // A new facing starts its clip from the first frame: the clip of
+            // the previous facing is rewound (unit-animation.md 5).
+            if (cur.lastFacing >= 0 && cur.lastFacing != facing) cur.frameCounter[static_cast<std::size_t>(cur.lastFacing)] = 0;
+            cur.lastFacing = facing;
         }
         const render::Animation* clip = t.clips[static_cast<std::size_t>(t.loop ? facing : 0)];
         if (clip && !clip->frames.empty()) {
@@ -59,15 +65,19 @@ void Animator::tick() {
             else frame = std::min(step, count - 1);
             const render::AnimFrame& f = clip->frames[static_cast<std::size_t>(frame)];
             if (f.sprite.width > 0) {
-                ov.x += f.left;
-                ov.y += f.top;
-                ov.sprite = &f.sprite;
-                visible_.push_back(ov);
+                Keyed k{t.group, pos, {pos.x + f.left, pos.y + f.top, &f.sprite, {}}};
+                if (t.occlusion == Occlusion::AtRest) k.draw.refresh = refreshAtRest(tile);
+                else if (t.occlusion == Occlusion::Translate) k.draw.refresh = refreshTranslate(tile, facing);
+                drawn.push_back(std::move(k));
             }
         }
         if (now_ == t.start + t.duration) pendingEnds_.push_back(t.onEnd ? t.onEnd : std::function<void()>());
     }
     std::erase_if(tracks_, [&](const Running& r) { return r.track.start + r.track.duration <= now_; });
+    std::stable_sort(drawn.begin(), drawn.end(), [](const Keyed& a, const Keyed& b) {
+        return std::tie(a.group, a.frame.y, a.frame.x) < std::tie(b.group, b.frame.y, b.frame.x);
+    });
+    for (Keyed& k : drawn) visible_.push_back(std::move(k.draw));
 }
 
 } // namespace openday::game

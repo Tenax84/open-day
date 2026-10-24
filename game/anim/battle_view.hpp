@@ -12,8 +12,9 @@ namespace openday::game {
 
 class BattleView {
 public:
-    // `viewer`: the player whose knowledge of mines is shown; -1 = whoever's
-    // turn it is (hot seat). The references must outlive this object.
+    // `viewer`: the local player, whose knowledge of mines is shown; -1 =
+    // the human player whose turn it is or was last (hot seat). The
+    // references must outlive this object.
     BattleView(BattleState initial, MapScene& scene, BattleAnimations& animations, int viewer = -1);
 
     // The client's copy of the state. It runs ahead of the animations: it
@@ -26,7 +27,9 @@ public:
     bool turnUnit(int unit);
 
 private:
-    int viewer() const { return viewer_ >= 0 ? viewer_ : state_.currentPlayer; }
+    int viewer() const { return viewer_ >= 0 ? viewer_ : lastHuman_; }
+    // Schedules a redraw of the units whose usable AP or draw mode changed.
+    void syncUnits(bool immediately);
     std::vector<MapSprite> roadLayer() const;
     std::vector<MapSprite> wallLayer();
     std::vector<MapSprite> mineLayer() const;
@@ -36,7 +39,13 @@ private:
     MapScene& scene_;
     BattleAnimations& anim_;
     int viewer_;
+    int lastHuman_ = 1;
     std::vector<int> wallShape_; // per wall: sprite number of the last redraw
+    // Per unit: the usable AP and draw mode last given to the scene, and
+    // whether it was placed in the deployment view (drawn darkened).
+    std::vector<int> shownAp_, shownMode_;
+    std::vector<bool> deployed_;
+    int lastExploded_ = -1; // mine of the last explosion record
 };
 
 } // namespace openday::game

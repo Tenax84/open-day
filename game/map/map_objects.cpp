@@ -1,6 +1,7 @@
 #include "map/map_objects.hpp"
 
 #include <array>
+#include <limits>
 #include <map>
 #include <set>
 #include <tuple>
@@ -10,9 +11,6 @@ namespace openday::game {
 namespace {
 
 using Tile = std::pair<int, int>;
-
-// Damaged sprites are shown once armor drops to a third of the type's maximum.
-bool isDamaged(int currentArmor, int maxArmor) { return currentArmor * 100 <= maxArmor * 33; }
 
 std::uint8_t neighborMask(const std::set<Tile>& tiles, int x, int y) {
     std::uint8_t m = 0;
@@ -28,6 +26,48 @@ int toInt(const data::Row& row, int col) { return static_cast<int>(row.integer(c
 std::string twoDigits(int n) { return threeDigits(n).substr(1); }
 
 } // namespace
+
+bool isDamaged(int currentArmor, int maxArmor) {
+    return static_cast<double>(currentArmor) <= 0.33 * static_cast<double>(maxArmor);
+}
+
+ColorTable makeColorTable(int localSlot, int chosenColor) {
+    ColorTable t;
+    if (localSlot < 0 || localSlot > 4 || chosenColor < 0 || chosenColor > 4) return t;
+    std::swap(t.color[static_cast<std::size_t>(localSlot)], t.color[static_cast<std::size_t>(chosenColor)]);
+    return t;
+}
+
+int unitDrawMode(const MapUnit& unit) {
+    if (unit.mode != 0) return unit.mode;
+    return unit.ap >= 0 && unit.type && unit.ap < unit.type->shotAp && unit.ap < 4 ? 1 : 0;
+}
+
+std::string mineSpriteName(const MineType& type, bool armed) { return type.image + (armed ? "001" : "000"); }
+
+std::vector<MapSprite> buildingSprites(const MapBuilding& b, int entity, const GlobalRules& rules, const TerrainMap& terrain) {
+    const BuildingType& bt = *b.type;
+    std::string prefix;
+    if (bt.transformIntoUnit != 65535) {
+        // A tower: the unit naming with facing 0 and no damage digit.
+        std::string code = bt.image;
+        const auto unit = rules.units.lower_bound({bt.transformIntoUnit, std::numeric_limits<int>::min()});
+        if (unit != rules.units.end() && unit->first.first == bt.transformIntoUnit && !unit->second.image.empty())
+            code = unit->second.image;
+        prefix = code + std::to_string(b.color) + "0";
+    } else {
+        prefix = bt.image + std::to_string(b.color) + (bt.damagedImages && isDamaged(b.armor, bt.armor) ? "1" : "0");
+    }
+    std::vector<MapSprite> out;
+    for (int dy = 0; dy < bt.sizeY; ++dy)
+        for (int dx = 0; dx < bt.sizeX; ++dx) {
+            const int x = b.x + dx, y = b.y + dy;
+            if (terrain.inside(x, y))
+                out.push_back({x, y, Layer::Building, SpriteSet::UnitsBuildings, prefix + std::to_string(dx) + std::to_string(dy), 0,
+                               entity});
+        }
+    return out;
+}
 
 std::string threeDigits(int n) {
     std::string s = std::to_string(n);
@@ -78,7 +118,7 @@ MapSprite unitSprite(const MapUnit& unit, int entity, const TerrainMap& terrain,
     const int facing = unit.facing & 7;
     const char facingChar = static_cast<char>(inForest ? 'A' + facing : '0' + facing);
     return {unit.x, unit.y, Layer::Unit, SpriteSet::UnitsBuildings,
-            unit.type->image + std::to_string(unit.color) + facingChar + "00", onBridge ? -5 : 0, entity};
+            unit.type->image + std::to_string(unit.color) + facingChar + "00", onBridge ? -5 : 0, entity, unitDrawMode(unit)};
 }
 
 std::vector<MapSprite> roadSprites(const std::vector<RoadPiece>& roads, const GlobalRules& rules, const TerrainMap& terrain) {
@@ -155,8 +195,9 @@ ScenarioObjects readScenarioObjects(const data::SqliteDb& scenario) {
     scenario.forEach("SELECT roadtype, posX, posY, currentAR, isDamaged FROM \"Walls On Map\"", [&](const data::Row& r) {
         o.walls.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), toInt(r, 3), r.integer(4) != 0});
     });
-    scenario.forEach("SELECT typeID, PosX, PosY FROM \"Mines On Map\"",
-                     [&](const data::Row& r) { o.mines.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2)}); });
+    scenario.forEach("SELECT typeID, PosX, PosY, armed FROM \"Mines On Map\"", [&](const data::Row& r) {
+        o.mines.push_back({toInt(r, 0), toInt(r, 1), toInt(r, 2), r.integer(3) != 0});
+    });
     scenario.forEach("SELECT id, PosX, PosY FROM \"Ruins On Map\"",
                      [&](const data::Row& r) { o.ruins.push_back({toUpper(r.text(0)), toInt(r, 1), toInt(r, 2)}); });
     scenario.forEach("SELECT buildingType, playerOwner, PosX, PosY, currentAR FROM \"Buildings On Map\"",
@@ -171,10 +212,11 @@ ScenarioObjects readScenarioObjects(const data::SqliteDb& scenario) {
 }
 
 std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRules& rules, const TerrainMap& terrain,
-                                        MapEntities* entities) {
+                                        MapEntities* entities, const ColorTable& colors) {
     MapEntities local;
     MapEntities& ent = entities ? *entities : local;
     ent = {};
+    ent.colors = colors;
     std::vector<MapSprite> out;
     auto inside = [&](int x, int y) { return x >= 0 && y >= 0 && x < terrain.size && y < terrain.size; };
     // Terrain class of a tile; tiles outside the map count as unknown.
@@ -187,12 +229,12 @@ std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRul
     for (MapSprite& sprite : roadSprites(objects.roads, rules, terrain)) out.push_back(std::move(sprite));
     for (MapSprite& sprite : wallSprites(objects.walls, rules, terrain)) out.push_back(std::move(sprite));
 
-    // Mines: ImageID + 000 or 001; which state selects 001 is unknown, so
-    // every mine uses 000 for now.
+    // Mines: ImageID + 001 (armed) or 000. All of them are shown here; a
+    // battle shows only those the local player knows (BattleView).
     for (const ScenarioObjects::Mine& m : objects.mines) {
         const auto mine = rules.mines.find(m.type);
         if (mine != rules.mines.end() && inside(m.x, m.y))
-            out.push_back({m.x, m.y, Layer::Mine, SpriteSet::Mines, mine->second.image + "000"});
+            out.push_back({m.x, m.y, Layer::Mine, SpriteSet::Mines, mineSpriteName(mine->second, m.armed)});
     }
 
     for (const ScenarioObjects::Ruin& r : objects.ruins)
@@ -200,22 +242,12 @@ std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRul
 
     // Buildings: one UB.DBI sprite per footprint tile,
     // <code><color><damaged><offset along PosX><offset along PosY>.
-    // The color variant is the owner's slot (0 = AI) *(?)*.
     for (const ScenarioObjects::Building& b : objects.buildings) {
         const auto type = rules.buildings.find(b.type);
         if (type == rules.buildings.end()) continue;
-        const BuildingType& bt = type->second;
         const int entity = static_cast<int>(ent.buildings.size());
-        ent.buildings.push_back({&bt, b.x, b.y});
-        const std::string prefix =
-            bt.image + std::to_string(b.owner) + (bt.damagedImages && isDamaged(b.armor, bt.armor) ? "1" : "0");
-        for (int dy = 0; dy < bt.sizeY; ++dy)
-            for (int dx = 0; dx < bt.sizeX; ++dx) {
-                const int x = b.x + dx, y = b.y + dy;
-                if (inside(x, y))
-                    out.push_back({x, y, Layer::Building, SpriteSet::UnitsBuildings,
-                                   prefix + std::to_string(dx) + std::to_string(dy), 0, entity});
-            }
+        ent.buildings.push_back({&type->second, b.x, b.y, true, colors(b.owner), b.armor});
+        for (MapSprite& sprite : buildingSprites(ent.buildings.back(), entity, rules, terrain)) out.push_back(std::move(sprite));
     }
 
     // Units: <code><color><facing>00. Infantry in forest uses the facing
@@ -223,7 +255,7 @@ std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRul
     for (const ScenarioObjects::Unit& u : objects.units) {
         const auto type = rules.units.find({u.type, u.techLevel});
         if (type == rules.units.end() || !inside(u.x, u.y)) continue;
-        const MapUnit unit{&type->second, u.owner, u.facing & 7, u.x, u.y};
+        const MapUnit unit{&type->second, colors(u.owner), u.facing & 7, u.x, u.y};
         const bool onBridge = classAt(u.x, u.y) == TerrainClass::DeepWater && anyRoad.count({u.x, u.y});
         out.push_back(unitSprite(unit, static_cast<int>(ent.units.size()), terrain, rules, onBridge));
         ent.units.push_back(unit);
@@ -232,8 +264,8 @@ std::vector<MapSprite> mapObjectSprites(ScenarioObjects objects, const GlobalRul
 }
 
 std::vector<MapSprite> loadMapObjects(const data::SqliteDb& scenario, const GlobalRules& rules, const TerrainMap& terrain,
-                                      MapEntities* entities) {
-    return mapObjectSprites(readScenarioObjects(scenario), rules, terrain, entities);
+                                      MapEntities* entities, const ColorTable& colors) {
+    return mapObjectSprites(readScenarioObjects(scenario), rules, terrain, entities, colors);
 }
 
 } // namespace openday::game

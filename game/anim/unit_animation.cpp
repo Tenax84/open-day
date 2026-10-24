@@ -45,6 +45,52 @@ std::string buildingClipName(const BuildingType& type) {
     return type.hasExplosion && !type.image.empty() ? "BUILDING\\" + type.image + ".SMK" : std::string();
 }
 
+std::string mineClipName(const MineType& type) {
+    return type.hasExplosion && !type.image.empty() ? "MINE\\" + type.image + ".SMK" : std::string();
+}
+
+std::vector<RefreshCell> refreshAtRest(Point a) {
+    // (x + 1, y + 1) is listed twice by the original; once is enough.
+    return {{a.x, a.y + 1, 28, 0, 27, 42},
+            {a.x + 1, a.y + 1, 0, 0, 54, 28},
+            {a.x + 1, a.y + 2, 28, 0, 27, 14},
+            {a.x + 1, a.y, 0, 0, 27, 42},
+            {a.x + 2, a.y + 1, 0, 0, 27, 14}};
+}
+
+std::vector<RefreshCell> refreshTranslate(Point b, int facing) {
+    switch (facing & 7) {
+    case 0:
+    case 4: {
+        // Steps along y; A = the tile of the step with the smaller y.
+        const Point a = (facing & 7) == 0 ? Point{b.x, b.y - 1} : b;
+        return {{a.x + 1, a.y, 0, 0, 27, 56},     {a.x, a.y + 2, 28, 0, 27, 42},     {a.x + 1, a.y + 1, 0, 0, 54, 42},
+                {a.x + 1, a.y + 2, 0, 0, 54, 28}, {a.x + 2, a.y + 1, 0, 0, 27, 28},  {a.x + 1, a.y + 3, 28, 0, 27, 14},
+                {a.x + 2, a.y + 2, 0, 0, 54, 14}};
+    }
+    case 2:
+    case 6: {
+        // Steps along x; F = the tile with the smaller x.
+        const Point f = (facing & 7) == 2 ? b : Point{b.x - 1, b.y};
+        return {{f.x, f.y + 1, 28, 0, 27, 56},    {f.x + 2, f.y, 0, 0, 27, 42},      {f.x + 1, f.y + 1, 0, 0, 54, 42},
+                {f.x + 2, f.y + 1, 0, 0, 54, 28}, {f.x + 1, f.y + 2, 28, 0, 27, 28}, {f.x + 3, f.y + 1, 0, 0, 27, 14},
+                {f.x + 2, f.y + 2, 0, 0, 54, 14}};
+    }
+    case 1:
+    case 5: {
+        // Screen-horizontal diagonal; C = the tile with the smaller x.
+        const Point c = (facing & 7) == 1 ? b : Point{b.x - 1, b.y + 1};
+        return {{c.x, c.y + 1, 28, 0, 27, 42},    {c.x + 1, c.y, 0, 0, 54, 42},     {c.x + 2, c.y - 1, 0, 0, 27, 42},
+                {c.x + 1, c.y + 1, 0, 0, 54, 28}, {c.x + 2, c.y, 0, 0, 54, 28},     {c.x + 1, c.y + 2, 28, 0, 27, 14},
+                {c.x + 2, c.y + 1, 0, 0, 54, 14}, {c.x + 3, c.y, 0, 0, 27, 14}};
+    }
+    default:
+        // Screen-vertical diagonal: the at-rest table of the tile with the
+        // larger x and y.
+        return refreshAtRest((facing & 7) == 3 ? Point{b.x + 1, b.y + 1} : b);
+    }
+}
+
 int facingOfStep(int dx, int dy) {
     // Index (dy + 1) * 3 + (dx + 1).
     static constexpr int kFacing[9] = {3, 4, 5, 2, 0, 6, 1, 0, 7};

@@ -14,6 +14,13 @@ namespace openday::game {
 
 inline constexpr int kTicksPerSecond = 15;
 
+// How an animation repairs the map cells in front of it (unit-animation.md 8).
+enum class Occlusion {
+    None,      // drawn on top of everything
+    AtRest,    // a unit clip on `tile`
+    Translate, // a move: per tick from the tile being entered and the facing
+};
+
 // One scheduled animation. It is active from tick `start` to `start +
 // duration`: onStart runs at the start tick, onEnd after the last tick.
 struct AnimTrack {
@@ -25,7 +32,9 @@ struct AnimTrack {
     bool loop = false;            // moves loop their clip; others hold the last frame
     std::vector<SlideStep> path;  // per tick frame position, depth tile and facing
     Point pos;                    // frame position when path is empty
-    Point tile{-1, -1};           // depth tile when path is empty; outside the map = on top
+    Point tile{-1, -1};           // the clip's tile when path is empty (for AtRest)
+    int group = 0;                // draw-order group: 0 ground (unit clips, moves), 1 floating
+    Occlusion occlusion = Occlusion::None;
     const render::Animation* sound = nullptr; // played at the start
     std::function<void()> onStart;
     std::function<void()> onEnd;
@@ -43,8 +52,9 @@ public:
     // Advances the clock by one tick.
     void tick();
 
-    // Frames of the current tick.
-    const std::vector<Overlay>& overlays() const { return visible_; }
+    // Frames of the current tick, sorted by group, then frame top, then
+    // frame left (unit-animation.md 8).
+    const std::vector<AnimDraw>& frames() const { return visible_; }
 
     std::function<void(const render::Animation&)> playSound;
 
@@ -52,10 +62,11 @@ private:
     struct Running {
         AnimTrack track;
         std::array<int, 8> frameCounter{};
+        int lastFacing = -1; // facing of the previous tick (moves)
     };
     std::vector<Running> tracks_;
     std::vector<std::function<void()>> pendingEnds_;
-    std::vector<Overlay> visible_;
+    std::vector<AnimDraw> visible_;
     int now_ = 0;
 };
 

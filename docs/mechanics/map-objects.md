@@ -511,6 +511,38 @@ deployment zone *(?)*. This table differs from the road/wall table:
 - Mine visibility is evaluated for the local player only; when a human
   player detects a mine, clear all four human flags.
 
+## Implementation notes (OpenDay)
+
+Implemented in `game/map/` (`map_objects.*`, `map_renderer.*`),
+`engine/render/indexed_surface.*` and `game/anim/` (`battle_view.*`,
+`battle_animations.*`):
+
+- Color table: `ColorTable` / `makeColorTable(localSlot, chosenColor)`.
+  Units and buildings get `colorTable[owner]` when they are loaded or added;
+  the selection triangles `SU00c` and the deployment markers `DEPL<c>…` use
+  the same table. The game has no multiplayer yet, so the table is always
+  the identity; a missing color-0 sprite simply draws nothing.
+- Mines: `<ImageID>001` / `000` from `armed`. A battle shows a mine only if it
+  is not hidden from the local player (`BattleView`; in the hot-seat viewer
+  the human whose turn it is or was last). `MinesRevealed` for slot 0 clears
+  `hidden_AI`, for any human slot all four human flags (`applyEvent`).
+  OpenDay has no rule that disarms a mine.
+- Damaged buildings: `isDamaged` compares `currentAR ≤ 0.33 × Armor` in
+  floating point (also for walls). `BuildingDamaged` and repairs rewrite the
+  building's tiles when the record is played. Tower buildings use the tower
+  unit type's `facingsImageID` with facing 0 and no damage digit.
+- Draw modes: `MapSprite::mode` / `Overlay::mode`, blitted by
+  `IndexedSurface::blit(sprite, x, y, mode, clip)`; modes 6–15 draw normally.
+  Units get mode 1 from their usable AP (`unitDrawMode`) or while they were
+  placed in the deployment view (until the battle starts). Bit 16
+  (`kDrawOnTop`) is used by `PATH0002`/`PATH0003`, `OBJT001`/`OBJT002`,
+  `LILBULB` and the selection triangles; the interface markers carry the
+  layer numbers of the table above (tile cursors: layer 8). The city build
+  cursor still uses its own tinted copies instead of modes 3 / 4.
+- The changes of an animation phase follow the table above, except that a
+  triggered mine plays its clip once (with the explosion record; a
+  `MineDestroyed` of the same mine right after it adds no second clip).
+
 ## Open questions
 
 - (Answered: the player-slot → color table, the mine suffix (`armed`),

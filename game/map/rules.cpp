@@ -28,6 +28,17 @@ int GlobalRules::ruinCount(const std::string& prefix) const {
     return n;
 }
 
+namespace {
+
+bool hasColumn(const data::SqliteDb& db, const std::string& table, const std::string& column) {
+    bool has = false;
+    db.forEach("SELECT name FROM pragma_table_info('" + table + "') WHERE name = '" + column + "'",
+               [&](const data::Row&) { has = true; });
+    return has;
+}
+
+} // namespace
+
 GlobalRules loadGlobalRules(const data::SqliteDb& global) {
     GlobalRules r;
     auto toInt = [](const data::Row& row, int col) { return static_cast<int>(row.integer(col)); };
@@ -149,6 +160,11 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                        t.listbox = toUpper(row.text(11));
                        r.mines[t.id] = std::move(t);
                    });
+    if (hasColumn(global, "Mine Types", "ExplosionAnimation"))
+        global.forEach("SELECT typeID, ExplosionAnimation FROM \"Mine Types\"", [&](const data::Row& row) {
+            const auto it = r.mines.find(toInt(row, 0));
+            if (it != r.mines.end()) it->second.hasExplosion = row.integer(1) != -1;
+        });
     if (global.hasTable("Automated Units"))
         global.forEach("SELECT typeID, NameEnglish, Race, Category, Cost, Prerequisite, DeployOnce, facingsImageID, cursorID, "
                        "ExplainEnglish, FrameAA, FrameAction, AAPosX, AAPosY FROM \"Automated Units\"",
@@ -215,6 +231,11 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                                        row.isNull(3) ? std::string() : toUpper(row.text(3)),
                                        Rgb{toInt(row, 4), toInt(row, 5), toInt(row, 6)}};
                    });
+    if (hasColumn(global, "Terrain Types", "Overlapping"))
+        global.forEach("SELECT id, Overlapping FROM \"Terrain Types\"", [&](const data::Row& row) {
+            const auto it = r.terrain.find(toUpper(row.text(0)));
+            if (it != r.terrain.end()) it->second.overlapping = row.integer(1) != 0;
+        });
     if (global.hasTable("Colors"))
         global.forEach("SELECT Type, Enum, Color_Red, Color_Green, Color_Blue FROM \"Colors\"", [&](const data::Row& row) {
             r.colors[{toInt(row, 0), toInt(row, 1)}] = Rgb{toInt(row, 2), toInt(row, 3), toInt(row, 4)};

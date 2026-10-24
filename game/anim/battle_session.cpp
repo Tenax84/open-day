@@ -36,10 +36,17 @@ void BattleSession::apply(const std::vector<Event>& events) {
     }
 }
 
-void BattleSession::begin() { apply(server_.start()); }
+void BattleSession::begin() {
+    animations_.beginPhase(false);
+    apply(server_.start());
+}
 
 std::string BattleSession::send(const Request& request) {
     const std::vector<Event> events = server_.handle(request);
+    // The answer to a move order is one phase whose moves start 3 ticks
+    // apart; other answers (and the computer player's turn, which comes as
+    // one answer here) play their records one after the other.
+    animations_.beginPhase(std::holds_alternative<MoveRequest>(request));
     apply(events);
     std::string refused;
     for (const Event& e : events)

@@ -144,9 +144,9 @@ void testAnimator() {
     std::vector<int> shown;
     for (int i = 0; i < 5; ++i) {
         anim.tick();
-        for (const Overlay& ov : anim.overlays()) {
+        for (const AnimDraw& ov : anim.frames()) {
             shown.push_back(ov.sprite->pixels[0]);
-            CHECK(ov.x == 110 && ov.y == 110 && ov.tileX == 1 && ov.tileY == 1);
+            CHECK(ov.x == 110 && ov.y == 110 && ov.refresh.empty());
         }
     }
     CHECK(shown == std::vector<int>({0, 1, 2}));
@@ -216,6 +216,145 @@ void testHiddenWhileAnimating() {
     CHECK(!m.entities.units[0].alive && unitName(m.scene) == "none");
 }
 
+bool hasCell(const std::vector<RefreshCell>& list, RefreshCell c) {
+    for (const RefreshCell& r : list)
+        if (r.x == c.x && r.y == c.y && r.rx == c.rx && r.ry == c.ry && r.w == c.w && r.h == c.h) return true;
+    return false;
+}
+
+void testOcclusionTables() {
+    const std::vector<RefreshCell> rest = refreshAtRest({4, 5});
+    CHECK(rest.size() == 5);
+    CHECK(hasCell(rest, {4, 6, 28, 0, 27, 42}) && hasCell(rest, {5, 6, 0, 0, 54, 28}) && hasCell(rest, {5, 7, 28, 0, 27, 14}));
+    CHECK(hasCell(rest, {5, 5, 0, 0, 27, 42}) && hasCell(rest, {6, 6, 0, 0, 27, 14}));
+    // Facings 0 and 4 share the table of A = the tile with the smaller y.
+    const std::vector<RefreshCell> f0 = refreshTranslate({4, 5}, 0), f4 = refreshTranslate({4, 4}, 4);
+    CHECK(f0.size() == 7 && hasCell(f0, {5, 4, 0, 0, 27, 56}) && hasCell(f0, {5, 7, 28, 0, 27, 14}));
+    CHECK(hasCell(f4, {5, 4, 0, 0, 27, 56}) && hasCell(f4, {6, 6, 0, 0, 54, 14}));
+    // Facings 2 and 6: F = the tile with the smaller x.
+    const std::vector<RefreshCell> f6 = refreshTranslate({4, 5}, 6), f2 = refreshTranslate({3, 5}, 2);
+    CHECK(hasCell(f6, {3, 6, 28, 0, 27, 56}) && hasCell(f6, {6, 6, 0, 0, 27, 14}) && hasCell(f2, {5, 5, 0, 0, 27, 42}));
+    // Facings 1 and 5: C = the tile with the smaller x.
+    const std::vector<RefreshCell> f5 = refreshTranslate({4, 5}, 5), f1 = refreshTranslate({3, 6}, 1);
+    CHECK(f5.size() == 8 && hasCell(f5, {5, 5, 0, 0, 27, 42}) && hasCell(f5, {6, 6, 0, 0, 27, 14}));
+    CHECK(hasCell(f1, {3, 7, 28, 0, 27, 42}));
+    // Facings 3 and 7: the at-rest table of the tile with the larger x and y.
+    const std::vector<RefreshCell> f3 = refreshTranslate({4, 5}, 3), f7 = refreshTranslate({5, 6}, 7);
+    CHECK(f3.size() == 5 && hasCell(f3, {5, 7, 28, 0, 27, 42}) && hasCell(f7, {5, 7, 28, 0, 27, 42}));
+}
+
+void testFrameOrder() {
+    const render::Animation clip = testClip(3);
+    Animator anim;
+    auto track = [&](int group, Point pos, Occlusion occ) {
+        AnimTrack t;
+        t.clips[0] = &clip;
+        t.duration = 2;
+        t.pos = pos;
+        t.tile = {2, 2};
+        t.group = group;
+        t.occlusion = occ;
+        anim.add(t);
+    };
+    track(1, {0, 0}, Occlusion::None);         // floating: after every ground frame
+    track(0, {50, 40}, Occlusion::AtRest);     // lower: after the next one
+    track(0, {90, 10}, Occlusion::AtRest);     // higher on screen
+    track(0, {20, 10}, Occlusion::None);       // same top, further left: first
+    anim.tick();
+    const std::vector<AnimDraw>& f = anim.frames();
+    CHECK(f.size() == 4);
+    if (f.size() == 4) {
+        CHECK(f[0].x == 120 && f[1].x == 190 && f[2].x == 150 && f[3].x == 100);
+        CHECK(f[1].refresh.size() == 5 && f[0].refresh.empty() && f[3].refresh.empty());
+    }
+}
+
+void testFacingRestart() {
+    // A move clip per facing; a facing change starts the new clip at frame 0
+    // even when it was shown before.
+    const render::Animation clip = testClip(5);
+    Animator anim;
+    AnimTrack t;
+    t.loop = true;
+    t.clips.fill(&clip);
+    const int facings[] = {0, 0, 0, 2, 2, 0, 0};
+    for (const int f : facings) t.path.push_back({{0, 0}, {1, 1}, f});
+    t.duration = static_cast<int>(t.path.size()) - 1;
+    t.occlusion = Occlusion::Translate;
+    anim.add(t);
+    std::vector<int> shown;
+    for (int i = 0; i < 7; ++i) {
+        anim.tick();
+        for (const AnimDraw& d : anim.frames()) shown.push_back(d.sprite->pixels[0]);
+    }
+    CHECK(shown == std::vector<int>({0, 1, 2, 0, 1, 0, 1}));
+}
+
+void testStaggeredMoves() {
+    // Two units of a group order: the second one sets off 3 ticks later
+    // (3 x (record id - 1)), not after the first one's move.
+    TestMap m;
+    m.entities.units.push_back({&m.type, 2, 0, 4, 1});
+    m.scene.replaceEntity(Layer::Unit, 1, {unitSprite(m.entities.units[1], 1, m.scene.terrain(), m.rules, false)});
+    BattleAnimations battle(m.scene, m.entities, m.rules, nullptr);
+    std::vector<std::string> log;
+    battle.beginPhase(true);
+    battle.nextRecord();
+    battle.move(0, straightPath({1, 1}, {1, 3}));
+    battle.nextRecord();
+    battle.move(1, straightPath({4, 1}, {4, 3}));
+    // Without clips each move takes no time: unit 0 arrives first, unit 1
+    // three ticks later.
+    int arrived0 = -1, arrived1 = -1;
+    for (int i = 0; i < 12 && battle.busy(); ++i) {
+        battle.tick();
+        if (arrived0 < 0 && m.entities.units[0].y == 3) arrived0 = battle.animator().now();
+        if (arrived1 < 0 && m.entities.units[1].y == 3) arrived1 = battle.animator().now();
+    }
+    CHECK(arrived0 > 0 && arrived1 == arrived0 + 3);
+
+    // Outside a staggered phase the second move waits for the first.
+    battle.beginPhase(false);
+    battle.nextRecord();
+    battle.move(0, straightPath({1, 3}, {1, 4}));
+    battle.nextRecord();
+    battle.move(1, straightPath({4, 3}, {4, 4}));
+    arrived0 = arrived1 = -1;
+    for (int i = 0; i < 12 && battle.busy(); ++i) {
+        battle.tick();
+        if (arrived0 < 0 && m.entities.units[0].y == 4) arrived0 = battle.animator().now();
+        if (arrived1 < 0 && m.entities.units[1].y == 4) arrived1 = battle.animator().now();
+    }
+    CHECK(arrived0 > 0 && arrived1 <= arrived0 + 1);
+}
+
+void testMineAndDamage() {
+    TestMap m;
+    BuildingType bt{"HBAR", 1, 1, 90, true, true};
+    m.entities.buildings.push_back({&bt, 3, 3, true, 1, 90});
+    m.scene.replaceEntity(Layer::Building, 0, buildingSprites(m.entities.buildings[0], 0, m.rules, m.scene.terrain()));
+    m.scene.addObject({2, 2, Layer::Mine, SpriteSet::Mines, "MINE001"});
+    BattleAnimations battle(m.scene, m.entities, m.rules, nullptr);
+    auto buildingName = [&] {
+        for (const MapSprite& s : m.scene.objects())
+            if (s.layer == Layer::Building) return s.name;
+        return std::string("none");
+    };
+    CHECK(buildingName() == "HBAR1000");
+    battle.setBuildingArmor(0, 29); // a third or less (0.33 x 90 = 29.7): the damaged sprite at once
+    battle.tick();
+    CHECK(buildingName() == "HBAR1100");
+    // Without a clip the mine explosion changes nothing on the map.
+    MineType mine;
+    mine.image = "MINE";
+    battle.mineExplosion({2, 2}, mine, true);
+    for (int i = 0; i < 5 && battle.busy(); ++i) battle.tick();
+    CHECK(m.scene.hasObject(2, 2, Layer::Mine));
+    CHECK(mineClipName(mine) == "MINE\\MINE.SMK");
+    mine.hasExplosion = false;
+    CHECK(mineClipName(mine).empty());
+}
+
 } // namespace
 
 int main() {
@@ -226,6 +365,11 @@ int main() {
     testAnimator();
     testBattleAnimations();
     testHiddenWhileAnimating();
+    testOcclusionTables();
+    testFrameOrder();
+    testFacingRestart();
+    testStaggeredMoves();
+    testMineAndDamage();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

@@ -270,7 +270,7 @@ int screenshot(LoadedMap& map, game::SpriteLibrary& sprites, const Palettes& pal
     formats::writePngRgba(opt.screenshot, surface.width(), surface.height(), surface.toRgba(palettes.at(0, false)));
     std::printf("%s: %dx%d tiles, %d drawn, %zu objects, %zu animation frames, %d missing sprites -> %s (%d x %d)\n",
                 map.name().c_str(), size, size, stats.tilesDrawn, opt.objects ? map.scene().objects().size() : std::size_t{0},
-                map.animations().animator().overlays().size(), stats.missingSprites, opt.screenshot.string().c_str(),
+                map.animations().animator().frames().size(), stats.missingSprites, opt.screenshot.string().c_str(),
                 surface.width(), surface.height());
     if (opt.objects && stats.missingSprites > 0) {
         std::set<std::string> missing;

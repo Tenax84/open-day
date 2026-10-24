@@ -66,6 +66,14 @@ tall (overlapping) terrain can cover an animation. When a tile's terrain
 changes during a battle (burned terrain), the new sprite and its flag are
 written into the cell and the map is redrawn.
 
+## Implementation notes (OpenDay)
+
+`MapScene::draw` (`game/map/map_renderer.cpp`) draws the cells up to two
+tiles outside the map with `BLACK` and uses `BORE000` for an empty terrain
+name inside the map. The `Overlapping` flags are read from `Terrain Types`
+(`TerrainType::overlapping`) and kept per cell by `MapScene::useRules` /
+`setTerrain`; without rules no cell counts as overlapping.
+
 ## Palette
 
 Sprites are composed in 8-bit palette indices. The final colors come from

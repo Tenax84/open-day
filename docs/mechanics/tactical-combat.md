@@ -582,8 +582,9 @@ the resolution). Choices and differences:
   and 6.1 (watch zones only for movers with `Jammer` > 0; the hit chance at
   a unit of the player whose turn it is scaled by `Jammer` / 100, integer
   arithmetic, which equals the truncated product).
-- Not implemented yet: the `TechReward` of destroyed buildings, damaged
-  building sprites after a hit, mine explosion animations.
+- Damaged building sprites and mine explosion clips are drawn
+  (map-objects.md and unit-animation.md implementation notes).
+- Not implemented yet: the `TechReward` of destroyed buildings.
 - Game options: `coop` true, AI damage scaling on, difficulty 5 (average)
   by default.
 
