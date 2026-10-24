@@ -45,6 +45,9 @@ struct GameData {
 
     std::string text(int id) const;
     fs::path scenario(const std::string& name) const;
+    // A file of the installation by its Windows name ("INTERF/PAL.BMP"),
+    // found case-insensitively (formats/game_path.hpp).
+    fs::path file(const std::string& relative) const;
 
     static GameData load(const fs::path& gameDir, const fs::path& dataDir);
 };

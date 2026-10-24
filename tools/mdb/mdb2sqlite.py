@@ -4,6 +4,10 @@
 OpenDay tool - see docs/formats/MDB.md for the file format notes and
 docs/mechanics/data-model.md for what the tables mean.
 
+Optional: the game converts the databases itself on first start, and the
+native `mdbtool` (engine/data/mdb_import.*) produces the same output. This
+script is kept as the reference implementation and for development.
+
 The converter has no dependencies outside the Python 3.8+ standard library and
 runs on macOS, Linux and Windows alike. It contains its own small read-only
 Jet 3 reader (table definitions, data pages, overflow rows and memo/OLE

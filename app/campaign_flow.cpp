@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include "app/campaign.hpp"
+#include "app/setup.hpp"
 #include "formats/pe_resources.hpp"
 
 namespace openday::app {
@@ -77,10 +78,7 @@ ui::Rect centred(int w, int h) { return {(640 - w) / 2, (480 - h) / 2, w, h}; }
 
 fs::path savesDir() {
     if (const char* env = std::getenv("OPENDAY_SAVE_DIR")) return fs::path(env);
-    char* pref = SDL_GetPrefPath("OpenDay", "OpenDay");
-    fs::path p = pref ? fs::path(reinterpret_cast<const char8_t*>(pref)) / "saves" : fs::current_path() / "saves";
-    SDL_free(pref);
-    return p;
+    return setup::userDir() / "saves";
 }
 
 fs::path saveFile(int slot) {

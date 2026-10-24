@@ -50,3 +50,17 @@ add_test(NAME campaign_test COMMAND campaign_test)
 if(DEFINED ENV{OPENDAY_DATA_DIR})
     add_test(NAME campaign_game_files COMMAND campaign_test --data "$ENV{OPENDAY_DATA_DIR}")
 endif()
+
+add_executable(zip_test zip_test.cpp)
+target_link_libraries(zip_test PRIVATE openday_formats openday_warnings)
+add_test(NAME zip_test COMMAND zip_test)
+
+add_executable(mdb_test mdb_test.cpp)
+target_link_libraries(mdb_test PRIVATE openday_data openday_warnings)
+add_test(NAME mdb_test COMMAND mdb_test)
+
+# Optional: convert the local installation and compare it with a conversion
+# made by tools/mdb/mdb2sqlite.py (OPENDAY_DATA_DIR).
+if(DEFINED ENV{OPENDAY_GAME_DIR} AND DEFINED ENV{OPENDAY_DATA_DIR})
+    add_test(NAME mdb_game_files COMMAND mdb_test --game-dir "$ENV{OPENDAY_GAME_DIR}" --compare "$ENV{OPENDAY_DATA_DIR}")
+endif()

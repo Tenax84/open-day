@@ -91,7 +91,8 @@ All scenario databases (campaign and death match) share one schema of about
 
 | Reader | Platform | Result |
 |---|---|---|
-| **OpenDay `tools/mdb/mdb2sqlite.py`** (own Jet 3 reader, Python stdlib only) | macOS, Linux, Windows | **Works.** Reads all 122 databases. Row counts and values are identical to Jackcess for every table and column (OLE values compared by length). Spot-checked OLE blobs are byte-identical to the Microsoft driver's. Converts a whole install in ~10 s. **Recommended.** |
+| **OpenDay `tools/mdb/mdb2sqlite.py`** (own Jet 3 reader, Python stdlib only) | macOS, Linux, Windows | **Works.** Reads all 122 databases. Row counts and values are identical to Jackcess for every table and column (OLE values compared by length). Spot-checked OLE blobs are byte-identical to the Microsoft driver's. Converts a whole install in ~10 s. |
+| **OpenDay native converter** (C++ port of the above; `mdbtool`, game first start) | macOS, Linux, Windows | **Works.** Output identical to the Python tool for all 122 databases (see *Implementation notes*). **Used by the game.** |
 | Jackcess 4.0.5 (Java, Apache-2.0) | any JVM | Reads all data correctly **if** the charset is set to Windows-1252. Opening tables by name fails for about half of the `GLOBAL.MDB` tables (its catalog-index lookup does not match these Jet 3 files). Opening by table-definition page works. It tries to resolve the dangling linked-table path when listing relationships. Used here as the reference for validation. |
 | Microsoft Jet OLE DB 4.0 / "Microsoft Access Driver (*.mdb)" ODBC | Windows only, **32-bit only** on this system | Works, but needs the database password for the protected files and decodes text with the system ANSI code page (wrong on a Hungarian system). Not portable. Used here only as ground truth for schema, row counts and blobs. |
 | `access-parser` 0.0.6 (pure Python, PyPI) | any | **Not usable.** Catalog parse errors, and it returns empty or misplaced text values in wide rows (no Jet 3 jump-table support). |
@@ -102,18 +103,19 @@ All scenario databases (campaign and death match) share one schema of about
 The plan in `CLAUDE.md` (one-time MDB → SQLite conversion at install or
 first start) works, and needs no third-party code:
 
-1. `tools/mdb/mdb2sqlite.py` reads the user's installation
-   (`--game-dir` or `OPENDAY_GAME_DIR`), including the `.mdb` members of the
-   ZIP archives (read in memory, never extracted into the game folder), and
-   writes one SQLite file per database into a user-chosen directory outside
-   the repository. Each `.sqlite` holds the user tables with their
-   original names, plus `_mdb_columns` (original Jet types) and `_mdb_links`
-   (linked-table names).
+1. A converter reads the user's installation, including the `.mdb` members
+   of the ZIP archives (read in memory, never extracted into the game
+   folder), and writes one SQLite file per database into a directory
+   outside the game folder and the repository. Each `.sqlite` holds the user
+   tables with their original names, plus `_mdb_columns` (original Jet
+   types) and `_mdb_links` (linked-table names).
 2. The engine reads only SQLite (the `sqlite3` amalgamation is public domain
    and builds on every target).
-3. Later, the same Jet 3 subset (≈ 300 lines) can be ported to C++ inside
-   the engine if a Python step at install time is unwanted. The layout notes
-   below are enough for that.
+
+There are two converters with identical output: the native one in the
+engine (`engine/formats/zip.*`, `inflate.*`, `mdb.*`, `engine/data/mdb_import.*`),
+used by the game on first start and by the `mdbtool` command, and the
+original Python tool `tools/mdb/mdb2sqlite.py` (optional, for development).
 
 ## Jet 3 layout summary (the subset OpenDay reads)
 
@@ -198,3 +200,29 @@ u32 unused.
 
 OLE columns in these files hold plain Windows BMP files (8-bit, 256-color),
 used as overview-map images. See data-model.md.
+
+## Implementation notes (OpenDay)
+
+- **Native converter.** A C++ port of the Python reader's Jet 3 subset. It
+  follows the Python tool exactly, including its indexing rules for odd
+  rows (negative indexes, clamped slices), so both produce the same
+  content. Verified on the GOG installation: all 122 databases, 2831 tables
+  and 560 868 rows are identical in value and SQLite storage class
+  (`mdb_game_files` test, which compares against a Python conversion).
+  Converting a whole installation takes about 5 s. Text is always decoded as
+  Windows-1252 (the Python tool's `--codepage` has no native counterpart).
+- **ZIP.** The archives use only *stored* and *Deflate* members, no ZIP64,
+  no encryption. OpenDay has its own small Deflate decoder and checks every
+  member's CRC-32. `.ldb` lock files in the archives are skipped (only
+  `.mdb` members are converted).
+- **Output layout.** `<out>/GLOBALS/<name>.sqlite` and
+  `<out>/SCENS/<name>.sqlite` for the plain files,
+  `<out>/<folder>/<archive>/<member>.sqlite` for archive members (for
+  example `SCENS/SCEN1/s1-1-1.sqlite`). Folder, archive and file names are
+  matched case-insensitively.
+- **First start.** The game converts into `<per-user dir>/data` when that
+  folder has no conversion, or when the stamp file `openday-data.stamp`
+  (converter version plus the names and sizes of the source files) does
+  not match the installation. The stamp is written only after every
+  database converted successfully. A data folder given with `--data` that
+  was made by the Python tool (no stamp) is used as it is.

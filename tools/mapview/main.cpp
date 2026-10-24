@@ -7,7 +7,8 @@
 //
 // --game-dir  game installation (default: $OPENDAY_GAME_DIR); sprites are
 //             read from its IMGS folder, animations from ANMSUNIT\ANMSUNIT.FF.
-// --data      output folder of tools/mdb/mdb2sqlite.py (default:
+// --data      converted databases: the data folder of openday, or the output
+//             of mdbtool / tools/mdb/mdb2sqlite.py (default:
 //             $OPENDAY_DATA_DIR).
 // --scenario  scenario database name without extension, e.g. s1-1-1.
 // --do        (screenshot) send an order before the screenshot, as the player
@@ -631,7 +632,7 @@ int main(int argc, char** argv) {
     }
     if (opt.gameDir.empty() || opt.dataDir.empty()) {
         std::fprintf(stderr, "set --game-dir / OPENDAY_GAME_DIR and --data / OPENDAY_DATA_DIR\n"
-                             "(convert the databases first with tools/mdb/mdb2sqlite.py)\n");
+                             "(convert the databases first with mdbtool, or start openday once)\n");
         return usage();
     }
 

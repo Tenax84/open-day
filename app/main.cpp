@@ -1,10 +1,17 @@
 // openday: the game program.
 //
-//   openday [--game-dir DIR] [--data DIR] [--scale N] [--no-intro] [--mute] [--cheats]
-//           [--script STEPS --shot OUT.png]
+//   openday [--game-dir DIR] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]
+//           [--cheats] [--script STEPS --shot OUT.png]
 //
-// --game-dir  the game installation (default: $OPENDAY_GAME_DIR)
-// --data      output folder of tools/mdb/mdb2sqlite.py (default: $OPENDAY_DATA_DIR)
+// --game-dir  the game installation. Default: $OPENDAY_GAME_DIR, then the
+//             folder remembered in the per-user configuration, then the usual
+//             install locations (app/setup.cpp); if none holds the game, a
+//             dialog lets the user choose the folder.
+// --data      folder of the converted (SQLite) databases. Default:
+//             $OPENDAY_DATA_DIR, then <per-user dir>/data. On first start (or
+//             when the conversion is missing or outdated) the game databases
+//             are converted there automatically.
+// --convert   convert the game databases again
 // --scale     window scale of the 640 x 480 screen (default: the largest that
 //             fits the screen)
 // --cheats    enables the battle cheat keys Tab + W (win) and Tab + L (lose)
@@ -12,6 +19,9 @@
 //             move:X,Y, key:NAME (a letter, enter, esc, tab, up, down, left,
 //             right), wait:MS. With --shot the screen is saved to a PNG after
 //             the last step and the program ends.
+//
+// The per-user directory (app/setup.hpp) holds the converted data, the saves
+// and openday.cfg (game folder and options).
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -23,6 +33,7 @@
 
 #include "app/app.hpp"
 #include "app/screens.hpp"
+#include "app/setup.hpp"
 #include "formats/png_writer.hpp"
 
 #include <deque>
@@ -34,9 +45,30 @@ using namespace openday;
 
 namespace {
 
-fs::path envPath(const char* name) {
-    const char* v = std::getenv(name);
-    return v ? fs::path(v) : fs::path();
+// SDL passes the command line as UTF-8 on every platform.
+fs::path argPath(const char* arg) { return fs::path(std::u8string(reinterpret_cast<const char8_t*>(arg))); }
+
+// Options of the in-game menus that are kept in openday.cfg.
+void loadSettings(app::Settings& s, const app::setup::Config& c) {
+    s.resolution = std::clamp(c.getInt("resolution", s.resolution), 0, 1);
+    s.sound = c.getInt("sound", s.sound) != 0;
+    s.music = c.getInt("music", s.music) != 0;
+    s.moveAnimations = c.getInt("move_animations", s.moveAnimations) != 0;
+    s.scrollSpeed = c.getInt("scroll_speed", s.scrollSpeed);
+    s.autofire = c.getInt("autofire", s.autofire) != 0;
+    s.overwatch = c.getInt("overwatch", s.overwatch) != 0;
+}
+
+void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
+    c.setInt("resolution", s.resolution);
+    if (!mute) { // --mute is for this run only
+        c.setInt("sound", s.sound);
+        c.setInt("music", s.music);
+    }
+    c.setInt("move_animations", s.moveAnimations);
+    c.setInt("scroll_speed", s.scrollSpeed);
+    c.setInt("autofire", s.autofire);
+    c.setInt("overwatch", s.overwatch);
 }
 
 int translateKey(SDL_Keycode k) {
@@ -138,7 +170,10 @@ void placeWindow(SDL_Window* window, int scale) {
     SDL_ShowWindow(window);
 }
 
-int run(app::GameData& data, int scale, bool intro, bool mute, bool cheats, std::deque<Step> script, const fs::path& shot) {
+// `config` is null in the scripted test mode (settings are neither read nor
+// stored then).
+int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, bool mute, bool cheats, std::deque<Step> script,
+        const fs::path& shot) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("OpenDay", 640, 480, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN, &window, &renderer)) {
@@ -150,10 +185,10 @@ int run(app::GameData& data, int scale, bool intro, bool mute, bool cheats, std:
     {
         platform::AudioPlayer audio;
         app::App app(data, audio);
-        app.settings().sound = !mute;
-        app.settings().music = !mute;
+        if (config) loadSettings(app.settings(), *config);
+        if (mute) app.settings().sound = app.settings().music = false;
         app.settings().cheats = cheats;
-        audio.soundEnabled = !mute;
+        audio.soundEnabled = app.settings().sound;
         app.push(intro ? app::makeIntro(app) : app::makeMainMenu(app));
         app.applyChanges();
 
@@ -304,6 +339,10 @@ int run(app::GameData& data, int scale, bool intro, bool mute, bool cheats, std:
             SDL_RenderPresent(renderer);
         }
         SDL_DestroyTexture(texture);
+        if (config) {
+            storeSettings(app.settings(), *config, mute);
+            config->save();
+        }
     }
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
@@ -313,9 +352,9 @@ int run(app::GameData& data, int scale, bool intro, bool mute, bool cheats, std:
 } // namespace
 
 int main(int argc, char** argv) {
-    fs::path gameDir = envPath("OPENDAY_GAME_DIR"), dataDir = envPath("OPENDAY_DATA_DIR");
+    fs::path gameDirArg, dataDirArg;
     int scale = 0; // 0 = fit the screen
-    bool intro = true, mute = false, cheats = false;
+    bool intro = true, mute = false, cheats = false, convert = false;
     std::string script;
     fs::path shot;
     for (int i = 1; i < argc; ++i) {
@@ -323,32 +362,45 @@ int main(int argc, char** argv) {
         if (a == "--no-intro") intro = false;
         else if (a == "--mute") mute = true;
         else if (a == "--cheats") cheats = true;
-        else if (a == "--game-dir" && i + 1 < argc) gameDir = argv[++i];
-        else if (a == "--data" && i + 1 < argc) dataDir = argv[++i];
+        else if (a == "--convert") convert = true;
+        else if (a == "--game-dir" && i + 1 < argc) gameDirArg = argPath(argv[++i]);
+        else if (a == "--data" && i + 1 < argc) dataDirArg = argPath(argv[++i]);
         else if (a == "--scale" && i + 1 < argc) scale = std::clamp(std::atoi(argv[++i]), 1, 4);
         else if (a == "--script" && i + 1 < argc) script = argv[++i];
-        else if (a == "--shot" && i + 1 < argc) shot = argv[++i];
+        else if (a == "--shot" && i + 1 < argc) shot = argPath(argv[++i]);
+        else if (a.rfind("-psn_", 0) == 0) continue; // process serial number from older macOS Finder launches
         else {
-            std::fprintf(stderr, "usage: openday [--game-dir DIR] [--data DIR] [--scale N] [--no-intro] [--mute]\n"
-                                 "               [--script STEPS --shot OUT.png]\n");
+            std::fprintf(stderr, "usage: openday [--game-dir DIR] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]\n"
+                                 "               [--cheats] [--script STEPS --shot OUT.png]\n");
             return 2;
         }
     }
-    if (gameDir.empty() || dataDir.empty()) {
-        std::fprintf(stderr, "set --game-dir / OPENDAY_GAME_DIR and --data / OPENDAY_DATA_DIR\n"
-                             "(convert the databases first with tools/mdb/mdb2sqlite.py)\n");
-        return 2;
-    }
+    // Message boxes and dialogs only for a real session, not in the test mode.
+    const bool interactive = script.empty() && shot.empty();
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
     int rc = 0;
     try {
-        app::GameData data = app::GameData::load(gameDir, dataDir);
-        rc = run(data, scale, intro, mute, cheats, parseScript(script), shot);
+        app::setup::Config config = app::setup::Config::load();
+        std::string error;
+        const fs::path gameDir = app::setup::findGameDir(gameDirArg, config, interactive, error);
+        bool defaultData = false;
+        const fs::path dataDir = app::setup::dataDir(dataDirArg, defaultData);
+        if (gameDir.empty()) {
+            app::setup::reportError(error, interactive);
+            rc = 2;
+        } else if (!app::setup::prepareData(gameDir, dataDir, defaultData, convert, interactive, error)) {
+            app::setup::reportError(error, interactive);
+            rc = 1;
+        } else {
+            if (interactive) config.save(); // remembers the game folder
+            app::GameData data = app::GameData::load(gameDir, dataDir);
+            rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, parseScript(script), shot);
+        }
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "error: %s\n", e.what());
+        app::setup::reportError(e.what(), interactive);
         rc = 1;
     }
     SDL_Quit();
