@@ -9,7 +9,8 @@
 
 file(GLOB_RECURSE staged_bundles LIST_DIRECTORIES true "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/*.app")
 list(FILTER staged_bundles INCLUDE REGEX "\\.app$")
-file(GLOB_RECURSE staged_tools "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/*/tools/*")
+file(GLOB_RECURSE staged_tools "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/*")
+list(FILTER staged_tools INCLUDE REGEX "/tools/[^/]+$")
 
 foreach(item IN LISTS staged_tools staged_bundles)
     execute_process(COMMAND codesign --force --sign - --timestamp=none "${item}"
