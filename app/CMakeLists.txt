@@ -6,6 +6,7 @@ add_executable(openday
     campaign_city.cpp
     campaign_continent.cpp
     campaign_flow.cpp
+    console.cpp
     encyclopedia_screen.cpp
     game.cpp
     main.cpp
@@ -17,8 +18,9 @@ target_include_directories(openday PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(openday PRIVATE OPENDAY_VERSION="${PROJECT_VERSION}")
 target_link_libraries(openday PRIVATE openday_game openday_ui openday_platform SDL3::SDL3 openday_warnings)
 if(WIN32)
-    # Console subsystem keeps stdout/stderr visible; SDL handles the window.
-    set_target_properties(openday PROPERTIES WIN32_EXECUTABLE OFF)
+    # GUI subsystem: no console window when started from the Start menu or
+    # Explorer; from a terminal the output still appears (console.cpp).
+    set_target_properties(openday PROPERTIES WIN32_EXECUTABLE ON)
 endif()
 if(APPLE)
     # OpenDay.app; neutral name and no icon (no branding of the original game).

@@ -68,6 +68,14 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # The Windows package is an NSIS installer; makensis is usually on the
+      # runner image already.
+      - name: Install NSIS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
+
       # Through CMake: on Windows runners "cpack" may be Chocolatey's tool.
       - name: Package
         run: cmake --build build --config Release --target package
@@ -76,16 +84,44 @@ jobs:
       - name: Verify code signatures (macOS)
         if: runner.os == 'macOS'
         run: |
-          mkdir -p verify && cd verify
-          ditto -x -k ../build/packages/*.zip .
-          codesign --verify --strict --verbose=2 */OpenDay.app
-          for tool in */tools/*; do codesign --verify --strict --verbose=2 "$tool"; done
+          hdiutil attach -nobrowse -readonly -mountpoint verify build/packages/*.dmg
+          ls -l verify
+          test -L verify/Applications
+          codesign --verify --strict --verbose=2 verify/OpenDay.app
+          for tool in verify/tools/*; do codesign --verify --strict --verbose=2 "$tool"; done
+          hdiutil detach verify
+
+      # Silent install into a scratch folder, a start of the installed program
+      # (usage error: exit code 2, message on stderr), then silent uninstall.
+      - name: Check the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem build/packages/*.exe).FullName
+          $dir = Join-Path $env:RUNNER_TEMP 'OpenDay'
+          $p = Start-Process $installer -ArgumentList '/S', "/D=$dir" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
+          Get-ChildItem -Recurse $dir | Select-Object -ExpandProperty FullName
+          foreach ($f in 'openday.exe', 'tools\mdbtool.exe', 'LICENSE', 'Uninstall.exe') {
+            if (-not (Test-Path (Join-Path $dir $f))) { throw "missing $f" }
+          }
+          # Redirected, so PowerShell waits for the GUI-subsystem program.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $usage = & (Join-Path $dir 'openday.exe') --not-an-option 2>&1 | Out-String
+          $usage
+          if ($LASTEXITCODE -ne 2 -or $usage -notmatch 'usage: openday') { throw 'openday.exe did not start' }
+          # The uninstaller copies itself to TEMP and returns at once.
+          Start-Process (Join-Path $dir 'Uninstall.exe') -ArgumentList '/S' -Wait
+          for ($i = 0; $i -lt 30 -and (Test-Path (Join-Path $dir 'openday.exe')); $i++) { Start-Sleep 1 }
+          if (Test-Path (Join-Path $dir 'openday.exe')) { throw 'uninstall left openday.exe behind' }
+          exit 0 # not the expected exit code 2 of openday.exe
 
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ runner.os }}
           path: |
-            build/packages/*.zip
+            build/packages/*.dmg
+            build/packages/*.exe
             build/packages/*.tar.gz
           if-no-files-found: error
 

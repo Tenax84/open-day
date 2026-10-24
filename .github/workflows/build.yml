@@ -45,6 +45,14 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure
 
+      # The Windows package is an NSIS installer; makensis is usually on the
+      # runner image already.
+      - name: Install NSIS (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) { choco install nsis -y --no-progress }
+
       # Checks the install rules and the package layout (published only by
       # release.yml).
       # Through CMake: on Windows runners "cpack" may be Chocolatey's tool.

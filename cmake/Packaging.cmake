@@ -1,7 +1,9 @@
 # Install rules and CPack packages: the engine only, never game data.
 #
-#   macOS:   OpenDay-<version>-macos-arm64.zip    OpenDay.app + tools/ + docs
-#   Windows: OpenDay-<version>-windows-x64.zip    openday.exe + tools/ + docs
+#   macOS:   OpenDay-<version>-macos-arm64.dmg    disk image: OpenDay.app, an
+#                                                 Applications link, tools/, docs
+#   Windows: OpenDay-<version>-windows-x64.exe    installer (NSIS): openday.exe +
+#                                                 tools/ + docs, Start menu, uninstaller
 #   Linux:   OpenDay-<version>-linux-x64.tar.gz   bin/ + share/doc/openday/
 #
 #   cmake --build build --config Release --target package   (or: cd build && cpack -C Release)
@@ -76,15 +78,37 @@ set(CPACK_PACKAGE_VERSION "${OPENDAY_PACKAGE_VERSION}")
 set(CPACK_RESOURCE_FILE_LICENSE "${PROJECT_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_FILE_NAME "OpenDay-${OPENDAY_PACKAGE_VERSION}-${openday_os}-${openday_arch}")
 set(CPACK_PACKAGE_DIRECTORY "${PROJECT_BINARY_DIR}/packages")
-set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
 set(CPACK_STRIP_FILES ON)
 if(APPLE AND OPENDAY_BUILD_VIEWER)
-    # Stripping breaks the linker's ad-hoc signature; sign again before zipping.
+    # Stripping breaks the linker's ad-hoc signature; sign again before packing.
     set(CPACK_PRE_BUILD_SCRIPTS "${PROJECT_SOURCE_DIR}/cmake/MacAdhocSign.cmake")
 endif()
-if(WIN32 OR APPLE)
-    set(CPACK_GENERATOR ZIP)
+if(APPLE)
+    set(CPACK_GENERATOR DragNDrop)
+    set(CPACK_DMG_VOLUME_NAME OpenDay)
+    # No license agreement dialog when the image is opened (GPL needs none).
+    set(CPACK_DMG_SLA_USE_RESOURCE_FILE_LICENSE OFF)
+elseif(WIN32)
+    set(CPACK_GENERATOR NSIS)
+    set(CPACK_PACKAGE_INSTALL_DIRECTORY OpenDay)
+    # Fixed key (not "OpenDay <version>"), so a new version replaces the old.
+    set(CPACK_PACKAGE_INSTALL_REGISTRY_KEY OpenDay)
+    set(CPACK_NSIS_PACKAGE_NAME OpenDay)
+    set(CPACK_NSIS_DISPLAY_NAME OpenDay)
+    set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MANIFEST_DPI_AWARE ON)
+    set(CPACK_NSIS_UNINSTALL_NAME Uninstall)
+    set(CPACK_NSIS_INSTALLED_ICON_NAME openday.exe)
+    set(CPACK_NSIS_URL_INFO_ABOUT "${CPACK_PACKAGE_HOMEPAGE_URL}")
+    set(CPACK_NSIS_HELP_LINK "${CPACK_PACKAGE_HOMEPAGE_URL}")
+    # Start menu shortcut; openday.exe is in the installation root, not bin/.
+    set(CPACK_NSIS_EXECUTABLES_DIRECTORY .)
+    if(OPENDAY_BUILD_VIEWER)
+        set(CPACK_PACKAGE_EXECUTABLES openday OpenDay)
+    endif()
 else()
     set(CPACK_GENERATOR TGZ)
+    set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
 endif()
 include(CPack)

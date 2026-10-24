@@ -28,12 +28,18 @@ from GOG). OpenDay reads the data files from your copy at run time.
 Download the package for your system from the
 [releases](https://github.com/Tenax84/open-day/releases) page:
 
-- **macOS (arm64):** unzip and move `OpenDay.app` to Applications. The app is
-  signed ad hoc only, not notarized: on first start, right-click it and choose
-  *Open* (on macOS 15 and later: try to open it once, then *System Settings →
-  Privacy & Security → Open Anyway*), or run
-  `xattr -dr com.apple.quarantine OpenDay.app` in Terminal.
-- **Windows (x64):** unzip anywhere and start `openday.exe`.
+- **macOS (arm64):** open the `.dmg` and drag `OpenDay.app` onto the
+  Applications folder (the command-line tools are in the `tools` folder of the
+  disk image). The app is signed ad hoc only, not notarized: on first start,
+  right-click it and choose *Open* (on macOS 15 and later: try to open it once,
+  then *System Settings → Privacy & Security → Open Anyway*), or run
+  `xattr -dr com.apple.quarantine /Applications/OpenDay.app` in Terminal.
+- **Windows (x64):** run the installer `.exe`; it installs into
+  `Program Files\OpenDay` with a Start menu entry and an uninstaller. The
+  installer is not code-signed, so SmartScreen may warn: choose *More info →
+  Run anyway*. Silent install: `OpenDay-<version>-windows-x64.exe /S`
+  (optionally `/D=<folder>` as the last argument). Uninstalling keeps your
+  settings, saves and converted data in `%APPDATA%\OpenDay`.
 - **Linux (x64):** unpack the `.tar.gz` and start `bin/openday`.
 
 ### Getting the game files

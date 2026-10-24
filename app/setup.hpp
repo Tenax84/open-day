@@ -63,4 +63,9 @@ bool prepareData(const fs::path& gameDir, const fs::path& dataDir, bool isDefaul
 // Shows an error to the user (message box when interactive) and on stderr.
 void reportError(const std::string& message, bool interactive);
 
+// Windows: the program has no console window of its own (GUI subsystem); when
+// started from a terminal, stdout and stderr go to that terminal. No-op
+// elsewhere.
+void attachParentConsole();
+
 } // namespace openday::app::setup

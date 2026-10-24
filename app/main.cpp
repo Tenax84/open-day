@@ -359,6 +359,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
 } // namespace
 
 int main(int argc, char** argv) {
+    app::setup::attachParentConsole();
     fs::path gameDirArg, dataDirArg;
     int scale = 0; // 0 = fit the screen
     bool intro = true, mute = false, cheats = false, convert = false;
