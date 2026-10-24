@@ -294,10 +294,10 @@ sound `INVALIDE`.
 Implemented in `game/campaign/city.*` (rules) and `app/campaign_city.cpp`
 (screen).
 
-- The MAP button (city overview map) is disabled; the screen is specified in
-  strategic-interface.md 4.2.
-- The encyclopedia button is disabled (no encyclopedia yet); specification:
-  [encyclopedia.md](encyclopedia.md) (opening rule for this screen: 3.1).
+- The MAP button opens the city overview map (strategic-interface.md 4.2).
+- The encyclopedia button opens the encyclopedia at the selected structure
+  ([encyclopedia.md](encyclopedia.md) 3.1), with the colony's building list
+  as the context.
 
 ## Open questions
 

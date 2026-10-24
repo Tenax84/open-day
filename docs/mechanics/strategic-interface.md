@@ -260,16 +260,22 @@ palette; music is paused. Skipped by a mouse button, Esc, Enter or Space.
 
 Implemented in `app/campaign_*.cpp`.
 
-- The overview-map markers are drawn with OpenDay's own simple shapes (the
-  original's bitmaps are resources of the program).
 - The new-campaign name defaults to "Liberator" (string 739).
 - The continent screen's deployment-point number shows the deployment
   points the city gives in a battle there (campaign.md 6.4) *(OpenDay: the
   original's source of this value was not identified)*.
-- The city overview map (panel 578) is not implemented yet (MAP is disabled
-  on the city screen); its specification is 4.2.
-- The encyclopedia (emblem buttons) is not implemented yet; specification:
-  [encyclopedia.md](encyclopedia.md).
+- Both overview maps share one screen (`app/map_screen.*`, list rows, blink
+  and click in `game/info/overview.*`); the battle's overview map is the
+  tactical map screen of tactical-interface.md 7.2.
+- City overview map (4.2): opened by MAP / `F4` of the city screen, which
+  first returns to the build mode. The list rows follow the order of the
+  city's building list; the dots are the buildings, roads and walls of the
+  city (mines are not drawn). The screen is an overlay: the city screen's
+  message strip stays visible below it. The player item is the campaign
+  player; the indicator shows the credits.
+- The encyclopedia is opened by the emblems of the continent and city
+  screens, the city overview map and the army screens
+  ([encyclopedia.md](encyclopedia.md) "Implementation notes").
 
 ## Open questions
 

@@ -7,6 +7,7 @@
 #include <set>
 
 #include "app/campaign.hpp"
+#include "app/map_screen.hpp"
 #include "formats/pe_resources.hpp"
 #include "map/map_objects.hpp"
 
@@ -177,12 +178,8 @@ private:
     void buildControls() {
         const int px = viewW_;
         auto at = [px](int x, int y, int w, int h) { return ui::Rect{px + x, y, w, h}; };
-        ui::Button emblem = makeButton(at(5, 0, 44, 43), 143, "", ui::kKeyF1, nullptr);
-        emblem.enabled = false; // no encyclopedia yet
-        buttons_.push_back(emblem);
-        ui::Button map = makeButton(at(11, 171, 110, 17), 105, "Map", ui::kKeyF4, nullptr);
-        map.enabled = false; // the city overview map is not implemented
-        buttons_.push_back(map);
+        buttons_.push_back(makeButton(at(5, 0, 44, 43), 143, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }));
+        buttons_.push_back(makeButton(at(11, 171, 110, 17), 105, "Map", ui::kKeyF4, [this] { openMap(); }));
         buttons_.push_back(makeButton(at(9, 407, 53, 17), 121, "Up", 0, [this] { scrollList(-1); }));
         buttons_.push_back(makeButton(at(74, 407, 53, 17), 125, "Down", 0, [this] { scrollList(1); }));
         buttons_.push_back(makeButton(at(11, 455, 53, 17), 135, "Campaign", 'c', [this] {
@@ -237,6 +234,59 @@ private:
             showMessage(campaignText(app_, 407, "Click on starting point"), 20000);
         else
             messageMs_ = 0;
+    }
+
+    // The city map screen (strategic-interface.md 4.2); the build, recycle
+    // and move modes are reset first.
+    void openMap() {
+        mode_ = Mode::Build;
+        picked_.reset();
+        segmentStart_.reset();
+        CityMapConfig m;
+        m.ctx = ctx_;
+        m.resolution = large_ ? 1 : 0;
+        m.viewport = [this](game::Point& tl, int& span) {
+            tl = tileAt(0, 0);
+            span = std::max(viewW_ / 54, viewH_ / 28);
+        };
+        m.centre = [this](game::Point t) { centerOn(t); };
+        app_.push(makeCityMap(app_, std::move(m)));
+    }
+
+    // The emblem: the page of the selected structure (encyclopedia.md 3.1),
+    // with the colony's building list as the context.
+    void openEncyclopediaHere() {
+        EncyclopediaRequest r;
+        r.levels = ctx_->campaign.player.techLevels;
+        r.context = ctx_->campaign.colony.buildingsAvailable;
+        if (selected_ >= 0 && selected_ < static_cast<int>(options_.size())) {
+            const game::BuildOption& o = options_[static_cast<std::size_t>(selected_)];
+            using K = EncyclopediaRequest::Kind;
+            switch (o.kind) {
+            case game::StructureKind::Building:
+                r.kind = K::Building;
+                r.type = o.type;
+                break;
+            case game::StructureKind::Tower: {
+                // A tower that turns into a unit shows that unit's page.
+                const auto t = rules().buildings.find(o.type);
+                const bool unit = t != rules().buildings.end() && t->second.transformIntoUnit != 65535;
+                r.kind = unit ? K::Unit : K::Building;
+                r.type = unit ? t->second.transformIntoUnit : o.type;
+                break;
+            }
+            case game::StructureKind::Road: break; // roads have no page: the default page
+            case game::StructureKind::Wall:
+                r.kind = K::Wall;
+                r.type = o.type;
+                break;
+            case game::StructureKind::Mine:
+                r.kind = K::Mine;
+                r.type = o.type;
+                break;
+            }
+        }
+        openEncyclopedia(app_, std::move(r));
     }
 
     void scrollList(int d) {
@@ -728,6 +778,7 @@ void openCampaignArmy(App& app, CampaignPtr ctx) {
         a.techPoints = &c.player.tech;
         a.canUpgrade = c.ownsLaboratory();
         a.resolution = resolution;
+        a.context = c.colony.buildingsAvailable; // the encyclopedia's context (encyclopedia.md 3)
         app.push(makeArmy(app, std::move(a)));
     };
     if (!ctx->campaign.ownsLaboratory()) {

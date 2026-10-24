@@ -1,5 +1,6 @@
 // User-interface foundations on synthetic data: font metrics and wrapping,
-// message formatting, PE string tables, the interface atlas, buttons.
+// message formatting, PE string tables and bitmaps, the interface atlas,
+// buttons.
 
 #include "formats/binary.hpp"
 #include "formats/pe_resources.hpp"
@@ -63,8 +64,9 @@ void testFormat() {
     CHECK(formats::formatMessage("%2 %1 100%%", {"a", "b"}) == "b a 100%");
 }
 
-// A minimal PE file with one string-table block (ids 0-15) holding id 1.
-std::vector<std::uint8_t> makePe() {
+// A minimal PE file with one resource of a type and id: by default one
+// string-table block (ids 0-15) holding id 1.
+std::vector<std::uint8_t> makePe(std::uint32_t type = 6, std::uint32_t id = 1, std::vector<std::uint8_t> data = {}) {
     std::vector<std::uint8_t> rsrc;
     auto dir = [&](std::uint32_t id, std::uint32_t offset) {
         for (int i = 0; i < 12; ++i) rsrc.push_back(0);
@@ -73,16 +75,18 @@ std::vector<std::uint8_t> makePe() {
         putU32(rsrc, id);
         putU32(rsrc, offset);
     };
-    dir(6, 0x80000000u | 24);  // RT_STRING -> block directory
-    dir(1, 0x80000000u | 48);  // block 1 -> language directory
-    dir(0x409, 72);            // English -> data entry
+    dir(type, 0x80000000u | 24); // type -> id directory
+    dir(id, 0x80000000u | 48);   // id -> language directory
+    dir(0x409, 72);              // English -> data entry
     const std::uint32_t textRva = 0x1000 + 88;
-    std::vector<std::uint8_t> text;
-    putU16(text, 0); // id 0: empty
-    const std::u16string hello = u"Hellö";
-    putU16(text, static_cast<std::uint16_t>(hello.size()));
-    for (const char16_t c : hello) putU16(text, static_cast<std::uint16_t>(c));
-    for (int i = 2; i < 16; ++i) putU16(text, 0);
+    std::vector<std::uint8_t> text = std::move(data);
+    if (text.empty()) {
+        putU16(text, 0); // id 0: empty
+        const std::u16string hello = u"Hellö";
+        putU16(text, static_cast<std::uint16_t>(hello.size()));
+        for (const char16_t c : hello) putU16(text, static_cast<std::uint16_t>(c));
+        for (int i = 2; i < 16; ++i) putU16(text, 0);
+    }
     putU32(rsrc, textRva);
     putU32(rsrc, static_cast<std::uint32_t>(text.size()));
     putU32(rsrc, 0);
@@ -125,6 +129,50 @@ void testStrings() {
     bool threw = false;
     try {
         formats::loadStringTable(std::vector<std::uint8_t>(10, 0));
+    } catch (const formats::PeError&) {
+        threw = true;
+    }
+    CHECK(threw);
+}
+
+// A bottom-up DIB of 2 x 2 pixels: 8-bit with a 3-color table, or 4-bit.
+std::vector<std::uint8_t> makeDib(int bits) {
+    std::vector<std::uint8_t> d;
+    putU32(d, 40);
+    putU32(d, 2);
+    putU32(d, 2);
+    putU16(d, 1);
+    putU16(d, static_cast<std::uint16_t>(bits));
+    putU32(d, 0); // BI_RGB
+    putU32(d, 0);
+    putU32(d, 0);
+    putU32(d, 0);
+    putU32(d, 3); // colors used
+    putU32(d, 0);
+    const std::uint8_t table[3][4] = {{0, 0, 255, 0}, {0, 255, 0, 0}, {255, 0, 0, 0}}; // red, green, blue (BGR order)
+    for (const auto& c : table) d.insert(d.end(), c, c + 4);
+    if (bits == 8) {
+        const std::uint8_t rows[2][4] = {{2, 2, 0, 0}, {0, 1, 0, 0}}; // bottom row first
+        for (const auto& r : rows) d.insert(d.end(), r, r + 4);
+    } else {
+        const std::uint8_t rows[2][4] = {{0x22, 0, 0, 0}, {0x01, 0, 0, 0}};
+        for (const auto& r : rows) d.insert(d.end(), r, r + 4);
+    }
+    return d;
+}
+
+void testBitmaps() {
+    for (const int bits : {8, 4}) {
+        const formats::DibImage img = formats::decodeDib(makeDib(bits));
+        CHECK(img.width == 2 && img.height == 2);
+        CHECK(img.pixels[0].r == 255 && img.pixels[1].g == 255 && img.pixels[2].b == 255 && img.pixels[3].b == 255);
+    }
+    const auto res = formats::loadResources(makePe(formats::kResourceBitmap, 185, makeDib(8)), formats::kResourceBitmap);
+    CHECK(res.size() == 1 && res.count(185) && res.at(185).size() == makeDib(8).size());
+    CHECK(formats::loadResources(makePe(), formats::kResourceBitmap).empty());
+    bool threw = false;
+    try {
+        formats::decodeDib(std::vector<std::uint8_t>(20, 0));
     } catch (const formats::PeError&) {
         threw = true;
     }
@@ -190,6 +238,7 @@ int main() {
     testFont();
     testFormat();
     testStrings();
+    testBitmaps();
     testAtlas();
     testButton();
     if (failures) {

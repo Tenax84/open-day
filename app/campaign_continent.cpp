@@ -75,9 +75,14 @@ public:
                 hint_ = campaignText(app, 882, "Click the continue button.");
             }
         }
-        ui::Button emblem = makeButton(at(5, 0, 44, 43), 214, "", ui::kKeyF1, nullptr);
-        emblem.enabled = false; // no encyclopedia yet
-        buttons_.push_back(emblem);
+        // The emblem: the encyclopedia's default page with the colony's
+        // building list as the context (encyclopedia.md 3).
+        buttons_.push_back(makeButton(at(5, 0, 44, 43), 214, "", ui::kKeyF1, [this] {
+            EncyclopediaRequest r;
+            r.levels = ctx_->campaign.player.techLevels;
+            r.context = ctx_->campaign.colony.buildingsAvailable;
+            openEncyclopedia(app_, std::move(r));
+        }));
         buttons_.push_back(makeButton({viewW_ - 60, viewH_ + 8, 53, 17}, 693, "Menu", ui::kKeyF2, [this] {
             app_.push(makeCampaignOptions(app_, ctx_, large_ ? 1 : 0));
         }));

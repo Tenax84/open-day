@@ -8,6 +8,7 @@
 #include "formats/bmp_palette.hpp"
 #include "formats/ff.hpp"
 #include "formats/pe_resources.hpp"
+#include "info/encyclopedia.hpp"
 
 namespace openday::app {
 namespace {
@@ -57,6 +58,7 @@ GameData GameData::load(const fs::path& gameDir, const fs::path& dataDir) {
         else if (!d.scenarios.count(stem) && data::SqliteDb(e.path()).hasTable("Map")) d.scenarios[stem] = e.path();
     }
     if (global.empty()) throw data::DbError("GLOBAL.sqlite not found in " + dataDir.string());
+    d.global = global;
     d.rules = game::loadGlobalRules(data::SqliteDb(global));
     d.sprites = game::SpriteLibrary::fromGameDir(gameDir);
     d.palette = formats::loadBmpPalette(gameDir / "INTERF" / "PAL.BMP");
@@ -137,6 +139,82 @@ void App::applyChanges() {
             break;
         }
     }
+}
+
+void App::update(int ms) {
+    // The top screen and every screen whose upper neighbour lets it run.
+    for (std::size_t i = screens_.size(); i-- > 0;) {
+        screens_[i]->update(ms);
+        if (!screens_[i]->updatesBelow()) break;
+    }
+}
+
+void App::draw(render::IndexedSurface& target) {
+    if (screens_.empty()) return;
+    std::size_t first = screens_.size() - 1;
+    while (first > 0 && screens_[first]->overlay()) --first;
+    for (std::size_t i = first; i < screens_.size(); ++i) screens_[i]->draw(target);
+}
+
+const game::EncyclopediaData& App::encyclopedia() {
+    if (!encyclopedia_) {
+        encyclopedia_ = std::make_unique<game::EncyclopediaData>();
+        try {
+            if (!data_.global.empty()) *encyclopedia_ = game::EncyclopediaData::load(data::SqliteDb(data_.global));
+        } catch (const std::exception&) {
+            *encyclopedia_ = {};
+        }
+    }
+    return *encyclopedia_;
+}
+
+const render::SmkFrames* App::encyclopediaPictures() {
+    if (!picturesLoaded_) {
+        picturesLoaded_ = true;
+        try {
+            encyclopediaPictures_ =
+                std::make_unique<render::SmkFrames>(render::SmkFrames::load(data_.gameDir / "ENCYCL" / "ENCYCL.SMK"));
+        } catch (const std::exception&) {
+            encyclopediaPictures_.reset();
+        }
+    }
+    return encyclopediaPictures_ && !encyclopediaPictures_->empty() ? encyclopediaPictures_.get() : nullptr;
+}
+
+const formats::DbiSprite* App::exeBitmap(int id, bool keyed) {
+    if (const auto it = exeBitmaps_.find({id, keyed}); it != exeBitmaps_.end())
+        return it->second.width > 0 ? &it->second : nullptr;
+    if (!exeLoaded_) {
+        exeLoaded_ = true;
+        try {
+            exeBitmapData_ = formats::loadResources(data_.gameDir / "EXE" / "LIBDAY.EXE", formats::kResourceBitmap);
+        } catch (const std::exception&) {
+            exeBitmapData_.clear();
+        }
+    }
+    formats::DbiSprite& out = exeBitmaps_[{id, keyed}];
+    const auto raw = exeBitmapData_.find(id);
+    if (raw == exeBitmapData_.end()) return nullptr;
+    try {
+        const formats::DibImage img = formats::decodeDib(raw->second);
+        out.width = img.width;
+        out.height = img.height;
+        out.pixels.resize(img.pixels.size());
+        out.opaque.assign(img.pixels.size(), 1);
+        std::map<int, std::uint8_t> cache;
+        for (std::size_t i = 0; i < img.pixels.size(); ++i) {
+            const formats::Rgb c = img.pixels[i];
+            const int key = (c.r << 16) | (c.g << 8) | c.b;
+            const auto hit = cache.find(key);
+            out.pixels[i] = hit != cache.end() ? hit->second : (cache[key] = nearestColor(data_.palette, c.r, c.g, c.b));
+            // OpenDay: the color key of the marker bitmaps is the top-left pixel's color.
+            if (keyed && c == img.pixels[0]) out.opaque[i] = 0;
+        }
+    } catch (const std::exception&) {
+        out = {};
+        return nullptr;
+    }
+    return &out;
 }
 
 void App::sound(const std::string& file) {

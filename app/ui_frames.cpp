@@ -110,6 +110,15 @@ std::vector<ui::AtlasElement> atlasElements(int resolution) {
     add(e, 88, 4, 44, 43);      // overview map emblem
     add(e, 700, 4, 53, 17);     // overview CONTINUE
     add(e, 84, 4, 53, 17);      // overview BACK
+    // City map screen (strategic-interface.md 4.2).
+    add(e, 578, 1, large ? 184 : 136, large ? 768 : 480);
+    add(e, 623, 4, 110, 17);    // CONTINUE
+    add(e, 627, 4, 44, 43);     // emblem
+    // Encyclopedia (encyclopedia.md 1-2).
+    add(e, 382, 1, 540, 415);
+    add(e, 383, 4, 53, 17);     // BACK
+    add(e, 387, 8, 19, 17);     // previous, next
+    add(e, 395, 6, 19, 19);     // lamp
     return e;
 }
 
