@@ -7,6 +7,7 @@
 #include "data/sqlite_db.hpp"
 #include "formats/bmp_palette.hpp"
 #include "formats/ff.hpp"
+#include "formats/game_path.hpp"
 #include "formats/pe_resources.hpp"
 
 namespace openday::app {
@@ -43,6 +44,8 @@ fs::path GameData::scenario(const std::string& name) const {
     return it == scenarios.end() ? fs::path() : it->second;
 }
 
+fs::path GameData::file(const std::string& relative) const { return formats::findGameFile(gameDir, relative); }
+
 GameData GameData::load(const fs::path& gameDir, const fs::path& dataDir) {
     GameData d;
     d.gameDir = gameDir;
@@ -59,12 +62,12 @@ GameData GameData::load(const fs::path& gameDir, const fs::path& dataDir) {
     if (global.empty()) throw data::DbError("GLOBAL.sqlite not found in " + dataDir.string());
     d.rules = game::loadGlobalRules(data::SqliteDb(global));
     d.sprites = game::SpriteLibrary::fromGameDir(gameDir);
-    d.palette = formats::loadBmpPalette(gameDir / "INTERF" / "PAL.BMP");
-    d.cycle = formats::PalCycle::fromFile(gameDir / "INTERF" / "PALCYCLE.PAL");
-    const fs::path ff = gameDir / "ANMSUNIT" / "ANMSUNIT.FF";
+    d.palette = formats::loadBmpPalette(d.file("INTERF/PAL.BMP"));
+    d.cycle = formats::PalCycle::fromFile(d.file("INTERF/PALCYCLE.PAL"));
+    const fs::path ff = d.file("ANMSUNIT/ANMSUNIT.FF");
     if (fs::exists(ff))
         d.clips = std::make_unique<render::AnimationCache>(std::make_shared<const formats::FfArchive>(formats::FfArchive::open(ff)));
-    const fs::path dll = gameDir / "EXE" / "LIBDAYEN.DLL";
+    const fs::path dll = d.file("EXE/LIBDAYEN.DLL");
     if (fs::exists(dll)) d.strings = formats::loadStringTable(dll);
 
     // The skirmish catalog.
@@ -86,7 +89,7 @@ GameData GameData::load(const fs::path& gameDir, const fs::path& dataDir) {
 App::App(GameData& data, platform::AudioPlayer& audio)
     : data_(data), audio_(audio), standard_(std::make_unique<render::Font>(render::FontFace::Regular, 14)),
       large_(std::make_unique<render::Font>(render::FontFace::Regular, 17)) {
-    const fs::path atlas = data.gameDir / "INTERF" / "640X480.SMK";
+    const fs::path atlas = data.file("INTERF/640X480.SMK");
     if (fs::exists(atlas)) atlas_ = ui::InterfaceAtlas::load(atlas, atlasElements());
     ui_.atlas = &atlas_;
     ui_.standard = standard_.get();
@@ -109,7 +112,7 @@ const ui::UiContext& App::ui(int resolution) {
     if (!largeLoaded_) {
         largeLoaded_ = true;
         uiLarge_ = ui_;
-        const fs::path atlas = data_.gameDir / "INTERF" / "1024X768.SMK";
+        const fs::path atlas = data_.file("INTERF/1024X768.SMK");
         if (fs::exists(atlas)) {
             atlasLarge_ = ui::InterfaceAtlas::load(atlas, atlasElements(1));
             uiLarge_.atlas = &atlasLarge_;
@@ -141,7 +144,7 @@ void App::applyChanges() {
 
 void App::sound(const std::string& file) {
     audio_.soundEnabled = settings_.sound;
-    audio_.playWav(data_.gameDir / "SOUNDS" / file);
+    audio_.playWav(data_.file("SOUNDS/" + file));
 }
 
 void App::startMusic() {
@@ -152,7 +155,7 @@ void App::startMusic() {
     for (int n = 2; n <= 12; ++n) {
         char name[32];
         std::snprintf(name, sizeof name, "Track%02d.ogg", n + 1);
-        const fs::path p = data_.gameDir / "EXE" / "MUSIC" / name;
+        const fs::path p = data_.file(std::string("EXE/MUSIC/") + name);
         if (fs::exists(p)) tracks.push_back(p);
     }
     if (tracks.empty()) return;

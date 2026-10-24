@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <tuple>
 
+#include "formats/game_path.hpp"
 #include "map/rules.hpp"
 
 namespace openday::game {
@@ -51,7 +52,7 @@ SpriteLibrary SpriteLibrary::fromGameDir(const std::filesystem::path& gameDir) {
     };
     SpriteLibrary lib;
     for (const auto& [set, file] : kFiles)
-        lib.set(set, std::make_shared<const formats::DbiArchive>(formats::DbiArchive::fromFile(gameDir / "IMGS" / file)));
+        lib.set(set, std::make_shared<const formats::DbiArchive>(formats::DbiArchive::fromFile(formats::findGameFile(gameDir, std::string("IMGS/") + file))));
     return lib;
 }
 

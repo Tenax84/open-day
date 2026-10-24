@@ -1,5 +1,5 @@
-// Minimal read-only SQLite access for databases produced by
-// tools/mdb/mdb2sqlite.py.
+// Minimal SQLite access for the converted game databases (made by
+// data/mdb_import.hpp or tools/mdb/mdb2sqlite.py).
 #pragma once
 
 #include <cstdint>

@@ -15,7 +15,14 @@ them into the programs:
 
 The Liberation fonts are distributed under the SIL Open Font License 1.1;
 its text ships with the font sources (`LICENSE` in the font archive) and
-must accompany binary releases.
+must accompany binary releases. The release packages contain it, together
+with the SDL3 and stb license texts, in `licenses/` (see
+[`cmake/Packaging.cmake`](cmake/Packaging.cmake)). On Windows the packages
+also contain the Microsoft Visual C++ runtime DLLs, which Microsoft permits
+to be redistributed with applications.
+
+The ZIP and Deflate reading (`engine/formats/zip.*`, `inflate.*`) and the
+Jet 3 database reader (`engine/formats/mdb.*`) are OpenDay's own code.
 
 No file of the original game is part of OpenDay or of its releases. The
 game data is read at run time from the user's own installation.

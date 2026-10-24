@@ -26,8 +26,7 @@ void clear(render::IndexedSurface& s, std::uint8_t color) { s.fill(color); }
 class VideoScreen : public Screen {
 public:
     VideoScreen(App& app, const std::string& name, std::function<void()> onDone) : Screen(app), next_(std::move(onDone)) {
-        fs::path path = app.data().gameDir / "VIDEO" / (game::toUpper(name) + ".SMK");
-        if (!fs::exists(path)) path = app.data().gameDir / "VIDEO" / (name + ".SMK");
+        const fs::path path = app.data().file("VIDEO/" + game::toUpper(name) + ".SMK");
         std::ifstream f(path, std::ios::binary);
         if (!f) return;
         std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -249,7 +248,7 @@ class WaitScreen : public Screen {
 public:
     WaitScreen(App& app, int id, std::function<std::unique_ptr<Screen>()> next)
         : Screen(app), next_(std::move(next)) {
-        std::ifstream f(app.data().gameDir / "INTERF" / "WAITING.SMK", std::ios::binary);
+        std::ifstream f(app.data().file("INTERF/WAITING.SMK"), std::ios::binary);
         if (!f) return;
         std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
         try {

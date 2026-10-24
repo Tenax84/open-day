@@ -2,9 +2,10 @@
 rem Builds openday (Release) if any source changed since the last build, then starts it.
 rem Extra arguments are passed to openday, e.g.  run.bat --no-intro --mute
 rem
-rem   OPENDAY_GAME_DIR  game installation (default: the GOG install path)
+rem   OPENDAY_GAME_DIR  game installation (default: found by openday, e.g. the
+rem                     GOG install path or the folder chosen earlier)
 rem   OPENDAY_DATA_DIR  converted SQLite data (default: data\ in this folder;
-rem                     created with tools\mdb\mdb2sqlite.py when missing)
+rem                     openday converts the game databases into it when missing)
 setlocal
 set "ROOT=%~dp0"
 set "ROOT=%ROOT:~0,-1%"
@@ -12,14 +13,7 @@ set "BUILD=%ROOT%\build"
 set "EXE=%BUILD%\app\Release\openday.exe"
 set "STAMP=%BUILD%\openday.stamp"
 
-if not defined OPENDAY_GAME_DIR set "OPENDAY_GAME_DIR=C:\Program Files (x86)\GOG Galaxy\Games\Fallen Haven Liberation Day"
 if not defined OPENDAY_DATA_DIR set "OPENDAY_DATA_DIR=%ROOT%\data"
-
-if not exist "%OPENDAY_GAME_DIR%\" (
-    echo Game directory not found: "%OPENDAY_GAME_DIR%"
-    echo Set OPENDAY_GAME_DIR to your installation.
-    exit /b 1
-)
 
 rem --- Configure (first run only) ---
 if not exist "%BUILD%\CMakeCache.txt" (
@@ -45,10 +39,6 @@ if "%STALE%"=="1" (
     echo Up to date, skipping build.
 )
 
-rem --- Convert the game databases (first run only) ---
-if not exist "%OPENDAY_DATA_DIR%\GLOBALS\" (
-    echo Converting game databases to "%OPENDAY_DATA_DIR%"
-    python "%ROOT%\tools\mdb\mdb2sqlite.py" --game-dir "%OPENDAY_GAME_DIR%" "%OPENDAY_DATA_DIR%" || exit /b 1
-)
-
-"%EXE%" --game-dir "%OPENDAY_GAME_DIR%" --data "%OPENDAY_DATA_DIR%" %*
+rem openday finds the game folder itself and converts the game databases into
+rem the data folder on the first start (no Python needed).
+"%EXE%" --data "%OPENDAY_DATA_DIR%" %*

@@ -2,14 +2,13 @@
 
 OpenDay is an open-source, native reimplementation of the engine of the 1998
 turn-based strategy game *Fallen Haven: Liberation Day*, in the spirit of
-OpenRA, OpenXcom and fheroes2.
+OpenRA, OpenXcom and fheroes2. It runs natively on **macOS (Apple Silicon)**,
+Windows and Linux.
 
-**Primary target:** macOS on Apple Silicon (arm64). Windows and Linux are
-secondary targets.
-
-> **Status:** work in progress. The single-player campaign and skirmish
-> battles are playable; automated units, the encyclopedia and multiplayer
-> are not there yet.
+> **Status:** work in progress. Single player is playable: the campaign
+> (four colonies), skirmish and death match battles against the computer.
+> Network play, automated units (air strikes, drops, AA) and the
+> encyclopedia are not there yet.
 
 ## Disclaimer
 
@@ -18,104 +17,121 @@ by or connected to the original developers or publishers. "Fallen Haven" is a
 trademark of its respective owner and is used here only to describe
 compatibility.
 
-OpenDay contains **no original game content** — no executables, graphics,
-sounds, videos, maps or databases. To use it you need your own legitimate copy
-of the game (e.g. from GOG). OpenDay reads the data files from your
-installation at runtime.
+OpenDay contains **no original game content**: no executables, graphics,
+sounds, videos, maps or databases, neither in the repository nor in the
+release packages. You need your own legitimate copy of the game (for example
+from GOG). OpenDay reads the data files from your copy at run time.
 
-## Game data
+## Installing
 
-Point OpenDay at your installation with the `OPENDAY_GAME_DIR` environment
-variable, e.g. for the default GOG Galaxy location on Windows:
+Download the package for your system from the
+[releases](https://github.com/Tenax84/open-day/releases) page:
+
+- **macOS (arm64):** unzip and move `OpenDay.app` to Applications. The app is
+  not signed: on first start, right-click it and choose *Open* (or run
+  `xattr -dr com.apple.quarantine OpenDay.app`).
+- **Windows (x64):** unzip anywhere and start `openday.exe`.
+- **Linux (x64):** unpack the `.tar.gz` and start `bin/openday`.
+
+### Getting the game files
+
+OpenDay needs the folder of an installed game, the one that contains
+`GLOBALS`, `IMGS`, `INTERF`, `SCENS`, `ANMSUNIT` and so on.
+
+- **Windows:** install the game from GOG (GOG Galaxy or the offline
+  installer). OpenDay finds the usual install locations by itself.
+- **macOS and Linux:** the GOG release is a Windows installer. Either extract
+  it with [innoextract](https://constexpr.org/innoextract/)
+  (`brew install innoextract`, or your distribution's `innoextract` package):
+
+  ```
+  innoextract --gog -d ~/fh-install setup_fallen_haven_liberation_day_*.exe
+  ```
+
+  (the game folder is `~/fh-install` or `~/fh-install/app`), or copy the
+  installed folder from a Windows PC. Then put the folder where OpenDay
+  looks for it:
+
+  - macOS: `~/Library/Application Support/OpenDay/game`
+  - Linux: `~/.local/share/openday/game`
+
+  or choose it in the dialog OpenDay shows when it finds no game files, or
+  pass `--game-dir`. Upper or lower case file names both work.
+
+OpenDay looks for the game in this order: `--game-dir`, the
+`OPENDAY_GAME_DIR` environment variable, the folder remembered from an
+earlier start, the `game` folder above, and the usual GOG locations
+(including Wine prefixes and CrossOver bottles). If none holds the game, a
+message explains what to do and lets you choose the folder.
+
+### First start
+
+On the first start (and after the game files change) OpenDay converts the
+game's databases (Jet/Access `.MDB` files, also those inside the `.ZIP`
+archives) to SQLite. This takes a few seconds and shows a progress window.
+Nothing is written into the game folder.
+
+Per-user files (converted data, saves, settings in `openday.cfg`):
+
+| System | Folder |
+|---|---|
+| Windows | `%APPDATA%\OpenDay\` |
+| macOS | `~/Library/Application Support/OpenDay/` |
+| Linux | `~/.local/share/openday/` |
+
+### Command line
 
 ```
-C:\Program Files (x86)\GOG Galaxy\Games\Fallen Haven Liberation Day
+openday [--game-dir DIR] [--data DIR] [--convert] [--no-intro] [--mute] [--scale N] [--cheats]
 ```
 
-## Building
+| Option | Meaning |
+|---|---|
+| `--game-dir DIR` | the game folder (remembered for later starts) |
+| `--data DIR` | folder of the converted databases (default: `data` in the per-user folder) |
+| `--convert` | convert the databases again |
+| `--no-intro` | skip the intro videos |
+| `--mute` | no sound or music for this run |
+| `--scale N` | window size as a multiple of 640×480 |
+| `--cheats` | Tab + W / Tab + L win or lose a battle |
 
-Requirements: CMake 3.21+ and a C++20 compiler (MSVC 2022+, Clang 15+ or
-GCC 12+). SDL3 and SQLite are used from the system if installed, otherwise
-CMake downloads pinned versions and builds them. On Linux, SDL3 needs the
-usual X11/Wayland development packages. Pass `-DOPENDAY_BUILD_VIEWER=OFF` to
-build only the tools and libraries without SDL3.
+Environment variables: `OPENDAY_GAME_DIR`, `OPENDAY_DATA_DIR`,
+`OPENDAY_SAVE_DIR` (saves folder). On macOS the program is
+`OpenDay.app/Contents/MacOS/OpenDay`.
+
+## Building from source
+
+Requirements: CMake 3.21+ and a C++20 compiler (Xcode 15+ / Clang 15+,
+MSVC 2022+, GCC 12+). SDL3 and SQLite are used from the system if installed,
+otherwise CMake downloads pinned versions (see
+[THIRD_PARTY.md](THIRD_PARTY.md)). On Linux, SDL3 needs the usual X11/Wayland
+development packages (see `.github/workflows/build.yml`).
 
 ```
-cmake -S . -B build
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release
 ctest --test-dir build -C Release
+cmake --build build --config Release --target package   # optional: release package in build/packages
 ```
 
-If `OPENDAY_GAME_DIR` is set at configure time, an extra test decodes the
-graphics of your installation; with `OPENDAY_DATA_DIR` (the converted
-databases) another test starts a campaign and prepares its battles.
+`-DOPENDAY_BUILD_VIEWER=OFF` builds only the libraries and the command-line
+tools, without SDL3. With `OPENDAY_GAME_DIR` (and `OPENDAY_DATA_DIR`, a
+converted data folder) set at configure time, extra tests read your local
+installation. On Windows, `run.bat` builds and starts the game.
 
 ## Tools
 
-- `dbitool` — inspect and extract `IMGS\*.DBI` sprite archives
-  (`info`, `list`, `extract`, `sheet`).
-- `fftool` — inspect and extract the `ANMSUNIT\ANMSUNIT.FF` unit animation
-  container (Smacker videos; frames as PNG, audio as WAV); `fftool smk`
-  writes the frames of a stand-alone `.SMK` file (interface atlases, colony
-  maps) as PNG.
-- `tools/mdb/mdb2sqlite.py` — convert the game's Jet 3 databases to SQLite
-  (Python standard library only).
-- `mapview` — SDL3 viewer for every scenario map: terrain, roads, walls,
-  mines, buildings and units, with palette cycling (animated water), and a
-  tactical battle on the map: movement with path finding and action
-  points, shooting with hit rolls, damage and destruction, reaction fire,
-  mines, turns, scenario objectives, reinforcements and the computer
-  player. The human sides take turns in the same window (hot seat). It
-  needs the converted databases:
+These work on your own game files; do not redistribute what they produce.
 
-  ```
-  python3 tools/mdb/mdb2sqlite.py --game-dir "<game dir>" ~/openday-data
-  mapview --game-dir "<game dir>" --data ~/openday-data --scenario s4-5-1
-  ```
-
-  Arrow keys / WASD or mouse drag scroll, PageUp/PageDown switch scenario,
-  1–4 zoom, C toggles palette cycling, O toggles the objects, M toggles
-  sound. Left click selects a unit of the player whose turn it is
-  (Shift + click builds a group), and the path to the tile under the mouse
-  is previewed. Right click moves there or fires at an enemy unit or
-  building (Ctrl + right click fires at any tile). F toggles autofire,
-  Enter ends the turn; the computer player then plays its turn. The
-  window title shows the turn, the objective, the player, the selected
-  unit, the hit chance and the result. `--no-ai` lets you play slot 0
-  yourself.
-  `--screenshot out.png` renders the whole map to a file instead of
-  opening a window; `--do move:X,Y:TX,TY` (or `attack:X,Y:TX,TY`, `end`)
-  sends orders first and prints the server's events, and `--ticks N`
-  captures an animation in progress.
-
-- `openday` — the game program (work in progress): intro video, main menu,
-  the single-player **campaign** (four colonies: continent screen with the
-  animated colony map, province intelligence, city building, unit upgrades
-  on the army screen, province battles, counter-attacks on the city, colony
-  intros and the closing videos; saving and loading in ten slots), skirmish
-  battles with the army screen and deployment, the original tactical
-  interface (side panel, minimap, overview map, unit information, path
-  preview, objectives dialog, reinforcements, options), the computer
-  player, and the battle report. Multiplayer is not there yet. Saved
-  campaigns are written to the user's settings folder (`OPENDAY_SAVE_DIR`
-  overrides it).
-
-  ```
-  openday --game-dir "<game dir>" --data ~/openday-data
-  ```
-
-  `--no-intro` skips the intro, `--mute` starts without sound and music,
-  `--scale N` sets the window size, `--cheats` enables Tab + W / L in
-  battle. The resolution of the battle screens (640×480 or 1024×768) is
-  chosen in the main menu.
-
-Everything these tools produce comes from your own game data; do not
-redistribute it.
-
-## Third-party components
-
-See [THIRD_PARTY.md](THIRD_PARTY.md): SDL3, SQLite, stb_truetype, stb_vorbis
-and the Liberation Sans font, all fetched at build time.
+- `mdbtool`: converts the game databases to SQLite, like the first start
+  does (`mdbtool --game-dir DIR OUT_DIR`, `--file X.mdb`, `--list`).
+  `tools/mdb/mdb2sqlite.py` is the same converter in Python (standard
+  library only; optional).
+- `dbitool`: inspects and extracts `IMGS\*.DBI` sprite archives.
+- `fftool`: inspects and extracts the `ANMSUNIT\ANMSUNIT.FF` unit animations
+  and stand-alone `.SMK` files.
+- `mapview`: map viewer and hot-seat battle sandbox for every scenario
+  (`mapview --game-dir DIR --data DATA_DIR --scenario s4-5-1`).
 
 ## Clean-room policy
 
@@ -126,4 +142,5 @@ documents. Decompiled code is never committed. See `docs/README.md`.
 
 ## License
 
-GPL-3.0 — see [LICENSE](LICENSE).
+GPL-3.0, see [LICENSE](LICENSE). Third-party components:
+[THIRD_PARTY.md](THIRD_PARTY.md).

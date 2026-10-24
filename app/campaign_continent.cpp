@@ -28,8 +28,7 @@ const render::SmkFrames* colonyMap(App& app, CampaignContext& ctx) {
     if (ctx.colonyMap && ctx.mapColony == col.number) return ctx.colonyMap.get();
     ctx.colonyMap.reset();
     try {
-        fs::path p = app.data().gameDir / "COLANMS" / (game::toUpper(col.animation) + ".SMK");
-        if (!fs::exists(p)) p = app.data().gameDir / "COLANMS" / (col.animation + ".SMK");
+        const fs::path p = app.data().file("COLANMS/" + game::toUpper(col.animation) + ".SMK");
         ctx.colonyMap = std::make_shared<render::SmkFrames>(render::SmkFrames::load(p));
         ctx.mapColony = col.number;
     } catch (const std::exception& ex) {

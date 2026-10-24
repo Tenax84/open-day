@@ -2,17 +2,21 @@ add_library(openday_formats
     formats/bmp_palette.cpp
     formats/dbi.cpp
     formats/ff.cpp
+    formats/game_path.cpp
+    formats/inflate.cpp
+    formats/mdb.cpp
     formats/palcycle.cpp
     formats/pe_resources.cpp
     formats/png_writer.cpp
     formats/smk.cpp
+    formats/zip.cpp
 )
 target_include_directories(openday_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(openday_formats PRIVATE openday_warnings)
 
-add_library(openday_data data/sqlite_db.cpp)
+add_library(openday_data data/mdb_import.cpp data/sqlite_db.cpp)
 target_include_directories(openday_data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(openday_data PUBLIC SQLite::SQLite3 PRIVATE openday_warnings)
+target_link_libraries(openday_data PUBLIC SQLite::SQLite3 openday_formats PRIVATE openday_warnings)
 
 add_library(openday_stb STATIC render/stb_truetype_impl.cpp render/stb_vorbis_impl.c)
 target_include_directories(openday_stb SYSTEM PUBLIC ${stb_SOURCE_DIR})
