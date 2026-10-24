@@ -61,6 +61,12 @@ ObjectiveResult loser(int slot) { return {true, false, slot}; }
 
 } // namespace
 
+int objectiveProgress(const BattleState& s) {
+    if (s.objective.kind != 1) return 0;
+    if (s.lastHeldTurn >= 0 && s.turn > s.lastHeldTurn + 1) return 0;
+    return s.holdCount;
+}
+
 const char* objectiveName(int kind) {
     switch (kind) {
     case 0: return "Destroy";
@@ -112,7 +118,7 @@ ObjectiveResult checkObjective(BattleState& s) {
     case 3: // Protect: no AI unit in the zone during the last round
         if (afterLimit) return win();
         if (t == s.turnLimit && unitInZoneOwnedBy(s, false)) return lose();
-        return r;
+        break;
     case 4: // Intercept
         if (listedUnitInZone(s)) r = lose();
         else if (!anyListedUnitExists(s)) r = win();
@@ -120,7 +126,7 @@ ObjectiveResult checkObjective(BattleState& s) {
     case 5: // Keep: lose nothing until the turn limit
         if (anyListedGone(s)) return lose();
         if (afterLimit) return win();
-        return r;
+        break;
     case 6: { // Destroy All Except
         if (anyListedGone(s)) {
             r = lose();
@@ -159,7 +165,10 @@ ObjectiveResult checkObjective(BattleState& s) {
         break;
     }
     if (r.decided) return r;
-    // Common rules: the turn limit ends the battle as a failure.
+    // Common rules: the cheat flags (also surrender), then the turn limit
+    // ends the battle as a failure.
+    if (s.cheatWin) return win();
+    if (s.cheatLose) return lose();
     if (afterLimit) r.decided = true;
     return r;
 }

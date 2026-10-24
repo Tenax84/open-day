@@ -701,10 +701,17 @@ move, shot and autofire code, and order changes reach the clients as
   counter-attack) count as counter-attack battles. When an emergency drop
   finds no target, the budget keeps the cost it was raised by *(literal
   reading of 6.3)*.
-- Not implemented yet: the counter-attack rules (buildings, mines and walls as targets), the AI
-  variant of the path search (42 × 42 window, 7-round cap and the ignored
-  random draw),
-  so the random sequence differs from the original's.
+- The AI variant of the path search (42 × 42 window, 7-round cap, boats
+  exempt) is used for every path map of the actions; on maps of 57 tiles
+  or more each one first draws and ignores one random number (boats
+  excepted, as they never reach that step). The Goto group uses the normal
+  search, claims the last tile of each cut path and searches replacement
+  tiles also for a non-stopping waypoint (4.4).
+- The firing-position test of 3.2 checks only range and line of fire
+  (`checkShotFrom` with `geometryOnly`); the free list uses the seven rules
+  of 1.3 including the one-sided `Jammer` comparison.
+- Not implemented yet: the counter-attack rules (buildings, mines and walls
+  as targets), so the random sequence still differs from the original's.
 
 ## Open questions
 

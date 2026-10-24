@@ -80,7 +80,9 @@ bool BattleServer::checkEnd() {
     const ObjectiveResult r = checkObjective(state_);
     if (!r.decided) return false;
     updateTech();
-    emit(BattleOver{state_.turn, r.success, r.loser, state_.techFound()});
+    // The result message (battle-flow.md 5.1): statistics and scores are
+    // taken now; in death match success is forced to 1.
+    emit(BattleOver{state_.turn, r.success || state_.deathMatch(), r.loser, state_.techFound(), battleResults(state_)});
     return true;
 }
 
@@ -139,7 +141,7 @@ void BattleServer::beginNextTurn() {
             if (u.order.order != 0 && u.order.probability < r) emit(OrderChanged{i, {}});
         }
     }
-    emit(TurnStarted{player, turn});
+    emit(TurnStarted{player, turn, objectiveProgress(state_)});
     if (player != 0) {
         const int income = turnIncome(player);
         if (income > 0) emit(DeployBudget{player, state_.deployBudget[static_cast<std::size_t>(player)] + income});
@@ -191,9 +193,13 @@ std::vector<Event> BattleServer::handle(const Request& request) {
                           [&](const UndeployRequest& r) { handleUndeploy(r); },
                           [&](const AutomatedRequest& r) { deploying ? emit(RequestRejected{"deployment"}) : handleAutomated(r); },
                           [&](const CheatRequest& r) {
-                              // Kind 7 (counter-attack) ignores the flags.
-                              if (state_.objective.kind == 7) return emit(RequestRejected{"not in a counter-attack"});
-                              emit(BattleOver{state_.turn, r.win, 5});
+                              // Win / lose / surrender (battle-flow.md 3.1, 5.6): the
+                              // flag is set and the objective checked at once; the
+                              // requesting slot is ignored. Kind 7 (city battles)
+                              // ignores the flags.
+                              if (state_.objective.kind == 7) return emit(RequestRejected{"not in a city battle"});
+                              (r.win ? state_.cheatWin : state_.cheatLose) = true;
+                              checkEnd();
                           }},
                request);
     if (!state_.over && !state_.deploying) updateTech();

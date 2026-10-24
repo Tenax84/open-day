@@ -47,6 +47,12 @@ struct ShotCheck {
 
 // Checks whether a unit may fire at a tile now (section 1, in order).
 ShotCheck checkShot(const BattleState& state, int shooter, Point target, bool coop);
+// The same check as if the shooter stood on `pos` (top-left tile) with
+// `availableAp`. The shooter's real tile does not block the line of fire.
+// `geometryOnly`: only the range and line-of-fire part (no weapon, AP or
+// side test), as the computer player's firing-position test (tactical-ai.md 3.2).
+ShotCheck checkShotFrom(const BattleState& state, int shooter, Point pos, int availableAp, Point target, bool coop,
+                        bool geometryOnly = false);
 
 // Base hit chance in percent for a shot at `aim`, after the Jammer
 // modifier; > 100 means the roll cannot fail. Adjacent targets always hit

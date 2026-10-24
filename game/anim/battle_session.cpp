@@ -26,15 +26,6 @@ void BattleSession::apply(const std::vector<Event>& events) {
     if (log)
         for (const Event& e : events) log(e);
     for (const Event& e : events) {
-        // Losses, counted before the event removes the object.
-        const BattleState& s = view_.state();
-        if (const auto* d = std::get_if<UnitDestroyed>(&e)) {
-            const int owner = s.unit(d->unit).owner;
-            if (owner >= 0 && owner < kPlayerSlots) ++stats_[static_cast<std::size_t>(owner)].unitsLost;
-        } else if (const auto* b = std::get_if<BuildingDestroyed>(&e)) {
-            const int owner = s.building(b->building).owner;
-            if (owner >= 0 && owner < kPlayerSlots) ++stats_[static_cast<std::size_t>(owner)].buildingsLost;
-        }
         view_.apply({e});
         if (const auto* t = std::get_if<TurnStarted>(&e)) {
             const int player = t->player;
@@ -67,8 +58,19 @@ MoveRequest moveOrder(const BattleState& s, const std::vector<int>& units, Point
 }
 
 ShootRequest shootOrder(const BattleState& s, const std::vector<int>& units, Point target, bool autofire) {
+    // Every selected unit gets a move-to-fire path (possibly empty), planned
+    // with the group claims (tactical-interface.md 3.2, tactical-movement.md 3.7).
     ShootRequest r{s.currentPlayer, {}, target, autofire};
-    for (const int u : units) r.orders.push_back({u, {}});
+    PlanContext context;
+    for (const int u : units) {
+        if (r.orders.size() >= 64) break;
+        UnitOrder o{u, {}};
+        if (planMoveToFire(s, u, target, &context, o.path)) {
+            context.vacated.push_back(s.unit(u).pos);
+            context.claimed.push_back(o.path.back().pos);
+        }
+        r.orders.push_back(std::move(o));
+    }
     return r;
 }
 

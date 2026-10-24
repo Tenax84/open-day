@@ -49,13 +49,11 @@ public:
     std::function<void(const Event&)> log; // optional, sees every event
 
     // The player whose turn the animations are showing (they lag behind
-    // the state), and the battle statistics per player slot.
+    // the state). The battle statistics are in state().stats / results.
     int displayedPlayer() const { return displayedPlayer_; }
     bool displayedOver() const { return displayedOver_; }
-    struct Stats {
-        int unitsLost = 0, buildingsLost = 0;
-    };
-    const std::array<Stats, kPlayerSlots>& stats() const { return stats_; }
+    // Turns a unit on this client only (tactical-interface.md 3.2).
+    bool turnUnit(int unit) { return view_.turnUnit(unit); }
 
 private:
     void apply(const std::vector<Event>& events);
@@ -68,7 +66,6 @@ private:
     BattleView view_;
     int displayedPlayer_ = 0;
     bool displayedOver_ = false;
-    std::array<Stats, kPlayerSlots> stats_{};
 };
 
 // Requests built from a client's state for the player whose turn it is.

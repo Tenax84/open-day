@@ -496,11 +496,24 @@ may drop it or use it for "request rejected". The turn is ended with
   - Group replacement tiles are tried orthogonal neighbors first, then the
     diagonals, each in x-then-y order (now confirmed as the original order,
     3.5).
-  - The AI's search window (42 × 42, 7-round cap, 3.1) is not implemented
-    yet.
+  - The AI's search (3.1) is implemented in `PathMap` (the `aiSearch`
+    flag; the discarded random draw is made by the computer player before
+    each such search). The border pass of every round still covers the
+    whole map border, also with the window *(OpenDay reading)*.
   - The server re-prices the client's path itself and cuts it to the AP.
+  - Movement records have no step limit (the original's hold 75 steps,
+    section 7).
 - Apply the Overwatch reserve (2) in every human move planner; it is purely
-  client-side.
+  client-side. Implemented as `movementBudget` and used by the two-click
+  move, MOVE ALL and the move-to-fire preview of the game program.
+- Human group orders (3.5, `planGroupOrders` / `planGroupMove`): no order
+  for a clicked tile the unit cannot stop on, replacement only for a
+  claimed tile, the last tile of the cut path is claimed, and the
+  two-click move repeats its passes while someone got an order (MOVE ALL:
+  one pass). The computer player's Goto group keeps the replacement search
+  for both cases (`groupTile` without the human flag).
+- Move to fire (3.7) is `planMoveToFire`; the shot request of the game
+  program gives every selected unit such a path with the group claims.
 
 ## Open questions
 

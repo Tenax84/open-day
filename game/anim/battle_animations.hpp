@@ -55,6 +55,8 @@ public:
     // A transported unit leaves the map / is put down on `tile`.
     void liftUnit(int unit);
     void placeUnit(int unit, Point tile);
+    // Shows a unit with a new facing (turning it by a click).
+    void turnUnit(int unit, int facing);
     // Redraws the units on a tile (a new bridge under them).
     void refreshUnitsAt(Point tile);
     // The tactical view, for the AA aim point: screen width and viewport size.

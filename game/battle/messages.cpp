@@ -31,11 +31,14 @@ void applyEvent(BattleState& s, const Event& event) {
                    [&](const WallDamaged& e) { s.wall(e.wall).armor = e.armor; },
                    [&](const UnitDestroyed& e) {
                        const Point p = s.unit(e.unit).pos;
+                       countUnitDestroyed(s, s.unit(e.unit).type->typeId, s.unit(e.unit).owner, e.cause.attacker);
                        s.unit(e.unit).armor = 0;
                        s.removeUnit(e.unit);
                        if (!e.wreck.empty()) s.addRuin({e.wreck, p});
                    },
                    [&](const BuildingDestroyed& e) {
+                       countBuildingDestroyed(s, s.building(e.building).type->id, s.building(e.building).owner,
+                                              e.cause.attacker);
                        s.building(e.building).armor = 0;
                        s.removeBuilding(e.building);
                        for (const BattleRuin& r : e.rubble) s.addRuin(r);
@@ -62,6 +65,7 @@ void applyEvent(BattleState& s, const Event& event) {
                    [&](const TurnStarted& e) {
                        s.currentPlayer = e.player;
                        s.turn = e.turn;
+                       s.objectiveProgress = e.progress;
                        s.deploying = false;
                        refillAp(s, e.player);
                    },
@@ -70,6 +74,7 @@ void applyEvent(BattleState& s, const Event& event) {
                        s.over = true;
                        s.success = e.success;
                        s.loser = e.loser;
+                       s.results = e.results;
                    },
                    [&](const UnitAdded& e) {
                        BattleUnit u;

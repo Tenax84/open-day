@@ -668,7 +668,24 @@ result travels to the clients in the `BattleOver` event (success, loser).
   counter-attack battles (4.3, with the campaign), tech buildings (5.2) and
   the cheat requests are implemented. Automated units (4.4) are implemented
   (automated-units.md); objectives are checked after each call. Not
-  implemented yet: the score (5.4), saving and restoring a battle, surrender.
+  implemented yet: saving and restoring a battle, a player leaving (3.3;
+  there is no network game).
+- Cheat win / lose and surrender set flags that the objective check reads
+  as common rules 1 and 2 (after the kind's own rule, also for kinds 3 and
+  5); the server runs the check at once. Kind 7 refuses the request.
+- Statistics (5.3): `applyEvent` counts `UnitDestroyed` / `BuildingDestroyed`
+  with the attacker slot of their `DamageCause`, so the server and every
+  client copy hold the same per-type counters (`BattleState::stats`). The
+  result message is the `BattleOver` event with one `PlayerResult` per human
+  participant (the four totals and the score); in death match its success
+  is forced to true.
+- Score (5.4): **deliberate fix** — OpenDay uses the intended formula,
+  one term per type at the plain `Cost` of its lowest tech level (level 0),
+  clamped to 0 … 65 535 (`battleScore`). The original's visible number is
+  available as `originalBattleScore` (not shown).
+- Campaign statistics (5.8) are added only after a won battle; the report
+  shows the score in the RANK column and the tech line only for a won
+  province battle (tactical-interface.md 9.2).
 - Reinforcements use the lowest tech level of their type (the rows have no
   tech level column) and face the map center.
 - The computer player only plays when at least one human slot takes part;

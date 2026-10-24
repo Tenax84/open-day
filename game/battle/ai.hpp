@@ -35,6 +35,8 @@ private:
     bool isEnemy(const BattleUnit& u) const;
     bool canFireNow(const BattleUnit& u) const;
     bool legalFrom(int shooter, Point from, Point target);
+    bool firingTileOk(int shooter, Point from, Point target) const;
+    PathMap aiPathMap(int unit);
     bool targetCanHit(int target, int shooter, Point at);
     int score(int shooter, int unit, int building, int steps, int weight) const;
     void consider(Candidate& best, Candidate c, Point shooterPos) const;

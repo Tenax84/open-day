@@ -103,15 +103,21 @@ bool lineIsClear(const BattleState& state, int shooter, Point from, Point aim) {
 } // namespace
 
 ShotCheck checkShot(const BattleState& state, int shooterIndex, Point target, bool coop) {
+    const BattleUnit& shooter = state.unit(shooterIndex);
+    return checkShotFrom(state, shooterIndex, shooter.pos, shooter.availableAp(), target, coop);
+}
+
+ShotCheck checkShotFrom(const BattleState& state, int shooterIndex, Point pos, int availableAp, Point target, bool coop,
+                        bool geometryOnly) {
     ShotCheck r;
     const BattleUnit& shooter = state.unit(shooterIndex);
     const UnitType& t = *shooter.type;
-    if (!shooter.alive || !state.inside(target) || insideFootprint(target, shooter.pos, t.sizeX, t.sizeY)) return r;
-    if (!t.hasWeapon) return {ShotError::NoWeapon, {}};
-    if (shooter.availableAp() < t.shotAp) return {ShotError::NotEnoughAp, {}};
+    if (!shooter.alive || !state.inside(target) || insideFootprint(target, pos, t.sizeX, t.sizeY)) return r;
+    if (!geometryOnly && !t.hasWeapon) return {ShotError::NoWeapon, {}};
+    if (!geometryOnly && availableAp < t.shotAp) return {ShotError::NotEnoughAp, {}};
 
     const int building = state.buildingAt(target);
-    if (shooter.owner != 0) {
+    if (shooter.owner != 0 && !geometryOnly) {
         if (building >= 0) {
             if (buildingSide(shooter.owner, state.building(building), coop) != Side::Enemy) return r;
         } else if (const int u = state.unitAt(target); u >= 0) {
@@ -128,7 +134,7 @@ ShotCheck checkShot(const BattleState& state, int shooterIndex, Point target, bo
     } else {
         candidates.push_back(target);
     }
-    const Point from = centerTile(shooter);
+    const Point from{pos.x + (t.sizeX - 1) / 2, pos.y + (t.sizeY - 1) / 2}; // centre tile
     bool tooFar = false, tooClose = false;
     for (const Point a : candidates) {
         const int d = chebyshev(from, a);

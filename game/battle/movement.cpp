@@ -4,6 +4,8 @@
 #include <climits>
 #include <cstdlib>
 
+#include "battle/combat.hpp"
+
 namespace openday::game {
 namespace {
 
@@ -113,7 +115,7 @@ TileEval evaluateTile(const BattleState& state, const BattleUnit& unit, Point ti
     return e;
 }
 
-PathMap::PathMap(const BattleState& state, int unitIndex, const PlanContext* context)
+PathMap::PathMap(const BattleState& state, int unitIndex, const PlanContext* context, bool aiSearch)
     : state_(&state), context_(context ? *context : PlanContext{}) {
     const BattleUnit& unit = state.unit(unitIndex);
     start_ = unit.pos;
@@ -152,17 +154,47 @@ PathMap::PathMap(const BattleState& state, int unitIndex, const PlanContext* con
         }
     };
     const int n = n_;
+    // The sweep area: the usable area 1 ... n-2, or for the computer player
+    // a window around the unit with a round cap (section 3.1, AI variant).
+    int x0 = 1, y0 = 1, x1 = n - 2, y1 = n - 2;
+    int rounds = INT_MAX;
+    if (aiSearch && movement != kBoat) {
+        rounds = kAiSearchRounds;
+        if (aiSearchWindowed(n, start_)) {
+            auto place = [n](int lo, int hi, int& a, int& b) {
+                if (lo < 1) {
+                    hi += 1 - lo;
+                    lo = 1;
+                }
+                if (hi > n - 2) {
+                    lo -= hi - (n - 2);
+                    hi = n - 2;
+                }
+                a = std::max(lo, 1);
+                b = std::min(hi, n - 2);
+            };
+            place(start_.x - 20, start_.x + 21, x0, x1);
+            place(start_.y - 20, start_.y + 21, y0, y1);
+        }
+    }
     do {
         changed = false;
-        for (int x = 1; x <= n - 2; ++x)
-            for (int y = 1; y <= n - 2; ++y) update(x, y);
-        for (int y = n - 2; y >= 1; --y)
-            for (int x = n - 2; x >= 1; --x) update(x, y);
+        for (int x = x0; x <= x1; ++x)
+            for (int y = y0; y <= y1; ++y) update(x, y);
+        for (int y = y1; y >= y0; --y)
+            for (int x = x1; x >= x0; --x) update(x, y);
         for (int x = 0; x < n; ++x) update(x, 0);
         for (int x = 0; x < n; ++x) update(x, n - 1);
         for (int y = 0; y < n; ++y) update(n - 1, y);
         for (int y = 0; y < n; ++y) update(0, y);
-    } while (changed);
+    } while (changed && --rounds > 0);
+}
+
+bool aiSearchWindowed(int n, Point unit) {
+    if (n < kAiSearchMinSize) return false;
+    const int c = (n - 12) / 2;
+    const bool central = unit.x >= c && unit.x < c + 12 && unit.y >= c && unit.y < c + 12;
+    return !central;
 }
 
 bool PathMap::reachable(Point target) const {
@@ -228,13 +260,20 @@ std::vector<PathStep> findPath(const BattleState& state, int unitIndex, Point ta
     return PathMap(state, unitIndex, context).pathTo(target);
 }
 
-bool groupTile(const BattleState& state, const BattleUnit& unit, Point target, const PlanContext& context, Point& out) {
+bool groupTile(const BattleState& state, const BattleUnit& unit, Point target, const PlanContext& context, Point& out,
+               bool human) {
     if (evaluateTile(state, unit, target, &context).enterable) {
         out = target;
         return true;
     }
-    // The nearest free tile around the target: orthogonal neighbors first,
-    // then the diagonals, each in x-then-y order.
+    // A human order needs a clicked tile the unit could stop on if nobody
+    // had claimed it; the computer player's Goto searches in both cases.
+    if (human) {
+        const PlanContext unclaimed{context.vacated, {}};
+        if (!evaluateTile(state, unit, target, &unclaimed).enterable) return false;
+    }
+    // The nearest free tile around the target by squared distance, ties in
+    // x-then-y scan order: the orthogonal neighbors, then the diagonals.
     static constexpr Point kAround[8] = {{-1, 0}, {0, -1}, {0, 1}, {1, 0}, {-1, -1}, {-1, 1}, {1, -1}, {1, 1}};
     for (const Point d : kAround) {
         const Point p{target.x + d.x, target.y + d.y};
@@ -268,34 +307,97 @@ int moveCost(const std::vector<PathStep>& path, int steps, int availableAp) {
     return std::min(sum, availableAp);
 }
 
-PlannedMove planMove(const BattleState& state, int unit, Point target) {
+int movementBudget(const BattleUnit& u, bool overwatch) {
+    int budget = u.availableAp();
+    if (overwatch && u.type->canOverwatch && u.type->shotAp <= budget) budget -= u.type->shotAp;
+    return std::max(budget, 0);
+}
+
+PlannedMove planMove(const BattleState& state, int unit, Point target, bool overwatch) {
     PlannedMove m;
     m.unit = unit;
     m.target = target;
     m.path = findPath(state, unit, target);
-    m.affordable = affordableSteps(m.path, state.unit(unit).availableAp());
+    m.affordable = affordableSteps(m.path, movementBudget(state.unit(unit), overwatch));
     return m;
 }
 
-std::vector<PlannedMove> planGroupMove(const BattleState& state, const std::vector<int>& units, Point target) {
+std::vector<PlannedMove> planGroupOrders(const BattleState& state, const std::vector<std::pair<int, Point>>& entries,
+                                         bool overwatch, bool repeat) {
     std::vector<PlannedMove> out;
     PlanContext context;
-    for (const int unit : units) {
-        if (out.size() >= 64) break;
-        const BattleUnit& u = state.unit(unit);
-        Point dest;
-        if (!groupTile(state, u, target, context, dest)) continue;
-        PlannedMove m;
-        m.unit = unit;
-        m.target = dest;
-        m.path = findPath(state, unit, dest, &context);
-        m.affordable = affordableSteps(m.path, u.availableAp());
-        if (m.affordable == 0) continue;
-        context.vacated.push_back(u.pos);
-        context.claimed.push_back(dest);
-        out.push_back(std::move(m));
+    std::vector<std::pair<int, Point>> remaining;
+    for (const auto& e : entries)
+        if (std::none_of(remaining.begin(), remaining.end(), [&](const auto& r) { return r.first == e.first; }))
+            remaining.push_back(e);
+    bool progress = true;
+    while (progress && !remaining.empty()) {
+        progress = false;
+        std::vector<std::pair<int, Point>> left;
+        for (const auto& [unit, target] : remaining) {
+            const BattleUnit& u = state.unit(unit);
+            Point dest;
+            if (out.size() >= 64 || !groupTile(state, u, target, context, dest, true)) {
+                left.push_back({unit, target});
+                continue;
+            }
+            PlannedMove m;
+            m.unit = unit;
+            m.target = dest;
+            m.path = findPath(state, unit, dest, &context);
+            m.affordable = affordableSteps(m.path, movementBudget(u, overwatch));
+            if (m.affordable == 0) {
+                left.push_back({unit, target});
+                continue;
+            }
+            // The tile where the unit really stops this turn is claimed.
+            context.vacated.push_back(u.pos);
+            context.claimed.push_back(m.path[static_cast<std::size_t>(m.affordable - 1)].pos);
+            out.push_back(std::move(m));
+            progress = true;
+        }
+        remaining = std::move(left);
+        if (!repeat) break;
     }
     return out;
+}
+
+std::vector<PlannedMove> planGroupMove(const BattleState& state, const std::vector<int>& units, Point target,
+                                       bool overwatch) {
+    std::vector<std::pair<int, Point>> entries;
+    for (const int u : units) entries.push_back({u, target});
+    return planGroupOrders(state, entries, overwatch, true);
+}
+
+bool planMoveToFire(const BattleState& state, int unit, Point target, const PlanContext* context,
+                    std::vector<PathStep>& path) {
+    path.clear();
+    const BattleUnit& u = state.unit(unit);
+    if (!u.alive || !state.inside(target)) return false;
+    // The target's footprint.
+    Point lo = target, hi = target;
+    if (const int b = state.buildingAt(target); b >= 0) {
+        lo = state.building(b).pos;
+        hi = {lo.x + state.building(b).type->sizeX - 1, lo.y + state.building(b).type->sizeY - 1};
+    }
+    const int range = u.type->range, minRange = u.type->minRange;
+    const int ap = u.availableAp();
+    const PathMap map(state, unit, context);
+    int best = INT_MAX;
+    for (int x = lo.x - range; x <= hi.x + range; ++x)
+        for (int y = lo.y - range; y <= hi.y + range; ++y) {
+            const Point c{x, y};
+            if (x >= lo.x - minRange && x <= hi.x + minRange && y >= lo.y - minRange && y <= hi.y + minRange) continue;
+            if (!map.reachable(c)) continue;
+            std::vector<PathStep> p = map.pathTo(c);
+            int cost = 0;
+            for (const PathStep& s : p) cost += s.cost;
+            if (p.empty() || cost >= ap || cost >= best) continue;
+            if (!checkShotFrom(state, unit, c, ap - cost, target, true).ok()) continue;
+            best = cost;
+            path = std::move(p);
+        }
+    return best != INT_MAX;
 }
 
 std::vector<std::string> previewSprites(const PlannedMove& move) {

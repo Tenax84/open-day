@@ -37,7 +37,8 @@ struct BattleConfig {
     game::CombatOptions options;
     std::string aftermath;  // report text on a win (campaign); empty = generic
     bool techLine = false;  // report shows "New technologies found"
-    bool canSave = false;   // the in-game options allow saving
+    bool canSave = false;   // the in-game options allow saving (a campaign)
+    std::string playerName; // the local player's name (report, player list); empty = generic
     std::function<void(const BattleResult&)> onFinished; // after the report; default: main menu
 };
 
@@ -72,6 +73,9 @@ struct EncyclopediaRequest {
 // The encyclopedia dialog over the current top screen.
 std::unique_ptr<Screen> makeEncyclopedia(App& app, EncyclopediaRequest request);
 void openEncyclopedia(App& app, EncyclopediaRequest request);
+// A 25 x 25 ability icon (tactical-interface.md 2.7, encyclopedia.md 5.1):
+// the bitmap from the user's LIBDAY.EXE, or OpenDay's labelled box.
+void drawAbilityIcon(App& app, render::IndexedSurface& s, const ui::UiContext& ui, int id, int x, int y);
 
 // Campaign entry points (app/campaign_flow.cpp).
 std::unique_ptr<Screen> makeNewCampaignMenu(App& app);

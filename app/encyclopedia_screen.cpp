@@ -277,11 +277,7 @@ private:
     // A 25 x 25 ability icon; OpenDay's substitute is a framed box with a
     // short label.
     void abilityIcon(render::IndexedSurface& s, const ui::UiContext& ui, int id, int x, int y) {
-        if (const formats::DbiSprite* art = app_.exeBitmap(id)) return s.blit(*art, x, y);
-        const char* label = id == 185 ? "AA" : id == 184 ? "MD" : id == 182 ? "FO" : id == 181 ? "ST" : id == 183 ? "IF" : "JA";
-        fillBox(s, {x, y, 25, 25}, ui.black);
-        frameBox(s, {x, y, 25, 25}, yellow_);
-        ui.standard->drawIn(s, x, y, 25, 25, label, yellow_);
+        drawAbilityIcon(app_, s, ui, id, x, y);
     }
 
     // --- Other pages (5.2 - 5.5) --------------------------------------------
@@ -359,6 +355,15 @@ private:
 };
 
 } // namespace
+
+void drawAbilityIcon(App& app, render::IndexedSurface& s, const ui::UiContext& ui, int id, int x, int y) {
+    if (const formats::DbiSprite* art = app.exeBitmap(id)) return s.blit(*art, x, y);
+    const std::uint8_t yellow = nearestColor(app.data().palette, 232, 200, 40);
+    const char* label = id == 185 ? "AA" : id == 184 ? "MD" : id == 182 ? "FO" : id == 181 ? "ST" : id == 183 ? "IF" : "JA";
+    fillBox(s, {x, y, 25, 25}, ui.black);
+    frameBox(s, {x, y, 25, 25}, yellow);
+    ui.standard->drawIn(s, x, y, 25, 25, label, yellow);
+}
 
 std::unique_ptr<Screen> makeEncyclopedia(App& app, EncyclopediaRequest request) {
     return std::make_unique<EncyclopediaScreen>(app, std::move(request));

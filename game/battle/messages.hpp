@@ -111,10 +111,9 @@ struct WallDamaged {
 };
 
 // Who destroyed a unit or a building (battle-flow.md 5.3, "Who gets the
-// kill"). This is the hook for the battle statistics: `attacker` is the
-// credited player slot (-1 = unknown), `automatedType` the automated type
-// when an automated "destroy" unit did it (-1 otherwise). Statistics are not
-// counted yet.
+// kill"): `attacker` is the credited player slot (-1 = nobody),
+// `automatedType` the automated type when an automated "destroy" unit did it
+// (-1 otherwise). applyEvent counts the battle statistics from it.
 struct DamageCause {
     int attacker = -1;
     int automatedType = -1;
@@ -161,6 +160,7 @@ struct TerrainBurned {
 struct TurnStarted {
     int player = 0;
     int turn = 0;
+    int progress = 0; // the objective's progress counter (Hold Position), tactical-interface.md 2.5
 };
 
 struct BattleOver {
@@ -168,6 +168,7 @@ struct BattleOver {
     bool success = false; // the human side won
     int loser = 5;        // death match: the slot that lost; 5 = none
     int techFound = 0;    // TechReward of the tech buildings held at the end
+    std::vector<PlayerResult> results{}; // one row per human player (battle-flow.md 5.1)
 };
 
 // A tech building became held or no longer held by the human side

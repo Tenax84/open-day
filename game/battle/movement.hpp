@@ -3,6 +3,7 @@
 #pragma once
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "battle/battle_state.hpp"
@@ -20,6 +21,13 @@ struct TileEval {
 
     bool crossable() const { return enterable || flyOver; }
 };
+
+// The computer player's path search (section 3.1, AI variant).
+inline constexpr int kAiSearchMinSize = 57; // maps from this size use the window and the random draw
+inline constexpr int kAiSearchRounds = 7;
+// Does a unit at `unit` (top-left tile) on an n x n map get the 42 x 42
+// window (outside the central 12 x 12 square of a large map)?
+bool aiSearchWindowed(int n, Point unit);
 
 // Adjustments for planning one unit of a group order (section 3.5).
 struct PlanContext {
@@ -40,7 +48,10 @@ struct PathStep {
 // for any number of destinations.
 class PathMap {
 public:
-    PathMap(const BattleState& state, int unit, const PlanContext* context = nullptr);
+    // `aiSearch`: the computer player's restricted search (section 3.1, AI
+    // variant: a 42 x 42 window on large maps and at most 7 rounds; boats
+    // excepted). The random draw that goes with it is the caller's.
+    PathMap(const BattleState& state, int unit, const PlanContext* context = nullptr, bool aiSearch = false);
     // The unit can stop on `target` and get there (not its own tile).
     bool reachable(Point target) const;
     // Path to `target` (start tile excluded); empty when not reachable.
@@ -60,8 +71,11 @@ private:
 };
 
 // Destination of one unit of a group order: `target`, or else the nearest
-// free tile around it (section 3.5). False when there is none.
-bool groupTile(const BattleState& state, const BattleUnit& unit, Point target, const PlanContext& context, Point& out);
+// free tile around it (section 3.5). False when there is none. `human`: a
+// target the unit cannot stop on (claims aside) gives no order; otherwise
+// (the computer player's Goto) the neighbors are tried in that case too.
+bool groupTile(const BattleState& state, const BattleUnit& unit, Point target, const PlanContext& context, Point& out,
+               bool human = false);
 
 // Shortest path from the unit's tile to `target` (start tile excluded), not
 // limited by AP. Empty when the target is not enterable or not reachable.
@@ -82,12 +96,30 @@ struct PlannedMove {
     int affordable = 0;         // steps walked this turn
 };
 
-// Plans a move order for one unit.
-PlannedMove planMove(const BattleState& state, int unit, Point target);
+// AP a human move planner may spend (section 2, "Keeping AP for a shot"):
+// with the Overwatch option on, one shot's worth is kept for units with
+// canOverwatch that can afford it.
+int movementBudget(const BattleUnit& unit, bool overwatch);
 
-// Plans a group order (up to 64 units, in the given order). Units whose
-// order cannot be carried out this turn are left out.
-std::vector<PlannedMove> planGroupMove(const BattleState& state, const std::vector<int>& units, Point target);
+// Plans a move order for one unit.
+PlannedMove planMove(const BattleState& state, int unit, Point target, bool overwatch = false);
+
+// Plans a human group order (section 3.5): (unit, clicked tile) entries in
+// order, up to 64 units, each unit once; paths cut to the movement budget.
+// With `repeat` the pass is repeated over the units left out while the
+// previous pass gave someone an order (two-click move); MOVE ALL makes one
+// pass. Units without an order this turn are left out.
+std::vector<PlannedMove> planGroupOrders(const BattleState& state, const std::vector<std::pair<int, Point>>& entries,
+                                         bool overwatch, bool repeat);
+// The two-click group move: every unit toward `target`, with repeat passes.
+std::vector<PlannedMove> planGroupMove(const BattleState& state, const std::vector<int>& units, Point target,
+                                       bool overwatch = false);
+
+// The firing tile of a human move-to-fire order (section 3.7): the cheapest
+// path (cost strictly below the available AP) to a candidate tile from
+// which a shot at `target` is legal with the AP left. False if none.
+bool planMoveToFire(const BattleState& state, int unit, Point target, const PlanContext* context,
+                    std::vector<PathStep>& path);
 
 // SYMBOLS.DBI marker of every step of a planned move (section 3.4).
 std::vector<std::string> previewSprites(const PlannedMove& move);

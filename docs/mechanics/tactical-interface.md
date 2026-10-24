@@ -1057,10 +1057,33 @@ views, objectives dialog, in-game options, battle report) on top of
 - Held tech buildings show the `LILBULB` symbol and play `TECH` when taken.
 - Info card, minimap (terrain colours of `Terrain Types`, objects from
   `Colors`, nearest palette entries), unit information box, tile cursors,
-  path preview, two-click movement, fire mode, GROUP, CENTER, MOVE ALL,
-  unit cycling, GUARD, END TURN, the overwatch and auto-fire lamps (stored
-  as options; the overwatch AP reserve is not applied yet) and the cheat
-  keys Tab + W / L (only with `--cheats`) work as described.
+  path preview, two-click movement (with repeat passes), the two-click shot
+  with the marked tile (`CSELT`, the red `SU000`) and move-to-fire paths for
+  every selected unit, fire mode (hides the preview), GROUP, CENTER (the
+  remembered destination when it is out of view; visible = its tile centre
+  inside the viewport *(OpenDay test)*), MOVE ALL (2.2, one pass), unit
+  cycling, GUARD, END TURN, the enable states of 2.2, the overwatch lamp
+  (the movement budget of every human planner; switching it re-cuts the
+  preview) and auto-fire lamp, turning a unit by clicking it (client only),
+  the turn counter with the red Hold Position number and the `OBJECTIVE` /
+  `TWOTURNS` sounds once per turn, the ability icons of the info card
+  (bitmaps from the user's `LIBDAY.EXE` as in the encyclopedia, otherwise
+  labelled boxes) and the cheat keys Tab + W / L (only with `--cheats`)
+  work as described.
+- *Done* marks (3.8) are cleared at the start of each of your turns
+  *(deliberate change; the original keeps them for the whole battle)*.
+- REINFORCEMENT is disabled in death match kind 10 (2.9).
+- The info card disappears when the right button is released (the release
+  is a mouse event too); `--script` has `rdown:X,Y` to show it.
+- MENU: Save / Surrender / Quit enabled as in interface.md; Surrender and
+  Quit ask with strings 818 / 819 in a yes / no box (frame 477) drawn over
+  the options. Quit returns to the main menu.
+- Battle report (9.2): one row per human player with the four totals and
+  the score under RANK; the result text follows 9.2 (death-match codes of
+  battle-flow.md 5.7); the tech line only on a won campaign province
+  battle.
+- The clock counts up from the start of each view; the turn time limit is
+  not used (single player).
 - Automated units view (6.2): panel 507, the usable list (icon, name,
   cost; the first row selected on opening), the explanation for 10 s when
   the selection changes, the per-type cursor over valid tiles and `CINVA`
@@ -1069,10 +1092,7 @@ views, objectives dialog, in-game options, battle report) on top of
   nothing is usable. The scroll buttons sit below the list at (9, 404) and
   (70, 404), 53×17 *(OpenDay choice)*. The resource indicator shows the
   tactical resource in the tactical views (2.4).
-- Not implemented yet: turning a
-  unit by clicking it, chat, the turn time
-  limit, the ability icons of the info card, statistics beyond units and
-  buildings lost and destroyed (the RANK column shows 1).
+- Not implemented yet: chat, the multiplayer turn time limit.
 
 ## 12. Open questions
 

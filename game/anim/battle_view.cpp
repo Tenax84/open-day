@@ -56,6 +56,14 @@ void BattleView::redraw(Layer layer, std::vector<MapSprite> sprites) {
     anim_.schedule([this, layer, sprites = std::move(sprites)]() mutable { scene_.replaceLayer(layer, std::move(sprites)); });
 }
 
+bool BattleView::turnUnit(int unit) {
+    BattleUnit& u = state_.unit(unit);
+    if (!u.alive || !u.type->hasFacings) return false;
+    u.facing = (u.facing + 1) % 8;
+    anim_.turnUnit(unit, u.facing);
+    return true;
+}
+
 void BattleView::apply(const std::vector<Event>& events) {
     for (const Event& event : events) {
         // Animations are started from the state before the event.

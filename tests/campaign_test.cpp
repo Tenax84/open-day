@@ -328,9 +328,16 @@ void stateMachine() {
     CHECK(!c.attack(3));
     CHECK(c.attack(2) && c.state == CampaignState::Tactic);
     // Lost: the variant flips and the strategic phase continues.
+    // The battle statistics are added only after a won battle (battle-flow.md 5.8).
     BattleOutcome lost;
+    lost.unitsDestroyed = 5;
+    lost.unitsLost = 3;
+    lost.buildingsDestroyed = 2;
+    lost.buildingsLost = 1;
     c.battleFinished(rules, lost);
     CHECK(c.state == CampaignState::Strategic && c.provinces[1].variant == 2 && !c.provinces[1].captured);
+    CHECK(c.player.unitsDestroyed == 0 && c.player.unitsLost == 0 && c.player.buildingsDestroyed == 0 &&
+          c.player.buildingsLost == 0);
     // Won without a counter-attack: captured, credits scaled by C(d).
     c.difficulty = 10; // C = 75
     c.player.credits = 0;
@@ -338,9 +345,15 @@ void stateMachine() {
     BattleOutcome won;
     won.success = true;
     won.techFound = 250;
+    won.unitsDestroyed = 4;
+    won.unitsLost = 1;
+    won.buildingsDestroyed = 2;
+    won.buildingsLost = 3;
     c.battleFinished(rules, won);
     CHECK(c.state == CampaignState::StrategicResults && c.provinces[1].captured && c.player.credits == 150 &&
           c.player.tech == 250);
+    CHECK(c.player.unitsDestroyed == 4 && c.player.unitsLost == 1 && c.player.buildingsDestroyed == 2 &&
+          c.player.buildingsLost == 3);
     std::mt19937 rng(1);
     CampaignResources res;
     res.rules = &rules;

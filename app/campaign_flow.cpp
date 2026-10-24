@@ -317,6 +317,8 @@ std::unique_ptr<Screen> campaignBattle(App& app, CampaignPtr ctx) {
     config.options = b.options;
     config.aftermath = b.aftermath;
     config.techLine = !b.city;
+    config.canSave = true; // a campaign (the single player hosts the server)
+    config.playerName = c.playerName;
     config.onFinished = [&app, ctx](const BattleResult& r) {
         game::Campaign& cc = ctx->campaign;
         game::BattleOutcome o;

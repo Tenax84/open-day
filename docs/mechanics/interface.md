@@ -486,6 +486,11 @@ text boxes) and the game program `app/` (screens).
   in the original).
 - Dialogs that leave the screen below visible (the encyclopedia, the map
   screens) are overlay screens: the screen below is drawn first.
+- In-game options of the battle views: Save / Surrender / Quit are enabled
+  by the table above (Save also needs a campaign battle). *Surrender* asks
+  with string 818 and sends the cheat-lose request; *Quit* asks with string
+  819 and returns to the main menu *(OpenDay choice)*. Saving during a
+  battle is not available yet: the button only shows its enable state.
 - Not implemented yet: CD-player track list, credits, the multiplayer
   menus.
 

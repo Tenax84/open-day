@@ -16,6 +16,7 @@
 //             fits the screen)
 // --cheats    enables the battle cheat keys Tab + W (win) and Tab + L (lose)
 // --script    test input, steps separated by ';': click:X,Y (left), rclick:X,Y,
+//             rdown:X,Y (right button pressed, not released),
 //             move:X,Y, key:NAME (a letter, enter, esc, tab, up, down, left,
 //             right), wait:MS. With --shot the screen is saved to a PNG after
 //             the last step and the program ends.
@@ -283,6 +284,12 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                         e.type = ui::InputEvent::Type::MouseDown;
                         send(e);
                         e.type = ui::InputEvent::Type::MouseUp;
+                        send(e);
+                    } else if (st.kind == "rdown") { // right button held (the info card)
+                        e.button = 3;
+                        e.type = ui::InputEvent::Type::MouseMove;
+                        send(e);
+                        e.type = ui::InputEvent::Type::MouseDown;
                         send(e);
                     } else if (st.kind == "key") {
                         e.type = ui::InputEvent::Type::KeyDown;

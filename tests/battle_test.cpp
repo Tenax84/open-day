@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <map>
 #include <tuple>
 #include <string>
 #include <variant>
@@ -1132,6 +1133,366 @@ void testAutomatedAi() {
 
 } // namespace
 
+// A state on a rule set of its own (the tests that change unit types).
+BattleState worldWith(const GlobalRules& r, const std::vector<std::string>& rows) {
+    TerrainMap t;
+    t.size = static_cast<int>(rows.size());
+    for (const std::string& row : rows)
+        for (const char c : row) t.tiles.push_back(std::string(1, c));
+    BattleState s(r, t);
+    s.players = {0, 1, 2};
+    s.currentPlayer = 1;
+    return s;
+}
+
+int addWith(BattleState& s, const GlobalRules& r, int type, int owner, Point p) {
+    const UnitType& t = r.units.at({type, 0});
+    return s.addUnit({100 + static_cast<int>(s.units().size()), &t, owner, t.actionPoints, 0, t.armor, p, 0});
+}
+
+int counter(const std::map<int, int>& m, int type) {
+    const auto it = m.find(type);
+    return it == m.end() ? 0 : it->second;
+}
+
+void testStatistics() {
+    // A shot: the shooter's owner gets the kill; the computer player has no
+    // record (battle-flow.md 5.3).
+    BattleState s = world(open(12));
+    const int tank = add(s, kTank, 1, {0, 0});
+    const int enemy = add(s, kTank, 0, {3, 0});
+    s.unit(enemy).armor = 5;
+    BuildingType depot;
+    depot.id = 77;
+    depot.armor = 5;
+    const int building = s.addBuilding({500, &depot, 0, 5, {3, 3}});
+    s.addWall({0, 2, 5, {0, 3}});
+    const BattleState initial = s;
+    BattleServer server(s, hotSeat(), 1);
+    Script rng;
+    server.random = [&](int n) { return rng(n); };
+    std::vector<Event> all = server.handle(ShootRequest{1, {{tank, {}}}, {3, 0}, false});
+    const UnitDestroyed* dead = first<UnitDestroyed>(all);
+    CHECK(dead && dead->cause.attacker == 1 && dead->cause.automatedType == -1);
+    const BattleStats& st = server.state().stats[1];
+    CHECK(counter(st.unitsDestroyed, kTank) == 1 && st.unitsLost.empty());
+    CHECK(server.state().stats[0].unitsLost.empty() && server.state().stats[0].unitsDestroyed.empty());
+    // A building counts; a wall does not.
+    std::vector<Event> ev = server.handle(ShootRequest{1, {{tank, {}}}, {3, 3}, false});
+    all.insert(all.end(), ev.begin(), ev.end());
+    CHECK(!server.state().building(building).alive && counter(st.buildingsDestroyed, 77) == 1);
+    ev = server.handle(ShootRequest{1, {{tank, {}}}, {0, 3}, false});
+    all.insert(all.end(), ev.begin(), ev.end());
+    CHECK(count<WallDestroyed>(ev) == 1 && server.state().stats[2].buildingsLost.empty() &&
+          counter(st.buildingsDestroyed, 77) == 1 && BattleStats::total(st.unitsDestroyed) == 1);
+    // Every copy of the state counts the same.
+    BattleState replica = initial;
+    for (const Event& e : all) applyEvent(replica, e);
+    CHECK(replica.stats[1].unitsDestroyed == st.unitsDestroyed && replica.stats[1].buildingsDestroyed == st.buildingsDestroyed);
+
+    // The computer player's kill is only the victim's loss.
+    BattleState a = world(open(10));
+    const int ai = add(a, kTank, 0, {0, 0});
+    const int victim = add(a, kTank, 1, {2, 0});
+    a.unit(victim).armor = 5;
+    a.currentPlayer = 0;
+    BattleServer s2(a, hotSeat(), 1);
+    s2.random = [&](int n) { return rng(n); };
+    s2.handle(ShootRequest{0, {{ai, {}}}, {2, 0}, false});
+    CHECK(!s2.state().unit(victim).alive && counter(s2.state().stats[1].unitsLost, kTank) == 1 &&
+          s2.state().stats[1].unitsDestroyed.empty());
+
+    // Area damage: own units in the blast count as a loss and as a kill
+    // (no same-side check outside death match).
+    for (const bool deathMatch : {false, true}) {
+        BattleState b = world(open(10));
+        b.computerPlayer = !deathMatch;
+        const int foe = deathMatch ? 2 : 0;
+        const int art = add(b, kArtillery, 1, {0, 0});
+        add(b, kTrooper, foe, {5, 0});
+        add(b, kTrooper, foe, {6, 1});
+        const int own = add(b, kTrooper, 1, {4, 0});
+        CombatOptions o = hotSeat();
+        o.coop = !deathMatch; // death match: the two players are enemies
+        BattleServer s3(b, o, 1);
+        s3.random = [&](int n) { return rng(n); };
+        rng.values = {0, 4};
+        s3.handle(ShootRequest{1, {{art, {}}}, {5, 0}, false});
+        CHECK(!s3.state().unit(own).alive);
+        const BattleStats& b1 = s3.state().stats[1];
+        CHECK(counter(b1.unitsLost, kTrooper) == 1);
+        // Death match credits no friendly kills.
+        CHECK(counter(b1.unitsDestroyed, kTrooper) == (deathMatch ? 2 : 3));
+        CHECK(counter(s3.state().stats[2].unitsLost, kTrooper) == (deathMatch ? 2 : 0));
+    }
+
+    // A mine: its owner gets the kill.
+    BattleState m = world(open(8));
+    const int walker = add(m, kTank, 1, {0, 0});
+    m.unit(walker).armor = 10;
+    BattleMine mine{0, 2, {2, 0}};
+    mine.hidden[1] = true;
+    m.addMine(mine);
+    BattleServer s4(m, hotSeat(), 1);
+    s4.random = [&](int n) { return rng(n); };
+    rng.values = {9};
+    s4.handle(MoveRequest{1, {{walker, planMove(s4.state(), walker, {4, 0}).path}}});
+    CHECK(!s4.state().unit(walker).alive && counter(s4.state().stats[2].unitsDestroyed, kTank) == 1 &&
+          counter(s4.state().stats[1].unitsLost, kTank) == 1);
+}
+
+void testScore() {
+    GlobalRules r = makeRules();
+    BuildingType depot;
+    depot.id = 77;
+    depot.cost = 100;
+    r.buildings[77] = depot;
+    r.units[{kTank, 1}] = r.units[{kTank, 0}]; // a second tech level of the same type
+    r.units[{kTank, 1}].techLevel = 1;
+    BattleState s = worldWith(r, open(6));
+    s.stats[1].unitsDestroyed[kTank] = 2;     // 2 x 2 x 50
+    s.stats[1].unitsLost[kTrooper] = 1;       // - 20
+    s.stats[1].buildingsDestroyed[77] = 1;    // + 100
+    s.stats[2].unitsLost[kTank] = 3;          // negative: shown as 0
+    s.stats[2].buildingsDestroyed[77] = 1;
+    CHECK(battleScore(s, 1) == 280);
+    CHECK(battleScore(s, 2) == 0);
+    CHECK(battleScore(s, 0) == 0);
+    // The original's number: units destroyed only, once per Unit Types row.
+    CHECK(originalBattleScore(s, 1) == 200);
+    s.stats[1].unitsDestroyed[kTank] = 1000; // clamped for display
+    CHECK(battleScore(s, 1) == 65535);
+    s.stats[1].unitsDestroyed[kTank] = 2;
+    const std::vector<PlayerResult> rows = battleResults(s);
+    CHECK(rows.size() == 2 && rows[0].player == 1 && rows[1].player == 2);
+    CHECK(rows[0].unitsDestroyed == 2 && rows[0].unitsLost == 1 && rows[0].buildingsDestroyed == 1 &&
+          rows[0].buildingsLost == 0 && rows[0].score == 280);
+    CHECK(rows[1].unitsLost == 3 && rows[1].buildingsDestroyed == 1 && rows[1].score == 0);
+
+    // The result message carries the rows; applyEvent stores them.
+    BattleState b = world(open(8));
+    const int tank = add(b, kTank, 1, {0, 0});
+    const int enemy = add(b, kTank, 0, {3, 0});
+    b.unit(enemy).armor = 5;
+    b.objective = {6, 0, {}, {}}; // Destroy All Except: won when no AI unit is left
+    b.players = {0, 1};
+    BattleServer server(b, hotSeat(), 1);
+    Script rng;
+    server.random = [&](int n) { return rng(n); };
+    const std::vector<Event> ev = server.handle(ShootRequest{1, {{tank, {}}}, {3, 0}, false});
+    const BattleOver* over = first<BattleOver>(ev);
+    CHECK(over && over->success && over->results.size() == 1 && over->results[0].unitsDestroyed == 1 &&
+          over->results[0].score == 100);
+    CHECK(server.state().results.size() == 1 && server.state().results[0].score == 100);
+}
+
+void testSurrender() {
+    // Skirmish / campaign province battle: lost, loser 5 (battle-flow.md 5.6).
+    BattleState s = world(open(6));
+    add(s, kTank, 1, {0, 0});
+    add(s, kTank, 0, {5, 5});
+    s.objective = {0, 0, {}, {{3, 3}}};
+    s.addMine({0, 0, {3, 3}}); // not cleared yet
+    s.turnLimit = 10;
+    s.players = {0, 1};
+    BattleServer server(s, hotSeat(), 1);
+    std::vector<Event> ev = server.handle(CheatRequest{1, false});
+    const BattleOver* over = first<BattleOver>(ev);
+    CHECK(over && !over->success && over->loser == 5 && over->results.size() == 1 && server.state().over);
+    CHECK(count<RequestRejected>(server.handle(EndTurnRequest{1})) == 1);
+
+    // City battles (kind 7) ignore the flag.
+    BattleState c = world(open(6));
+    add(c, kTank, 1, {0, 0});
+    add(c, kTank, 0, {5, 5});
+    BuildingType hq;
+    c.addBuilding({1, &hq, 1, 100, {2, 2}});
+    c.objective = {7, 99, {}, {}};
+    BattleServer s2(c, hotSeat(), 1);
+    ev = s2.handle(CheatRequest{1, false});
+    CHECK(count<RequestRejected>(ev) == 1 && count<BattleOver>(ev) == 0 && !s2.state().over);
+
+    // Death match: success is forced to 1, loser 5: everyone sees the ranking.
+    BattleState d = world(open(6));
+    add(d, kTank, 1, {0, 0});
+    add(d, kTank, 2, {5, 5});
+    d.computerPlayer = false;
+    d.objective.kind = 10;
+    d.turnLimit = 10;
+    BattleServer s3(d, hotSeat(), 1);
+    ev = s3.handle(CheatRequest{2, false});
+    over = first<BattleOver>(ev);
+    CHECK(over && over->success && over->loser == 5 && over->results.size() == 2);
+
+    // The kind's own rule decides before the flags: a won Destroy stays won.
+    BattleState w = world(open(6));
+    add(w, kTank, 1, {0, 0});
+    w.objective = {0, 0, {}, {}};
+    BattleServer s4(w, hotSeat(), 1);
+    ev = s4.handle(CheatRequest{1, false});
+    over = first<BattleOver>(ev);
+    CHECK(over && over->success);
+}
+
+void testJammer() {
+    // Jammer 0: the mover never draws reaction fire (tactical-movement.md 5).
+    GlobalRules r = makeRules();
+    r.units[{kTank, 0}].jammer = 0;
+    BattleState s = worldWith(r, open(12));
+    const int mover = addWith(s, r, kTank, 1, {0, 5});
+    addWith(s, r, kTank, 0, {8, 0});
+    BattleServer server(s, hotSeat(), 1);
+    const std::vector<Event> ev = server.handle(MoveRequest{1, {{mover, planMove(server.state(), mover, {5, 5}).path}}});
+    CHECK(count<UnitShot>(ev) == 0 && same(server.state().unit(mover).pos, {5, 5}));
+
+    // The hit chance at a unit of the player whose turn it is, scaled by
+    // its Jammer (tactical-combat.md 3.2).
+    r.units[{kTank, 0}].jammer = 10;
+    BattleState h = worldWith(r, open(10));
+    const int watcher = addWith(h, r, kTank, 0, {0, 0});
+    const int target = addWith(h, r, kTank, 1, {2, 0});
+    h.currentPlayer = 1;
+    CHECK(hitChance(h, watcher, h.unit(target).pos) == 8); // 80 x 10 / 100
+    h.currentPlayer = 0;
+    CHECK(hitChance(h, watcher, h.unit(target).pos) == 80);
+    h.currentPlayer = 1;
+    h.unit(target).pos = {1, 0};
+    CHECK(hitChance(h, watcher, {1, 0}) == 101); // adjacent: no roll
+}
+
+// A staircase corridor through mountains: up segments of 4 tiles, right
+// segments of 3, starting at the bottom left. Returns the last tile.
+Point staircase(std::vector<std::string>& rows, int stairs) {
+    const int n = static_cast<int>(rows.size());
+    for (std::string& row : rows) row.assign(static_cast<std::size_t>(n), 'm');
+    Point p{1, n - 2};
+    auto carve = [&](Point q) { rows[static_cast<std::size_t>(q.y)][static_cast<std::size_t>(q.x)] = '.'; };
+    carve(p);
+    for (int k = 0; k < stairs; ++k) {
+        for (int i = 0; i < 3; ++i) carve(p = {p.x + 1, p.y});
+        for (int i = 0; i < 4; ++i) carve(p = {p.x, p.y - 1});
+    }
+    return p;
+}
+
+void testAiSearch() {
+    // The window: only on maps of 57 tiles or more, outside the central
+    // 12 x 12 square (tactical-movement.md 3.1).
+    CHECK(!aiSearchWindowed(56, {0, 0}));
+    CHECK(aiSearchWindowed(60, {0, 0}));
+    CHECK(!aiSearchWindowed(60, {24, 24}) && !aiSearchWindowed(60, {35, 35}));
+    CHECK(aiSearchWindowed(60, {23, 24}) && aiSearchWindowed(60, {36, 30}));
+
+    // 42 x 42 window pushed back into the map: columns 1 ... 42 for a unit
+    // at the left edge.
+    BattleState s = world(open(60));
+    const int unit = add(s, kTank, 0, {0, 5});
+    const PathMap normal(s, unit);
+    const PathMap ai(s, unit, nullptr, true);
+    CHECK(normal.reachable({50, 5}) && !ai.reachable({50, 5}));
+    CHECK(ai.reachable({42, 5}) && !ai.reachable({43, 5}));
+    // A unit in the centre searches the whole map.
+    const int central = add(s, kTank, 0, {30, 30});
+    CHECK(PathMap(s, central, nullptr, true).reachable({58, 58}));
+
+    // The round cap (7 rounds) also applies on small maps; boats are exempt.
+    std::vector<std::string> rows(40);
+    const Point end = staircase(rows, 9);
+    BattleState m = world(rows);
+    const int climber = add(m, kTank, 0, {1, 38});
+    CHECK(PathMap(m, climber).reachable(end));
+    CHECK(!PathMap(m, climber, nullptr, true).reachable(end));
+    CHECK(PathMap(m, climber, nullptr, true).reachable({4, 34}));
+}
+
+void testOverwatchReserve() {
+    BattleState s = world(open(16));
+    const int tank = add(s, kTank, 1, {0, 0}); // AP 100, shot 30
+    const BattleUnit& u = s.unit(tank);
+    CHECK(movementBudget(u, false) == 100 && movementBudget(u, true) == 70);
+    s.unit(tank).ap = 20; // below one shot: nothing is kept
+    CHECK(movementBudget(s.unit(tank), true) == 20);
+    s.unit(tank).ap = 100;
+    // The planner cuts the path to the budget.
+    CHECK(planMove(s, tank, {12, 0}, false).affordable == 10);
+    CHECK(planMove(s, tank, {12, 0}, true).affordable == 7);
+    const std::vector<PlannedMove> g = planGroupMove(s, {tank}, {12, 0}, true);
+    CHECK(g.size() == 1 && g[0].affordable == 7);
+}
+
+void testGroupRules() {
+    // A human order needs a clicked tile the unit can stop on.
+    BattleState s = world({"......", "......", "...m..", "......", "......", "......"});
+    const int a = add(s, kTank, 1, {0, 0});
+    CHECK(planGroupMove(s, {a}, {3, 2}).empty());
+    Point dest;
+    CHECK(groupTile(s, s.unit(a), {3, 2}, PlanContext{}, dest) && same(dest, {2, 2})); // the computer player's Goto
+    // A claimed tile: the replacement order is (X-1, Y), (X, Y-1), (X, Y+1), (X+1, Y), then the diagonals.
+    const int b = add(s, kTank, 1, {0, 1});
+    const int c = add(s, kTank, 1, {0, 2});
+    std::vector<PlannedMove> g = planGroupMove(s, {a, b, c}, {4, 4});
+    CHECK(g.size() == 3 && same(g[0].target, {4, 4}) && same(g[1].target, {3, 4}) && same(g[2].target, {4, 3}));
+
+    // The tile where a unit really stops is claimed, not the clicked one.
+    BattleState far = world(open(25));
+    const int f1 = add(far, kTank, 1, {0, 0});
+    const int f2 = add(far, kTank, 1, {0, 1});
+    g = planGroupMove(far, {f1, f2}, {20, 0});
+    CHECK(g.size() == 2 && same(g[0].path[static_cast<std::size_t>(g[0].affordable - 1)].pos, {10, 0}) &&
+          same(g[1].target, {20, 0}));
+
+    // Repeat passes: a unit blocked by a later member moves on the second pass.
+    BattleState corridor = world({"........", "mmmmmmmm", "mmmmmmmm", "mmmmmmmm", "mmmmmmmm", "mmmmmmmm", "mmmmmmmm", "mmmmmmmm"});
+    const int back = add(corridor, kTank, 1, {0, 0});
+    const int front = add(corridor, kTank, 1, {1, 0});
+    g = planGroupMove(corridor, {back, front}, {5, 0});
+    CHECK(g.size() == 2 && g[0].unit == front && same(g[0].target, {5, 0}) && g[1].unit == back &&
+          same(g[1].target, {4, 0}));
+    // MOVE ALL makes one pass.
+    g = planGroupOrders(corridor, {{back, {5, 0}}, {front, {5, 0}}}, false, false);
+    CHECK(g.size() == 1 && g[0].unit == front);
+}
+
+void testMoveToFire() {
+    BattleState s = world(open(16));
+    const int tank = add(s, kTank, 1, {0, 0}); // range 6, AP 100, shot 30
+    const int enemy = add(s, kTank, 0, {12, 0});
+    s.unit(enemy).ap = 0; // no reaction fire
+    std::vector<PathStep> path;
+    CHECK(planMoveToFire(s, tank, {12, 0}, nullptr, path) && same(path.back().pos, {6, 0}) && path.size() == 6);
+    // The path must cost less than the AP and leave a shot.
+    s.unit(tank).ap = 50;
+    CHECK(!planMoveToFire(s, tank, {12, 0}, nullptr, path) && path.empty());
+    s.unit(tank).ap = 100;
+    // The shot request carries the path; the server walks and fires.
+    BattleServer server(s, hotSeat(), 1);
+    Script rng;
+    server.random = [&](int n) { return rng(n); };
+    ShootRequest r{1, {{tank, {}}}, {12, 0}, false};
+    CHECK(planMoveToFire(server.state(), tank, {12, 0}, nullptr, r.orders[0].path) && r.orders[0].path.size() == 6);
+    const std::vector<Event> ev = server.handle(r);
+    CHECK(count<UnitMoved>(ev) == 1 && count<UnitShot>(ev) == 1 && server.state().unit(enemy).armor < 50);
+}
+
+void testProgress() {
+    // The red number of the turn counter: the Hold Position counter while
+    // T <= last held turn + 1 (tactical-interface.md 2.5).
+    BattleState h = world(open(6));
+    h.objective.kind = 1;
+    h.holdCount = 2;
+    h.lastHeldTurn = 3;
+    h.turn = 4;
+    CHECK(objectiveProgress(h) == 2);
+    h.turn = 5;
+    CHECK(objectiveProgress(h) == 0);
+    h.lastHeldTurn = -1;
+    h.holdCount = 0;
+    CHECK(objectiveProgress(h) == 0);
+    h.objective.kind = 0;
+    h.holdCount = 3;
+    CHECK(objectiveProgress(h) == 0);
+}
+
 int main() {
     testTiles();
     testPaths();
@@ -1150,6 +1511,15 @@ int main() {
     testDrops();
     testSupport();
     testAutomatedAi();
+    testStatistics();
+    testScore();
+    testSurrender();
+    testJammer();
+    testAiSearch();
+    testOverwatchReserve();
+    testGroupRules();
+    testMoveToFire();
+    testProgress();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

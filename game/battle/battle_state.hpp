@@ -92,6 +92,22 @@ struct Objective {
     std::vector<Point> zone; // Objectives Pos List
 };
 
+// The battle statistics of one human player (battle-flow.md 5.3): four
+// counters keyed by unit / building type id (all tech levels share one key).
+struct BattleStats {
+    std::map<int, int> unitsDestroyed, unitsLost, buildingsDestroyed, buildingsLost;
+
+    static int total(const std::map<int, int>& counter);
+};
+
+// One human player's row of the result (battle-flow.md 5.1): the four
+// totals and the score (5.4).
+struct PlayerResult {
+    int player = 0;
+    int unitsDestroyed = 0, buildingsDestroyed = 0, unitsLost = 0, buildingsLost = 0;
+    int score = 0;
+};
+
 // A pending Reinforcement row (battle-flow.md 4.1).
 struct Reinforcement {
     int unitId = 0;
@@ -203,6 +219,19 @@ public:
     // Hold Position bookkeeping (battle-flow.md 2.3); server only.
     int holdCount = 0;
     int lastHeldTurn = -1;
+    // The cheat win / lose flags (also surrender), battle-flow.md 2.1 and
+    // 3.1; server only.
+    bool cheatWin = false, cheatLose = false;
+    // The objective's progress counter sent with each turn (the red number
+    // of the turn counter, tactical-interface.md 2.5).
+    int objectiveProgress = 0;
+
+    // Battle statistics per human slot (battle-flow.md 5.3); slot 0 stays
+    // empty. Counted by applyEvent, so every copy of the state has them.
+    std::array<BattleStats, kPlayerSlots> stats{};
+    bool deathMatch() const { return !computerPlayer; }
+    // When over: one row per human player in slot order (5.1).
+    std::vector<PlayerResult> results;
 
     // Automated units (docs/mechanics/automated-units.md 2). Per player the
     // usable types; with `automatedNeedsBuildings` only those whose
@@ -267,5 +296,20 @@ void startBattle(BattleState& state);
 
 // Refills the AP of a player's units at the start of their turn.
 void refillAp(BattleState& state, int player);
+
+// Counts a destroyed unit or building in the statistics (battle-flow.md
+// 5.3): `owner` lost it, `attacker` (slot, -1 = nobody) destroyed it.
+void countUnitDestroyed(BattleState& state, int typeId, int owner, int attacker);
+void countBuildingDestroyed(BattleState& state, int typeId, int owner, int attacker);
+
+// A human player's score (battle-flow.md 5.4). OpenDay uses the intended
+// formula (kills x 2 and losses of units, buildings destroyed and lost, at
+// the plain Cost of each type), clamped to 0 ... 65535.
+int battleScore(const BattleState& state, int player);
+// The score as the original computes it: the value of the units destroyed,
+// counted once per Unit Types row of the type (5.4, "Actual result").
+int originalBattleScore(const BattleState& state, int player);
+// The rows of the result message: every human participant in slot order.
+std::vector<PlayerResult> battleResults(const BattleState& state);
 
 } // namespace openday::game

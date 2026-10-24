@@ -577,10 +577,13 @@ the resolution). Choices and differences:
   and still burns the tile, as described.
 - Anti-air fire against automated units (6.3) is implemented with the
   automated units (automated-units.md).
-- Not implemented yet: the `TechReward` of destroyed buildings, statistics (now specified in
-  battle-flow.md 5.3), objectives, damaged
-  building sprites after a hit, mine explosion animations, "move to fire"
-  orders of the AI.
+- Kill / loss statistics (5.1, 5.2) are counted from the `DamageCause` of
+  the destruction events (battle-flow.md 5.3). `Jammer` is used as in 3.2
+  and 6.1 (watch zones only for movers with `Jammer` > 0; the hit chance at
+  a unit of the player whose turn it is scaled by `Jammer` / 100, integer
+  arithmetic, which equals the truncated product).
+- Not implemented yet: the `TechReward` of destroyed buildings, damaged
+  building sprites after a hit, mine explosion animations.
 - Game options: `coop` true, AI damage scaling on, difficulty 5 (average)
   by default.
 

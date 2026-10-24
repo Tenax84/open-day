@@ -207,6 +207,79 @@ int BattleState::techFound() const {
     return sum;
 }
 
+int BattleStats::total(const std::map<int, int>& counter) {
+    int sum = 0;
+    for (const auto& [type, n] : counter) sum += n;
+    return sum;
+}
+
+namespace {
+
+bool humanSlot(int p) { return p >= 1 && p < kPlayerSlots; }
+
+} // namespace
+
+void countUnitDestroyed(BattleState& state, int typeId, int owner, int attacker) {
+    // Death match credits no friendly kills; the other modes have no
+    // same-side check (battle-flow.md 5.3).
+    if (humanSlot(owner)) ++state.stats[static_cast<std::size_t>(owner)].unitsLost[typeId];
+    if (humanSlot(attacker) && !(state.deathMatch() && attacker == owner))
+        ++state.stats[static_cast<std::size_t>(attacker)].unitsDestroyed[typeId];
+}
+
+void countBuildingDestroyed(BattleState& state, int typeId, int owner, int attacker) {
+    if (humanSlot(owner)) ++state.stats[static_cast<std::size_t>(owner)].buildingsLost[typeId];
+    if (humanSlot(attacker)) ++state.stats[static_cast<std::size_t>(attacker)].buildingsDestroyed[typeId];
+}
+
+int battleScore(const BattleState& state, int player) {
+    if (!humanSlot(player)) return 0;
+    const BattleStats& st = state.stats[static_cast<std::size_t>(player)];
+    const GlobalRules& rules = state.rules();
+    auto count = [](const std::map<int, int>& m, int type) {
+        const auto it = m.find(type);
+        return it == m.end() ? 0 : it->second;
+    };
+    long long score = 0;
+    for (const auto& [id, b] : rules.buildings)
+        score += static_cast<long long>(count(st.buildingsDestroyed, id) - count(st.buildingsLost, id)) * b.cost;
+    // One term per unit type, at the Cost of its lowest tech level (level 0).
+    int last = -1;
+    for (const auto& [key, u] : rules.units) {
+        if (key.first == last) continue;
+        last = key.first;
+        score += (2LL * count(st.unitsDestroyed, key.first) - count(st.unitsLost, key.first)) * u.cost;
+    }
+    return static_cast<int>(std::clamp<long long>(score, 0, 65535));
+}
+
+int originalBattleScore(const BattleState& state, int player) {
+    if (!humanSlot(player)) return 0;
+    const BattleStats& st = state.stats[static_cast<std::size_t>(player)];
+    long long score = 0;
+    for (const auto& [key, u] : state.rules().units)
+        if (const auto it = st.unitsDestroyed.find(key.first); it != st.unitsDestroyed.end())
+            score += static_cast<long long>(it->second) * u.cost;
+    return static_cast<int>(score % 65536);
+}
+
+std::vector<PlayerResult> battleResults(const BattleState& state) {
+    std::vector<PlayerResult> out;
+    for (const int p : state.players) {
+        if (!humanSlot(p)) continue;
+        const BattleStats& st = state.stats[static_cast<std::size_t>(p)];
+        PlayerResult r;
+        r.player = p;
+        r.unitsDestroyed = BattleStats::total(st.unitsDestroyed);
+        r.buildingsDestroyed = BattleStats::total(st.buildingsDestroyed);
+        r.unitsLost = BattleStats::total(st.unitsLost);
+        r.buildingsLost = BattleStats::total(st.buildingsLost);
+        r.score = battleScore(state, p);
+        out.push_back(r);
+    }
+    return out;
+}
+
 int BattleState::roadTypeAt(Point p) const {
     const int r = roadAt(p);
     return r < 0 ? -1 : roads_[static_cast<std::size_t>(r)].type;

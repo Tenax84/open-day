@@ -377,6 +377,14 @@ void BattleAnimations::placeUnit(int unit, Point tile) {
     });
 }
 
+void BattleAnimations::turnUnit(int unit, int facing) {
+    planned_[static_cast<std::size_t>(unit)].facing = facing;
+    schedule([this, unit, facing] {
+        entities_.units[static_cast<std::size_t>(unit)].facing = facing;
+        refreshUnit(unit);
+    });
+}
+
 void BattleAnimations::refreshUnitsAt(Point tile) {
     schedule([this, tile] {
         for (std::size_t i = 0; i < entities_.units.size(); ++i)

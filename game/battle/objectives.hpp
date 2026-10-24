@@ -17,6 +17,10 @@ struct ObjectiveResult {
 // the points listed in battle-flow.md 2.1.
 ObjectiveResult checkObjective(BattleState& state);
 
+// The objective's progress counter sent with each turn (tactical-interface.md
+// 2.5): the Hold Position counter while it is current, otherwise 0.
+int objectiveProgress(const BattleState& state);
+
 // Short English name of an objective kind ("Destroy", "Hold Position", ...).
 const char* objectiveName(int kind);
 

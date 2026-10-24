@@ -21,6 +21,9 @@ public:
     const BattleState& state() const { return state_; }
 
     void apply(const std::vector<Event>& events);
+    // Turns a unit by one facing step on this client only (tactical-interface.md
+    // 3.2): the server keeps the old facing. False if the type has no facings.
+    bool turnUnit(int unit);
 
 private:
     int viewer() const { return viewer_ >= 0 ? viewer_ : state_.currentPlayer; }

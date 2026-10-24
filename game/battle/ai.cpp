@@ -54,6 +54,22 @@ std::vector<int> TacticalAi::enemyUnits() const {
     return out;
 }
 
+// The firing-position test (3.2): range and line of fire from `from` only;
+// weapon, AP, side and Jammer are not checked.
+bool TacticalAi::firingTileOk(int shooter, Point from, Point target) const {
+    const BattleUnit& s = state_.unit(shooter);
+    if (!same(s.pos, from) && state_.unitAt(from) >= 0) return false;
+    return checkShotFrom(state_, shooter, from, s.availableAp(), target, server_.options_.coop, true).ok();
+}
+
+// The computer player's path map (tactical-movement.md 3.1, AI variant).
+// On large maps every such search draws and ignores one random number,
+// except for boats, which use the normal search.
+PathMap TacticalAi::aiPathMap(int unit) {
+    if (state_.size() >= kAiSearchMinSize && state_.unit(unit).type->movement != 4) draw(32768);
+    return PathMap(state_, unit, nullptr, true);
+}
+
 // A legal shot as if the shooter stood on `from` (section 0).
 bool TacticalAi::legalFrom(int shooter, Point from, Point target) {
     const Point home = state_.unit(shooter).pos;
@@ -138,7 +154,7 @@ TacticalAi::Candidate TacticalAi::evaluateUnits(int shooter, const PathMap& map,
             // steps *(OpenDay: lets a unit in range fire without moving)*.
             const bool here = same(f, s.pos);
             if (!here && !map.reachable(f)) return;
-            if (!legalFrom(shooter, f, x.pos)) return;
+            if (!firingTileOk(shooter, f, x.pos)) return;
             Candidate c;
             c.target = x.pos;
             c.unit = t;
@@ -170,7 +186,7 @@ TacticalAi::Candidate TacticalAi::evaluateBuilding(int shooter, const PathMap& m
         if (!state_.inside(f)) continue;
         const bool here = same(f, s.pos);
         if (!here && !map.reachable(f)) continue;
-        if (!legalFrom(shooter, f, b.pos)) continue;
+        if (!firingTileOk(shooter, f, b.pos)) continue;
         Candidate c;
         c.target = b.pos;
         c.building = building;
@@ -301,7 +317,7 @@ void TacticalAi::hunt(int unit, int& budget) {
     while (budget >= kCycle && !over() && state_.unit(unit).alive) {
         budget -= kCycle;
         if (state_.unit(unit).availableAp() < 4) return;
-        const PathMap map(state_, unit);
+        const PathMap map = aiPathMap(unit);
         const Candidate best = evaluateUnits(unit, map, enemyUnits());
         if (!best.found) {
             // A counter-attack calls the transport instead (6.4).
@@ -350,7 +366,7 @@ void TacticalAi::escort(int unit, bool defend) {
             if (!defend) hunt(unit, budget);
             return;
         }
-        const PathMap map(state_, unit);
+        const PathMap map = aiPathMap(unit);
         static constexpr Point kStep[8] = {{0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1}, {1, 0}, {1, 1}};
         std::vector<PathStep> path;
         for (const Point d : kStep) {
@@ -376,7 +392,7 @@ void TacticalAi::patrol(int unit) {
         if (u.availableAp() <= 3) return;
         const std::vector<Point>& route = u.order.positions;
         if (route.empty()) return;
-        const PathMap map(state_, unit);
+        const PathMap map = aiPathMap(unit);
         if (!contains(route, u.pos)) {
             std::vector<PathStep> path;
             for (const Point r : route) {
@@ -422,7 +438,7 @@ void TacticalAi::attack(int unit) {
             setOrder(unit, o);
             continue;
         }
-        const PathMap map(state_, unit);
+        const PathMap map = aiPathMap(unit);
         const Candidate best = tu >= 0 ? evaluateUnits(unit, map, {tu}) : evaluateBuilding(unit, map, tb);
         if (!best.found) return;
         const Moved m = moveToFire(unit, best);
@@ -467,7 +483,7 @@ void TacticalAi::gotoGroup(const std::vector<int>& units, bool fast) {
         while (cut > 0 && !path[cut - 1].enterable) --cut;
         if (cut == 0) continue;
         context.vacated.push_back(u.pos);
-        context.claimed.push_back(dest);
+        context.claimed.push_back(path[cut - 1].pos); // where it really stops (tactical-movement.md 3.5)
         walkTo(i, path, cut);
     }
     for (const int i : group) {
@@ -722,7 +738,11 @@ void TacticalAi::playTurn() {
         const BattleUnit &x = state_.unit(a), &y = state_.unit(b);
         if (x.type->apDamage) return true;
         if (y.type->apDamage) return false;
-        return x.type->range > y.type->range; // only the range decides (1.3)
+        if (x.type->jammer <= 0) return true;
+        if (y.type->jammer <= 0) return false;
+        if (x.type->jammer < y.type->jammer) return true;
+        // The original's "a's Jammer > b's -> no" never applies (1.3).
+        return x.type->range > y.type->range;
     });
     if (!enemyUnits().empty() || state_.counterAttack)
         for (const int i : free) {

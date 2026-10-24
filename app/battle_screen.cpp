@@ -20,6 +20,7 @@
 #include "battle/objectives.hpp"
 #include "formats/bmp_palette.hpp"
 #include "formats/pe_resources.hpp"
+#include "info/encyclopedia.hpp"
 #include "map/map_objects.hpp"
 
 namespace openday::app {
@@ -68,6 +69,13 @@ int deployMarker(int mask) {
     return kNumber[mask & 15];
 }
 
+// A participant's name: the computer player is string 65.
+std::string slotName(App& app, const BattleConfig& config, int slot) {
+    if (slot == 0) return text(app, 65, "Alien");
+    if (slot == kHuman && !config.playerName.empty()) return config.playerName;
+    return text(app, 739, "Player");
+}
+
 std::string twoDigits(int n) { return (n < 10 ? "0" : "") + std::to_string(n); }
 
 // Palette index nearest to a color, with a cache.
@@ -88,19 +96,22 @@ private:
 
 // ---------------------------------------------------------------------------
 
+// The battle report (tactical-interface.md 9.2, battle-flow.md 5.5).
 class AftermathScreen : public Screen {
 public:
-    AftermathScreen(App& app, const BattleConfig& config, std::array<game::BattleSession::Stats, game::kPlayerSlots> stats,
-                    std::vector<int> players, std::shared_ptr<const game::BattleState> finalState)
-        : Screen(app), config_(config), stats_(stats), players_(std::move(players)), final_(std::move(finalState)) {
+    AftermathScreen(App& app, const BattleConfig& config, std::shared_ptr<const game::BattleState> finalState)
+        : Screen(app), config_(config), final_(std::move(finalState)) {
         const game::BattleState& s = *final_;
         result_.success = s.success;
         result_.loser = s.loser;
         result_.techFound = s.techFound();
-        result_.unitsLost = stats_[kHuman].unitsLost;
-        result_.buildingsLost = stats_[kHuman].buildingsLost;
-        result_.unitsDestroyed = stats_[0].unitsLost;
-        result_.buildingsDestroyed = stats_[0].buildingsLost;
+        // The campaign adds the totals of the human players (5.8).
+        for (const game::PlayerResult& r : s.results) {
+            result_.unitsDestroyed += r.unitsDestroyed;
+            result_.unitsLost += r.unitsLost;
+            result_.buildingsDestroyed += r.buildingsDestroyed;
+            result_.buildingsLost += r.buildingsLost;
+        }
         result_.finalState = final_.get();
         continue_ = button({45 + 300, 0 + 419, 110, 17}, 366, "Continue", ui::kKeyEnter, [this] {
             if (config_.onFinished) {
@@ -119,54 +130,54 @@ public:
         ui::drawFrame(s, ui, 365, dlg);
         const ui::Rect area{dlg.x + 20, dlg.y + 20, dlg.w - 40, dlg.h - 50};
         const render::Font& f = *ui.standard;
-        f.drawIn(s, area.x, area.y, area.w, f.lineHeight(), text(app_, 513, "Result"), ui.white);
-        const bool won = result_.loser != 5 ? result_.loser != kHuman : result_.success;
-        const std::string result = won ? (config_.aftermath.empty() ? text(app_, 519, "Victory.") : config_.aftermath)
-                                       : text(app_, 520, "Defeat.");
-        int y = area.y + 3 * f.lineHeight();
-        for (const std::string& line : f.wrap(result, area.w)) {
+        f.drawIn(s, area.x, area.y, area.w, f.lineHeight(), text(app_, 513, "BATTLE REPORT"), ui.white);
+        int y = area.y + 2 * f.lineHeight();
+        for (const std::string& line : f.wrap(resultText(), area.w)) {
             if (y > dlg.y + 170) break;
             f.drawIn(s, area.x, y, area.w, f.lineHeight(), line, ui.white);
             y += f.lineHeight();
         }
-        // Statistics: destroyed = the other side's losses (single player).
+        // Statistics: one row per human player in slot order, no computer
+        // row, RANK = the score (no place is computed).
         const int header = dlg.y + 185;
         const int cols[4] = {25, 115, 250, 360};
         const char* heads[4] = {"PLAYER", "DESTROYED", "LOST", "RANK"};
         const int ids[4] = {180, 512, 515, 514};
         for (int c = 0; c < 4; ++c) f.draw(s, area.x + cols[c], header, text(app_, ids[c], heads[c]), ui.white);
         int row = header + 2 * f.lineHeight();
-        for (std::size_t i = 0; i < players_.size(); ++i) {
-            const int p = players_[i];
-            if (p == 0) continue;
-            int destroyedUnits = 0, destroyedBuildings = 0;
-            for (int q = 0; q < game::kPlayerSlots; ++q)
-                if (q != p) {
-                    destroyedUnits += stats_[static_cast<std::size_t>(q)].unitsLost;
-                    destroyedBuildings += stats_[static_cast<std::size_t>(q)].buildingsLost;
-                }
-            const auto& mine = stats_[static_cast<std::size_t>(p)];
-            f.draw(s, area.x + cols[0], row, text(app_, 739, "Player"), ui.white);
-            f.draw(s, area.x + cols[1], row, fmt(app_, 516, "Units: %1", {std::to_string(destroyedUnits)}), ui.white);
-            f.draw(s, area.x + cols[1], row + f.lineHeight(),
-                   fmt(app_, 517, "Buildings: %1", {std::to_string(destroyedBuildings)}), ui.white);
-            f.draw(s, area.x + cols[2], row, fmt(app_, 516, "Units: %1", {std::to_string(mine.unitsLost)}), ui.white);
-            f.draw(s, area.x + cols[2], row + f.lineHeight(),
-                   fmt(app_, 517, "Buildings: %1", {std::to_string(mine.buildingsLost)}), ui.white);
-            f.draw(s, area.x + cols[3], row, "1", ui.white);
+        for (const game::PlayerResult& r : final_->results) {
+            auto units = [&](int n) { return fmt(app_, 516, "%1 Units", {std::to_string(n & 0xFFFF)}); };
+            auto buildings = [&](int n) { return fmt(app_, 517, "%1 Buildings", {std::to_string(n & 0xFFFF)}); };
+            f.draw(s, area.x + cols[0], row, slotName(app_, config_, r.player), ui.white);
+            f.draw(s, area.x + cols[1], row, units(r.unitsDestroyed), ui.white);
+            f.draw(s, area.x + cols[1], row + f.lineHeight(), buildings(r.buildingsDestroyed), ui.white);
+            f.draw(s, area.x + cols[2], row, units(r.unitsLost), ui.white);
+            f.draw(s, area.x + cols[2], row + f.lineHeight(), buildings(r.buildingsLost), ui.white);
+            f.draw(s, area.x + cols[3], row, std::to_string(r.score), ui.white);
             row += f.lineHeight() * 5 / 2;
         }
-        // The tech line (campaign province battles, on a win).
-        if (config_.techLine && won)
+        // The tech line: the campaign report, on success only.
+        if (config_.techLine && result_.success)
             f.draw(s, area.x + 25, dlg.y + 418 - 30,
                    fmt(app_, 518, "New technologies found : %1", {std::to_string(result_.techFound)}), ui.white);
         continue_.draw(s, ui);
     }
 
 private:
+    std::string resultText() const {
+        const game::BattleState& s = *final_;
+        if (s.deathMatch()) {
+            // Death match: loser 5 = ranking for everyone (5.7).
+            if (s.loser == 5) return text(app_, 521, "The battle is over. Final ranking:");
+            if (s.loser == kHuman) return text(app_, 520, "You have failed this scenario.");
+            return text(app_, 519, "Congratulations ! You have defeated the enemy.");
+        }
+        if (!s.success) return text(app_, 520, "You have failed this scenario. You will need to try again.");
+        if (!config_.aftermath.empty()) return config_.aftermath;
+        return text(app_, 519, "Congratulations ! You have defeated the enemy.");
+    }
+
     BattleConfig config_;
-    std::array<game::BattleSession::Stats, game::kPlayerSlots> stats_;
-    std::vector<int> players_;
     std::shared_ptr<const game::BattleState> final_;
     BattleResult result_;
     ui::Button continue_;
@@ -273,23 +284,32 @@ public:
         for (; tickAcc_ >= tickMs; tickAcc_ -= tickMs) session_->animations().tick();
         edgeScroll(ms);
         const Mode mode = this->mode();
-        if (mode != lastMode_) {
-            if (mode == Mode::Tactic && lastMode_ != Mode::Automated) {
-                fire_ = false;
-                done_.clear();
-                std::erase_if(selection_, [&](int u) { return !ownUnit(u); });
-                clockMs_ = 0;
-            } else if (mode == Mode::Wait && lastMode_ != Mode::Deploy) {
-                clockMs_ = 0;
-            }
-            if (lastMode_ == Mode::Wait && mode == Mode::Tactic) showMessage(fmt(app_, 897, "Turn: %1", {playerName(kHuman)}), 2000);
-            lastMode_ = mode;
+        const game::BattleState& st = session_->state();
+        if (mode == Mode::Tactic && st.turn != turnSeen_) {
+            // A new tactical view: your turn begins (tactical-interface.md 4.1).
+            turnSeen_ = st.turn;
+            fire_ = false;
+            marked_.clear();
+            // The done marks are cleared at the start of each of your turns
+            // *(OpenDay change: the original keeps them for the whole battle, 3.8)*.
+            done_.clear();
+            std::erase_if(selection_, [&](int u) { return !ownUnit(u); });
+            clockMs_ = 0;
+            if (lastMode_ == Mode::Wait) showMessage(fmt(app_, 897, "Turn: %1", {playerName(kHuman)}), 2000);
+            // Turn counter sounds (2.5), once per tactical view.
+            if (st.objectiveProgress > 0) app_.sound("OBJECTIF.WAV");
+            if (st.turnLimit > 0 && st.turnLimit - st.turn + 1 < 3) app_.sound("TWOTURNS.WAV");
+            refreshEnabled();
+        } else if (mode == Mode::Wait && (lastMode_ != Mode::Wait || session_->displayedPlayer() != waitPlayer_) &&
+                   lastMode_ != Mode::Deploy) {
+            clockMs_ = 0; // the waiting view restarts the clock when a turn begins
         }
+        if (mode == Mode::Wait) waitPlayer_ = session_->displayedPlayer();
+        lastMode_ = mode;
         if (session_->state().techHeld.size() > techHeld_) app_.sound("TECH.WAV");
         techHeld_ = session_->state().techHeld.size();
         if (session_->displayedOver() && !session_->animations().busy() && app_.top() == this) {
-            const game::BattleState& s = session_->state();
-            app_.replace(std::make_unique<AftermathScreen>(app_, config_, session_->stats(), s.players,
+            app_.replace(std::make_unique<AftermathScreen>(app_, config_,
                                                            std::make_shared<game::BattleState>(session_->server().state())));
         }
     }
@@ -344,9 +364,7 @@ private:
         return unit.alive && unit.owner == kHuman && !unit.type->isConvoy;
     }
 
-    std::string playerName(int slot) const {
-        return slot == 0 ? text(app_, 65, "Alien") : text(app_, 739, "Player");
-    }
+    std::string playerName(int slot) const { return slotName(app_, config_, slot); }
 
     void showMessage(const std::string& m, int ms) {
         message_ = m;
@@ -462,8 +480,8 @@ private:
             button(at(10, 252, 53, 17), 241, "Group", 'g', [this] { toggleGroup(); }, true),
             button(at(71, 252, 53, 17), 298, "Center", ui::kKeyF6, [this] { centerSelection(); }),
             button(at(12, 273, 110, 17), 247, "Move all", 'm', [this] { moveAll(); }),
-            button(at(15, 295, 19, 19), 251, "", 'o', [this] { app_.settings().overwatch = !app_.settings().overwatch; }, true),
-            button(at(12, 325, 110, 17), 258, "Fire", 'f', [this] { fire_ = !fire_ && !selection_.empty(); }, true),
+            button(at(15, 295, 19, 19), 251, "", 'o', [this] { toggleOverwatch(); }, true),
+            button(at(12, 325, 110, 17), 258, "Fire", 'f', [this] { toggleFire(); }, true),
             button(at(15, 344, 19, 19), 264, "", 'x', [this] { app_.settings().autofire = !app_.settings().autofire; }, true),
             button(at(12, 374, 19, 17), 270, "<", 'p', [this] { cycle(-1); }),
             button(at(41, 374, 53, 17), 278, "Guard", 0, [this] { guard(); }),
@@ -497,10 +515,31 @@ private:
         strip(waitButtons_);
     }
 
+    // Enable states of the tactical controls (2.2): CENTER, GUARD, FIRE and
+    // the overwatch lamp need a lead unit; FIRE and the lamp also need two
+    // selected units or a shot's worth of AP. REINFORCEMENT needs a mode
+    // that allows bought reinforcements (2.9).
+    void refreshEnabled() {
+        enum { kCenter = 4, kOverwatch = 6, kFire = 7, kGuard = 10, kReinforcement = 13 };
+        const bool lead = !selection_.empty();
+        bool fire = lead;
+        if (lead && selection_.size() < 2) {
+            const game::BattleUnit& u = session_->state().unit(selection_.front());
+            fire = u.availableAp() >= u.type->shotAp;
+        }
+        tacticButtons_[kCenter].enabled = lead;
+        tacticButtons_[kGuard].enabled = lead;
+        tacticButtons_[kFire].enabled = fire;
+        tacticButtons_[kOverwatch].enabled = fire;
+        if (!fire) fire_ = false;
+        tacticButtons_[kReinforcement].enabled = session_->state().objective.kind != 10;
+    }
+
     std::vector<ui::Button>& buttons(Mode m) {
         if (m == Mode::Deploy) return deployButtons_;
         if (m == Mode::Automated) return autoButtons_;
         if (m == Mode::Tactic) {
+            refreshEnabled();
             // Toggle states follow the settings and the screen state.
             tacticButtons_[3].checked = group_;
             tacticButtons_[6].checked = app_.settings().overwatch;
@@ -623,17 +662,23 @@ private:
             selection_ = {u};
         }
         fire_ = false;
+        preview_.clear();
         plannedTarget_.reset();
         app_.sound("SELECT.WAV");
         centerOn(session_->state().unit(u).pos);
-        if (const auto it = destination_.find(u); it != destination_.end()) plan(it->second);
+        const game::Point pos = session_->state().unit(u).pos;
+        if (const auto it = destination_.find(u); it != destination_.end() && !samePoint(it->second, pos)) plan(it->second);
     }
 
+    static bool samePoint(game::Point a, game::Point b) { return a.x == b.x && a.y == b.y; }
+
+    // First click of a move (3.3): every selected unit toward the tile, with
+    // the group rules and the Overwatch budget.
     void plan(game::Point target) {
         const game::BattleState& s = session_->state();
-        preview_ = game::planGroupMove(s, selection_, target);
+        preview_ = game::planGroupMove(s, selection_, target, app_.settings().overwatch);
         if (preview_.empty()) {
-            showMessage(text(app_, 577, "No path to that tile"), 5000);
+            showMessage(text(app_, 577, "Unit can't reach that position"), 5000);
             plannedTarget_.reset();
             for (const int u : selection_) destination_.erase(u);
             return;
@@ -642,43 +687,96 @@ private:
         for (const game::PlannedMove& m : preview_) destination_[m.unit] = m.target;
     }
 
+    // The two-click shot, "mark, then fire" (3.2).
+    void shotClick(game::Point p) {
+        if (selection_.empty()) return;
+        const game::BattleState& s = session_->state();
+        const int lead = selection_.front();
+        const auto mark = marked_.find(lead);
+        if (mark == marked_.end() || !samePoint(mark->second, p)) destination_.erase(lead);
+        preview_.clear();
+        plannedTarget_.reset();
+        const game::ShotCheck check = game::checkShot(s, lead, p, true);
+        const bool hadDestination = destination_.count(lead) != 0;
+        if (check.ok()) destination_[lead] = s.unit(lead).pos;
+        if (!hadDestination) {
+            // First click: mark the target; out of reach, plan a move to fire.
+            if (check.ok()) {
+                marked_[lead] = p;
+                return;
+            }
+            std::vector<game::PathStep> path;
+            if (!game::planMoveToFire(s, lead, p, nullptr, path)) {
+                showMessage(shotError(check.error), 5000);
+                app_.sound("INVALIDE.WAV");
+                return;
+            }
+            marked_[lead] = p;
+            destination_[lead] = path.back().pos;
+            game::PlannedMove m;
+            m.unit = lead;
+            m.target = path.back().pos;
+            m.path = std::move(path);
+            m.affordable = game::affordableSteps(m.path, game::movementBudget(s.unit(lead), app_.settings().overwatch));
+            plannedTarget_ = m.target;
+            preview_ = {std::move(m)};
+            return;
+        }
+        // Second click on the marked tile: every selected unit fires, walking
+        // to a firing tile first where needed.
+        const std::string refused = session_->send(game::shootOrder(s, selection_, p, app_.settings().autofire));
+        if (!refused.empty()) {
+            showMessage(refused, 5000);
+            app_.sound("INVALIDE.WAV");
+        }
+        destination_.erase(lead);
+        marked_.erase(lead);
+        fire_ = false;
+    }
+
+    std::string shotError(game::ShotError e) {
+        switch (e) {
+        case game::ShotError::NoWeapon: return text(app_, 321, "No weapon");
+        case game::ShotError::NotEnoughAp: return text(app_, 322, "Not enough AP");
+        case game::ShotError::OutOfRange: return text(app_, 323, "Out of range");
+        case game::ShotError::NoLineOfFire: return text(app_, 324, "No line of fire");
+        case game::ShotError::TooClose: return text(app_, 325, "Too close");
+        default: return text(app_, 320, "Invalid target");
+        }
+    }
+
     void tacticClick(game::Point tile) {
         const game::BattleState& s = session_->state();
-        auto shoot = [&] {
-            if (selection_.empty()) return;
-            const std::string refused = session_->send(game::shootOrder(s, selection_, tile, app_.settings().autofire));
-            if (!refused.empty()) {
-                showMessage(refused, 5000);
-                app_.sound("INVALIDE.WAV");
-            }
-            preview_.clear();
-            plannedTarget_.reset();
-        };
-        if (fire_) return shoot();
+        if (fire_) return shotClick(tile);
         if (const int u = s.unitAt(tile); u >= 0) {
             if (ownUnit(u)) {
-                if (selection_.size() == 1 && selection_.front() == u) return; // turning a unit is not implemented
+                // Clicking the unit selected alone turns it (client only, 3.2).
+                if (selection_.size() == 1 && selection_.front() == u) {
+                    if (session_->turnUnit(u) && plannedTarget_) plan(*plannedTarget_);
+                    return;
+                }
                 return select(u);
             }
-            if (!selection_.empty() && game::isEnemyTarget(s, tile)) return shoot();
+            if (!selection_.empty() && game::isEnemyTarget(s, tile)) return shotClick(tile);
         }
         if (!selection_.empty()) {
-            if (s.buildingAt(tile) >= 0 && game::isEnemyTarget(s, tile)) return shoot();
-            if (const int m = s.mineAt(tile); m >= 0 && !s.mine(m).hidden[kHuman]) return shoot();
-            if (s.wallAt(tile) >= 0) return shoot();
+            if (s.buildingAt(tile) >= 0 && game::isEnemyTarget(s, tile)) return shotClick(tile);
+            if (const int m = s.mineAt(tile); m >= 0 && !s.mine(m).hidden[kHuman]) return shotClick(tile);
+            if (s.wallAt(tile) >= 0) return shotClick(tile);
             // Two-click movement (3.3).
-            if (plannedTarget_ && plannedTarget_->x == tile.x && plannedTarget_->y == tile.y) {
+            if (plannedTarget_ && samePoint(*plannedTarget_, tile)) {
                 game::MoveRequest r{s.currentPlayer, {}};
                 for (const game::PlannedMove& m : preview_) {
                     game::UnitOrder o{m.unit, m.path};
                     o.path.resize(static_cast<std::size_t>(m.affordable));
                     if (!o.path.empty()) r.orders.push_back(std::move(o));
                 }
-                const std::string refused = session_->send(r);
-                if (!refused.empty()) showMessage(refused, 5000);
                 preview_.clear();
                 plannedTarget_.reset();
                 fire_ = false;
+                if (r.orders.empty()) return;
+                const std::string refused = session_->send(r);
+                if (!refused.empty()) showMessage(refused, 5000);
             } else {
                 plan(tile);
             }
@@ -690,30 +788,58 @@ private:
         if (!group_ && selection_.size() > 1) selection_.resize(1);
     }
 
-    void centerSelection() {
-        if (!selection_.empty()) centerOn(session_->state().unit(selection_.front()).pos);
+    void toggleFire() {
+        // On: the path preview is hidden while fire mode lasts (2.2).
+        fire_ = !fire_ && !selection_.empty();
     }
 
+    void toggleOverwatch() {
+        app_.settings().overwatch = !app_.settings().overwatch;
+        // The planned path is cut again with the new budget.
+        const game::BattleState& s = session_->state();
+        for (game::PlannedMove& m : preview_)
+            m.affordable = game::affordableSteps(m.path, game::movementBudget(s.unit(m.unit), app_.settings().overwatch));
+    }
+
+    // CENTER (2.2): the lead unit, or its remembered destination when that
+    // is reachable and not in view.
+    void centerSelection() {
+        if (selection_.empty()) return;
+        const game::BattleState& s = session_->state();
+        const int lead = selection_.front();
+        game::Point target = s.unit(lead).pos;
+        if (const auto it = destination_.find(lead); it != destination_.end() && !samePoint(it->second, target)) {
+            const game::Point o = game::iso::tileOrigin(it->second.x, it->second.y, session_->scene().terrain().size);
+            const int sx = o.x + 27 - static_cast<int>(camX_), sy = o.y + 42 - static_cast<int>(camY_);
+            const bool visible = sx >= 0 && sy >= 0 && sx < viewW_ && sy < viewH_;
+            if (!visible && !game::findPath(s, lead, it->second).empty()) target = it->second;
+        }
+        centerOn(target);
+    }
+
+    // MOVE ALL (2.2): every own unit with more than 3 AP toward its
+    // remembered destination, one group pass in map list order.
     void moveAll() {
         const game::BattleState& s = session_->state();
+        std::vector<std::pair<int, game::Point>> entries;
+        for (int u = 0; u < static_cast<int>(s.units().size()); ++u) {
+            const game::BattleUnit& unit = s.unit(u);
+            if (!unit.alive || unit.owner != kHuman || unit.availableAp() <= 3) continue;
+            if (const auto it = destination_.find(u); it != destination_.end()) entries.push_back({u, it->second});
+        }
         game::MoveRequest r{s.currentPlayer, {}};
-        for (const auto& [u, target] : destination_) {
-            if (!ownUnit(u) || s.unit(u).availableAp() <= 3) continue;
-            if (s.unit(u).pos.x == target.x && s.unit(u).pos.y == target.y) continue;
-            const game::PlannedMove m = game::planMove(s, u, target);
-            if (m.affordable == 0) continue;
-            game::UnitOrder o{u, m.path};
+        for (const game::PlannedMove& m : game::planGroupOrders(s, entries, app_.settings().overwatch, false)) {
+            game::UnitOrder o{m.unit, m.path};
             o.path.resize(static_cast<std::size_t>(m.affordable));
             r.orders.push_back(std::move(o));
-            if (r.orders.size() >= 64) break;
         }
         if (r.orders.empty()) {
-            showMessage(text(app_, 579, "Nothing to move"), 5000);
+            showMessage(text(app_, 579, "No units to move"), 5000);
             return;
         }
-        session_->send(r);
         preview_.clear();
         plannedTarget_.reset();
+        session_->send(r);
     }
 
     // Unit cycling by id (3.8).
@@ -873,18 +999,37 @@ private:
                           button({40 + 298, 40 + 230, 19, 19}, 638, "", 0, [this] { markers_ = !markers_; }, true)};
     }
 
+    // The in-game options (interface.md 4, "In-game options dialog"). The
+    // view decides which of Save, Surrender and Quit are enabled: the
+    // tactical view all three, the waiting view only Save, the other views
+    // only Quit; Save also needs a campaign.
     void openMenu() {
         dialog_ = Dialog::Menu;
+        confirm_.reset();
         const ui::Rect p = menuRect();
-        auto quit = [this] { app_.reset(makeMainMenu(app_)); };
-        dialogButtons_ = {button({p.x + 336, p.y + 340, 53, 17}, 653, "Back", ui::kKeyEscape, [this] { dialog_ = Dialog::None; }),
-                          button({p.x + 197, p.y + 340, 53, 17}, 649, "Quit", 'q', quit)};
-        ui::Button save = button({p.x + 132, p.y + 340, 53, 17}, 661, "Save", 's', nullptr);
-        save.enabled = false;
-        ui::Button restart = button({p.x + 10, p.y + 340, 110, 17}, 689, "Restart", 0, nullptr);
-        restart.enabled = false;
+        const Mode mode = this->mode();
+        const bool tactic = mode == Mode::Tactic, wait = mode == Mode::Wait;
+        dialogButtons_ = {button({p.x + 336, p.y + 340, 53, 17}, 653, "Back", ui::kKeyEscape, [this] { dialog_ = Dialog::None; })};
+        ui::Button quit = button({p.x + 197, p.y + 340, 53, 17}, 649, "Quit", hotkey(123, 'q'), [this] {
+            // Confirmation 819; OpenDay returns to the main menu.
+            askConfirm(text(app_, 819, "Do you really want to quit the game?"), [this] { app_.reset(makeMainMenu(app_)); });
+        });
+        quit.enabled = !wait;
+        // Saving a battle is not available yet; the button only shows its state.
+        ui::Button save = button({p.x + 132, p.y + 340, 53, 17}, 661, "Save", hotkey(122, 's'), nullptr);
+        save.enabled = config_.canSave && (tactic || wait);
+        ui::Button surrender = button({p.x + 10, p.y + 340, 110, 17}, 689, "Surrender", 0, [this] {
+            askConfirm(text(app_, 818, "Do you really want to surrender?"), [this] {
+                dialog_ = Dialog::None;
+                // The cheat-lose request (battle-flow.md 5.6); a city battle
+                // ignores it.
+                session_->send(game::CheatRequest{kHuman, false});
+            });
+        });
+        surrender.enabled = tactic;
+        dialogButtons_.push_back(quit);
         dialogButtons_.push_back(save);
-        dialogButtons_.push_back(restart);
+        dialogButtons_.push_back(surrender);
         // Sounds on/off and scroll speed (interface.md, in-game options).
         soundGroup_ = {};
         for (int i = 0; i < 2; ++i) soundGroup_.items.push_back(button({p.x + 36, p.y + 71 + 21 * i, 19, 19}, 665, "", 0, nullptr, true));
@@ -900,9 +1045,42 @@ private:
         scrollGroup_.onChange = [this](int i) { app_.settings().scrollSpeed = i; };
     }
 
+    // The hot key of a menu button: the first letter of its string.
+    int hotkey(int id, char fallback) {
+        const std::string s = app_.data().text(id);
+        return std::tolower(static_cast<unsigned char>(s.empty() ? fallback : s[0]));
+    }
+
+    // A yes / no message box over the options (frame 477, YES 478, NO 482).
+    struct Confirm {
+        std::string text;
+        std::function<void()> onYes;
+        ui::Rect box;
+        std::vector<ui::Button> buttons;
+    };
+
+    void askConfirm(std::string message, std::function<void()> onYes) {
+        Confirm c;
+        c.text = std::move(message);
+        c.onYes = std::move(onYes);
+        c.box = {(viewW_ - 254) / 2, (viewH_ - 144) / 2, 254, 144};
+        c.buttons.push_back(button({c.box.x + 40, c.box.y + 118, 53, 17}, 478, "Yes", 'y', [this] {
+            const auto yes = confirm_->onYes;
+            confirm_.reset();
+            if (yes) yes();
+        }));
+        c.buttons.push_back(button({c.box.x + 161, c.box.y + 118, 53, 17}, 482, "No", ui::kKeyEscape, [this] { confirm_.reset(); }));
+        confirm_ = std::move(c);
+    }
+
     ui::Rect menuRect() const { return {(viewW_ - 403) / 2, (viewH_ - 371) / 2, 403, 371}; }
 
     void handleDialog(const ui::InputEvent& e) {
+        if (confirm_) {
+            for (ui::Button& b : confirm_->buttons)
+                if (b.handle(e)) return;
+            return;
+        }
         if (dialog_ == Dialog::Goal) dialogButtons_[1].checked = markers_;
         for (ui::Button& b : dialogButtons_)
             if (b.handle(e)) return;
@@ -942,6 +1120,12 @@ private:
         soundGroup_.draw(s, ui);
         animGroup_.draw(s, ui);
         scrollGroup_.draw(s, ui);
+        if (confirm_) {
+            ui::drawFrame(s, ui, 477, confirm_->box);
+            const ui::Rect& b = confirm_->box;
+            ui.standard->drawWrapped(s, b.x + 12, b.y + 12, b.w - 24, 96, confirm_->text, ui.white);
+            for (const ui::Button& btn : confirm_->buttons) btn.draw(s, ui);
+        }
     }
 
     // --- Tactical map screen (tactical-interface.md 7) and encyclopedia --------
@@ -1030,10 +1214,11 @@ private:
         }
         if (mode == Mode::Automated) automatedMarkers(markers, hover);
         if (mode == Mode::Tactic) {
-            for (const game::PlannedMove& m : preview_) {
-                const std::vector<std::string> names = game::previewSprites(m);
-                for (std::size_t i = 0; i < names.size(); ++i) marker(markers, m.path[i].pos, names[i]);
-            }
+            if (!fire_) // fire mode hides the path preview (2.2)
+                for (const game::PlannedMove& m : preview_) {
+                    const std::vector<std::string> names = game::previewSprites(m);
+                    for (std::size_t i = 0; i < names.size(); ++i) marker(markers, m.path[i].pos, names[i]);
+                }
             if (s.inside(hover)) {
                 const std::string cursor = tileCursor(hover);
                 if (!cursor.empty()) marker(markers, hover, cursor);
@@ -1042,6 +1227,9 @@ private:
         if (mode != Mode::Deploy)
             for (const int u : selection_)
                 if (s.unit(u).alive) marker(markers, s.unit(u).pos, "SU00" + std::to_string(std::clamp(s.unit(u).owner, 0, 4)));
+        // The red triangle at the lead unit's marked tile (2.10, layer 18).
+        if (mode == Mode::Tactic && !selection_.empty())
+            if (const auto it = marked_.find(selection_.front()); it != marked_.end()) marker(markers, it->second, "SU000");
         for (const int b : s.techHeld)
             if (b >= 0 && b < static_cast<int>(s.buildings().size()) && s.building(b).alive) marker(markers, s.building(b).pos, "LILBULB");
         game::SceneExtras extras = session_->animations().extras();
@@ -1054,21 +1242,27 @@ private:
     // Tile cursor sprite (3.4).
     std::string tileCursor(game::Point t) {
         const game::BattleState& s = session_->state();
+        const int lead = selection_.empty() ? -1 : selection_.front();
         auto shotCursor = [&] {
-            const game::ShotCheck c = game::checkShot(s, selection_.front(), t, true);
+            const game::ShotCheck c = game::checkShot(s, lead, t, true);
             if (c.ok()) return std::string("CTARG");
             if (c.error == game::ShotError::InvalidTarget) return std::string("CINVA");
+            // An immobile unit selected alone cannot move to fire.
+            const int movement = s.unit(lead).type->movement;
+            if (fire_ && selection_.size() == 1 && (movement == 0 || movement == 8)) return std::string("CINVA");
             return std::string("CMVSH");
         };
-        if (!selection_.empty() && fire_) return shotCursor();
+        if (lead >= 0)
+            if (const auto it = marked_.find(lead); it != marked_.end() && samePoint(it->second, t)) return "CSELT";
+        if (lead >= 0 && fire_) return shotCursor();
         const int u = s.unitAt(t);
         if (u >= 0 && ownUnit(u)) return "CSELC";
-        if (selection_.empty()) return "";
+        if (lead < 0) return "";
         if (u >= 0 && game::isEnemyTarget(s, t)) return shotCursor();
         if (s.buildingAt(t) >= 0 && game::isEnemyTarget(s, t)) return shotCursor();
         if (const int m = s.mineAt(t); m >= 0 && !s.mine(m).hidden[kHuman]) return shotCursor();
         if (s.wallAt(t) >= 0) return shotCursor();
-        return game::findPath(s, selection_.front(), t).empty() ? "" : "CMOVE";
+        return game::findPath(s, lead, t).empty() ? "" : "CMOVE";
     }
 
     // --- Panel pieces --------------------------------------------------------
@@ -1179,10 +1373,22 @@ private:
             f.draw(s, r.x + 44, r.y + 3 + h, fmt(app_, 640, "AR %1", {std::to_string(unit.armor)}), ui.white);
             f.draw(s, r.x + 44, r.y + 3 + 2 * h, fmt(app_, 641, "AP %1", {std::to_string(unit.availableAp())}), ui.white);
             f.draw(s, r.x + 3, r.y + 3 + 3 * h, fmt(app_, 642, "RANGE %1", {std::to_string(unit.type->range)}), ui.white);
-            const bool ow = unit.availableAp() >= unit.type->shotAp && unit.type->hasWeapon;
-            f.draw(s, r.x + 3, r.y + 3 + 4 * h, fmt(app_, 643, "Reaction fire: %1", {ow ? text(app_, 644, "YES") : text(app_, 645, "NO")}),
+            const bool ow = unit.availableAp() >= unit.type->shotAp;
+            f.draw(s, r.x + 3, r.y + 3 + 4 * h, fmt(app_, 643, "OVERWATCH %1", {ow ? text(app_, 644, "YES") : text(app_, 645, "NO")}),
                    ui.white);
             f.draw(s, r.x + 3, r.y + 3 + 5 * h, playerName(unit.owner), ui.white);
+            // Ability icons along the bottom (2.7), the encyclopedia's rules.
+            game::EncyclopediaUnit e;
+            e.isAA = unit.type->isAA;
+            e.mineDetection = unit.type->mineDetectionRange;
+            e.movement = unit.type->movement;
+            e.jammer = unit.type->jammer;
+            e.weaponType = unit.type->indirect ? 1 : 0;
+            int x = r.x + 3;
+            for (const int id : game::abilityIcons(e)) {
+                drawAbilityIcon(app_, s, ui, id, x, r.y + r.h - 28);
+                x += 30;
+            }
         } else if (const int b = st.buildingAt(t); b >= 0) {
             const game::BattleBuilding& bd = st.building(b);
             icon(bd.type->image);
@@ -1236,10 +1442,14 @@ private:
 
     void drawTurnCounter(render::IndexedSurface& s, const ui::UiContext& ui) {
         const game::BattleState& st = session_->state();
-        if (st.turnLimit <= 0) return;
         const ui::Rect r{viewW_ + 95, 456, 34, 19};
-        ui.standard->drawIn(s, r.x, r.y, r.w, r.h, std::to_string(std::max(0, st.turnLimit - st.turn + 1)), ui.white,
-                            render::Align::Right);
+        if (st.turnLimit > 0)
+            ui.standard->drawIn(s, r.x, r.y, r.w, r.h, std::to_string(std::max(0, st.turnLimit - st.turn + 1)), ui.white,
+                                render::Align::Right);
+        // The objective's progress (the Hold Position counter) in red, left.
+        if (st.objectiveProgress > 0)
+            ui.standard->drawIn(s, r.x, r.y, r.w, r.h, std::to_string(st.objectiveProgress), colors_(200, 0, 0),
+                                render::Align::Left);
     }
 
     void drawPlayerList(render::IndexedSurface& s, const ui::UiContext& ui) {
@@ -1324,6 +1534,10 @@ private:
     std::optional<game::Point> plannedTarget_;
     std::map<int, game::Point> destination_; // remembered destinations (MOVE ALL)
     std::set<int> done_;
+    std::map<int, game::Point> marked_; // pending shot target per unit (3.2)
+    int turnSeen_ = -1;                 // the turn of the last tactical view
+    int waitPlayer_ = -1;               // whose turn the waiting view showed
+    std::optional<Confirm> confirm_;    // yes / no box over the options
     // Automated units view.
     bool automated_ = false;
     ui::ListBox autoList_;
