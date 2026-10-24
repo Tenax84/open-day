@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cstdlib>
 
+#include "battle/automated.hpp"
+
 namespace openday::game {
 namespace {
 
@@ -162,46 +164,7 @@ bool City::isBridgeSite(Point p) const {
 }
 
 void City::computeBridgeSites(const GlobalRules& rules) {
-    bridgeSites_.clear();
-    const int n = size();
-    auto cls = [&](int x, int y) { return classAt(*this, rules, {x, y}); };
-    auto waterOrBank = [&](TerrainClass c) { return c == TerrainClass::DeepWater || c == TerrainClass::Riverside; };
-    struct Candidate {
-        Point start, end;
-        int dx, dy;
-    };
-    std::vector<Candidate> found;
-    for (int y = 0; y < n - 1; ++y)
-        for (int x = 0; x < n - 1; ++x) {
-            if (cls(x, y) != TerrainClass::Riverside) continue;
-            int dx = 0, dy = 0;
-            if (waterOrBank(cls(x + 1, y)) && cls(x - 1, y) == TerrainClass::Plain) dx = 1;
-            else if (waterOrBank(cls(x, y + 1)) && cls(x, y - 1) == TerrainClass::Plain) dy = 1;
-            else continue;
-            Point p{x + dx, y + dy};
-            while (cls(p.x, p.y) == TerrainClass::DeepWater) p = {p.x + dx, p.y + dy};
-            if (cls(p.x, p.y) != TerrainClass::Riverside || cls(p.x + dx, p.y + dy) != TerrainClass::Plain) continue;
-            found.push_back({{x, y}, p, dx, dy});
-        }
-    // Of two neighbouring candidates the second is dropped.
-    std::vector<Candidate> kept;
-    for (const Candidate& c : found) {
-        const bool twin = std::any_of(kept.begin(), kept.end(), [&](const Candidate& k) {
-            const bool startNear = std::abs(k.start.x - c.start.x) == 1 || std::abs(k.start.y - c.start.y) == 1;
-            const bool endNear = std::abs(k.end.x - c.end.x) == 1 || std::abs(k.end.y - c.end.y) == 1;
-            return startNear && endNear;
-        });
-        if (!twin) kept.push_back(c);
-    }
-    for (const Candidate& c : kept) {
-        std::vector<Point> tiles;
-        for (Point p = c.start;; p = {p.x + c.dx, p.y + c.dy}) {
-            tiles.push_back(p);
-            if (p.x == c.end.x && p.y == c.end.y) break;
-        }
-        if (std::none_of(tiles.begin(), tiles.end(), [&](Point p) { return isBridgeSite(p); }))
-            bridgeSites_.insert(bridgeSites_.end(), tiles.begin(), tiles.end());
-    }
+    bridgeSites_ = findBridgeSites(size(), [&](Point p) { return classAt(*this, rules, p); });
 }
 
 void City::removeUnusedSlots(int humans) {

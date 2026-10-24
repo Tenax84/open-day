@@ -16,6 +16,11 @@ struct CombatOptions {
     bool aiDamage = true;  // the difficulty factor scales AI damage (campaign, skirmish)
     int difficulty = 5;    // 0-10 *(?)*
     bool computerAi = true; // the computer player plays slot 0 (else slot 0 is played like a human)
+    // Automated units as the original does them (automated-units.md 2.4,
+    // 5.3): the AA candidates of a transport fire at both points, and a
+    // DeployOnce type is lost by every player. Off: each pass has its own
+    // candidates, and only the caller loses the type.
+    bool faithfulAutomated = false;
 };
 
 // Relation of two units (section 1.1), convoys counting by race.

@@ -95,6 +95,28 @@ void applyEvent(BattleState& s, const Event& event) {
                        std::erase(s.techHeld, e.building);
                        if (e.held) s.techHeld.push_back(e.building);
                    },
+                   [&](const AutomatedArrived&) {},
+                   [&](const UnitFiredAA& e) { s.unit(e.unit).ap = e.ap; },
+                   [&](const Repaired& e) {
+                       if (e.building >= 0) s.building(e.building).armor = e.buildingArmor;
+                       if (e.wall >= 0) s.wall(e.wall).armor = e.wallArmor;
+                       if (e.unit >= 0) {
+                           s.unit(e.unit).armor = e.unitArmor;
+                           s.unit(e.unit).ap = e.unitAp;
+                       }
+                   },
+                   [&](const BridgeBuilt& e) { s.addRoad({e.roadType, e.owner, e.tile}); },
+                   [&](const UnitTransported& e) {
+                       BattleUnit& u = s.unit(e.unit);
+                       u.ap = e.ap;
+                       u.armor = e.armor;
+                       if (e.pickedUp || s.inside(e.pos)) s.moveUnit(e.unit, e.pos); // off the map while carried
+                       else s.removeUnit(e.unit);
+                   },
+                   [&](const AutomatedUsed& e) {
+                       for (int p = 0; p < kPlayerSlots; ++p)
+                           if (e.player < 0 || e.player == p) s.automatedUsed[static_cast<std::size_t>(p)].push_back(e.typeId);
+                   },
                },
                event);
 }

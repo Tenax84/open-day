@@ -57,6 +57,16 @@ private:
     void attack(int unit);
     void gotoGroup(const std::vector<int>& units, bool fast);
 
+    // Automated units (section 6).
+    int draw(int n); // rand() mod n
+    // The call routine: drops human types other than 4, 5 and 6.
+    bool callAutomated(int typeId, Point p1, Point p2);
+    void randomCall();
+    void emergencyDrop();
+    void scheduledCalls(int turn);
+    bool dropTarget(Point& target);
+    void callTransport(int unit);
+
     BattleServer& server_;
     BattleState& state_;
 };

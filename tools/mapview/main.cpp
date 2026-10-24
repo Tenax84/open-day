@@ -202,6 +202,17 @@ std::string describe(const game::BattleState& s, const game::Event& event) {
                 return unit(e.unit) + " order now " + std::to_string(e.order.order);
             else if constexpr (std::is_same_v<T, game::TechChanged>)
                 return "building #" + std::to_string(e.building) + (e.held ? " tech held" : " tech lost");
+            else if constexpr (std::is_same_v<T, game::AutomatedArrived>)
+                return "automated type " + std::to_string(e.typeId) + " over " + tileText(e.tile) + ", outcome " +
+                       std::to_string(e.outcome);
+            else if constexpr (std::is_same_v<T, game::UnitFiredAA>)
+                return unit(e.unit) + " fires at the aircraft, AP " + std::to_string(e.ap);
+            else if constexpr (std::is_same_v<T, game::Repaired>) return tileText(e.tile) + " repaired";
+            else if constexpr (std::is_same_v<T, game::BridgeBuilt>) return "bridge built at " + tileText(e.tile);
+            else if constexpr (std::is_same_v<T, game::UnitTransported>)
+                return unit(e.unit) + (e.pickedUp ? " picked up" : " put down at " + tileText(e.pos));
+            else if constexpr (std::is_same_v<T, game::AutomatedUsed>)
+                return "automated type " + std::to_string(e.typeId) + " used up";
             else return "refused: " + e.reason;
         },
         event);

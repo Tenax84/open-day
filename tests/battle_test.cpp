@@ -1,6 +1,7 @@
 // Tactical battle rules on synthetic maps: tile evaluation, path finding,
 // AP cuts, line of fire, shot checks, damage, interruptions and turns.
 
+#include "battle/automated.hpp"
 #include "battle/battle_state.hpp"
 #include "battle/combat.hpp"
 #include "battle/messages.hpp"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <tuple>
 #include <string>
 #include <variant>
 #include <vector>
@@ -30,7 +32,7 @@ int failures = 0;
         }                                                                                 \
     } while (0)
 
-enum TypeId { kTank = 1, kTrooper, kChopper, kBoat, kArtillery, kParalyzer, kAlienTank };
+enum TypeId { kTank = 1, kTrooper, kChopper, kBoat, kArtillery, kParalyzer, kAlienTank, kFlak, kLightFlak };
 
 UnitType armed(int movement, int ap, int armor, int range, int shotAp, int base, int random) {
     UnitType t;
@@ -58,7 +60,8 @@ GlobalRules makeRules() {
                  {",", {TerrainClass::Plain, true, ""}},
                  {"f", {TerrainClass::Forest, false, ""}},
                  {"m", {TerrainClass::Mountains, false, ""}},
-                 {"w", {TerrainClass::DeepWater, true, ""}}};
+                 {"w", {TerrainClass::DeepWater, true, ""}},
+                 {"r", {TerrainClass::Riverside, true, ""}}};
     r.roads = {{0, {"ROAL", 999}}, {1, {"ROAH", 10}}};
     r.walls = {{0, {"WALLC", 60}}};
     r.mines = {{0, {"MINE", false, 25, 10}}, {1, {"GMINE", false, 25, 10}}};
@@ -89,6 +92,61 @@ GlobalRules makeRules() {
     alien.typeId = kAlienTank;
     r.units[{kAlienTank, 0}] = alien;
     for (auto& row : r.aiPriority) row.fill(50);
+
+    // Anti-aircraft units: average damage 20 and 10.
+    UnitType flak = armed(1, 100, 100, 6, 30, 15, 10);
+    flak.race = 1;
+    flak.isAA = true;
+    flak.damageAA = 30;
+    flak.typeId = kFlak;
+    r.units[{kFlak, 0}] = flak;
+    UnitType light = armed(1, 100, 100, 6, 30, 5, 10);
+    light.race = 1;
+    light.isAA = true;
+    light.damageAA = 25;
+    light.typeId = kLightFlak;
+    r.units[{kLightFlak, 0}] = light;
+
+    // Automated units as in the shipped data (automated-units.md 1.3).
+    auto automated = [&](int id, int race, AutomatedCategory cat, int cost, int armor) -> AutomatedType& {
+        AutomatedType& a = r.automated[id];
+        a.id = id;
+        a.race = race;
+        a.category = static_cast<int>(cat);
+        a.cost = cost;
+        a.armor = armor;
+        a.image = "TEST";
+        return a;
+    };
+    automated(0, 0, AutomatedCategory::Transport, 30, 40).image = "HHTR";
+    automated(1, 0, AutomatedCategory::Build, 10, 60);
+    automated(2, 0, AutomatedCategory::Mine, 10, 70).mineDetectionRange = 5;
+    AutomatedType& medic = automated(3, 0, AutomatedCategory::Repair, 100, 40);
+    medic.armorInc = 200;
+    medic.damageArea = 3;
+    medic.deployOnce = true;
+    AutomatedType& bomber = automated(4, 0, AutomatedCategory::Destroy, 150, 40);
+    bomber.damage = 150;
+    bomber.armorDamage = true;
+    bomber.damageArea = 5;
+    AutomatedType& gas = automated(5, 0, AutomatedCategory::Destroy, 40, 40);
+    gas.damage = 300;
+    gas.damageArea = 3;
+    automated(7, 1, AutomatedCategory::Transport, 40, 60);
+    for (const auto& [id, unit, race] : {std::tuple{14, int(kAlienTank), 2}, std::tuple{15, int(kTrooper), 0}}) {
+        AutomatedType& drop = automated(id, race, AutomatedCategory::Drop, 90, 40);
+        drop.dropUnit = unit;
+        drop.dropCount = 4;
+        drop.dropSlots = {DropSlot{-1, -2, 6}, DropSlot{2, 2, 2}, DropSlot{-1, 1, 4}, DropSlot{2, -2, 0}, DropSlot{0, 0, 0}};
+    }
+    AutomatedType& tauranMedic = automated(10, 1, AutomatedCategory::Repair, 300, 60);
+    tauranMedic.armorInc = tauranMedic.actionInc = 200;
+    tauranMedic.damageArea = 1;
+    tauranMedic.prerequisite = 250;
+    AutomatedType& ap = automated(26, 0, AutomatedCategory::Repair, 200, 40);
+    ap.actionInc = 450;
+    ap.damageArea = 1;
+    ap.deployOnce = true;
     return r;
 }
 
@@ -824,6 +882,254 @@ void testSides() {
     CHECK(unitSide(ch, ai, true) == Side::Enemy && unitSide(ch, h2, true) == Side::Ally);
 }
 
+
+// Automated units: docs/mechanics/automated-units.md.
+void testAutomatedCalls() {
+    // Cost, target tests, DeployOnce and a bomber without AA.
+    BattleState s = world(open(12));
+    const int tank = add(s, kTank, 1, {2, 2});
+    const int enemy = add(s, kAlienTank, 0, {8, 8});
+    const int neighbour = add(s, kAlienTank, 0, {3, 2});
+    s.unit(tank).armor = 10;
+    s.unit(neighbour).armor = 5;
+    s.automated[1] = {4, 3};
+    s.deployBudget[1] = 350;
+    const BattleState initial = s;
+    BattleServer server(s, {}, 1);
+    std::vector<Event> all;
+    auto send = [&](const Request& r) {
+        std::vector<Event> e = server.handle(r);
+        all.insert(all.end(), e.begin(), e.end());
+        return e;
+    };
+    CHECK(count<RequestRejected>(send(AutomatedRequest{1, 4, {{2, 2}}})) == 1);  // own unit
+    CHECK(count<RequestRejected>(send(AutomatedRequest{1, 5, {{8, 8}}})) == 1);  // not in the list
+    CHECK(count<RequestRejected>(send(AutomatedRequest{2, 4, {{8, 8}}})) == 1);  // not his turn
+    CHECK(server.state().deployBudget[1] == 350);
+    std::vector<Event> ev = send(AutomatedRequest{1, 4, {{8, 8}}});
+    const AutomatedArrived* arrived = first<AutomatedArrived>(ev);
+    CHECK(arrived && arrived->outcome == 1 && arrived->typeId == 4 && same(arrived->tile, {8, 8}) && !arrived->second);
+    // D = 150 + 1 at the centre: the alien tank (50) is destroyed; the kill
+    // is credited to the caller and the bomber.
+    const UnitDestroyed* dead = first<UnitDestroyed>(ev);
+    CHECK(dead && dead->unit == enemy && dead->cause.attacker == 1 && dead->cause.automatedType == 4);
+    CHECK(server.state().deployBudget[1] == 200);
+    // The medic heals the centre fully and the ring by 200 - 100, any owner;
+    // it can be called once.
+    ev = send(AutomatedRequest{1, 3, {{2, 2}}});
+    CHECK(server.state().unit(tank).armor == 50 && server.state().unit(neighbour).armor == 50);
+    CHECK(count<AutomatedUsed>(ev) == 1 && server.state().deployBudget[1] == 100);
+    const std::vector<int> usable = server.state().usableAutomated(1);
+    CHECK(usable.size() == 1 && usable[0] == 4);
+    CHECK(count<RequestRejected>(send(AutomatedRequest{1, 3, {{2, 2}}})) == 1);
+    // Not enough tactical resource left for a second bomber.
+    ev = send(AutomatedRequest{1, 4, {{9, 9}}});
+    CHECK(count<RequestRejected>(ev) == 1 && count<AutomatedArrived>(ev) == 0);
+    checkReplica(initial, all, server.state());
+
+    // The clip names (8.1).
+    CHECK(automatedClipName(rules().automated.at(0), true, AutomatedOutcome::Damaged) == "AUTOUNIT\\HHTR12.SMK");
+}
+
+void testAntiAir() {
+    // Only the light flak (25) is in range: damaged (25 < 40), the bomb is
+    // scaled by (40 - 25) / 40: trunc(150 * 15 / 40) = 56, D = 57.
+    BattleState s = world(open(16));
+    add(s, kTank, 1, {0, 0});
+    const int light = add(s, kLightFlak, 0, {8, 8});
+    add(s, kFlak, 0, {15, 15}); // 7 tiles away: out of range
+    s.automated[1] = {4};
+    s.deployBudget[1] = 1000;
+    const BattleState initial = s;
+    BattleServer server(s, {}, 1);
+    std::vector<Event> all = server.handle(AutomatedRequest{1, 4, {{8, 8}}});
+    const AutomatedArrived* arrived = first<AutomatedArrived>(all);
+    CHECK(arrived && arrived->outcome == 2);
+    CHECK(count<UnitFiredAA>(all) == 1 && first<UnitFiredAA>(all)->unit == light && first<UnitFiredAA>(all)->ap == 70);
+    CHECK(server.state().unit(light).armor == 100 - 57);
+    checkReplica(initial, all, server.state());
+
+    // Shot down: the weakest units fire first until the armor is used up
+    // (25 + 25 >= 40), the stronger flak does not fire; no effect.
+    BattleState d = world(open(16));
+    add(d, kTank, 1, {0, 0});
+    const int strong = add(d, kFlak, 0, {8, 9});
+    const int l1 = add(d, kLightFlak, 0, {8, 8});
+    const int l2 = add(d, kLightFlak, 0, {9, 8});
+    d.automated[1] = {4};
+    d.deployBudget[1] = 1000;
+    BattleServer s2(d, {}, 1);
+    std::vector<Event> ev = s2.handle(AutomatedRequest{1, 4, {{8, 8}}});
+    CHECK(first<AutomatedArrived>(ev) && first<AutomatedArrived>(ev)->outcome == 3);
+    std::vector<int> fired;
+    for (const Event& e : ev)
+        if (const UnitFiredAA* f = std::get_if<UnitFiredAA>(&e)) fired.push_back(f->unit);
+    CHECK(fired.size() == 2 && fired[0] == l1 && fired[1] == l2);
+    CHECK(s2.state().unit(strong).ap == 100 && s2.state().unit(l1).armor == 100);
+    CHECK(count<UnitDamaged>(ev) == 0 && s2.state().deployBudget[1] == 850); // paid anyway
+
+    // AP damage (gas, area 3): 301 at the centre.
+    BattleState g = world(open(10));
+    add(g, kTank, 1, {0, 0});
+    const int target = add(g, kAlienTank, 0, {5, 5});
+    g.automated[1] = {5};
+    g.deployBudget[1] = 100;
+    BattleServer s3(g, {}, 1);
+    s3.handle(AutomatedRequest{1, 5, {{5, 5}}});
+    CHECK(s3.state().unit(target).ap == 0 && s3.state().unit(target).negAp == 100 && s3.state().unit(target).armor == 50);
+}
+
+void testDrops() {
+    // Four troopers with the slot facings; a hidden armed mine on slot 1
+    // explodes and that slot fails.
+    BattleState s = world(open(12));
+    add(s, kTank, 1, {0, 0});
+    BattleMine mine;
+    mine.pos = {5, 4}; // slot 1: (-1, -2) from (6, 6)
+    mine.hidden = {false, true, true, true, true};
+    s.addMine(mine);
+    s.automated[1] = {15};
+    s.deployBudget[1] = 500;
+    const BattleState initial = s;
+    BattleServer server(s, {}, 1);
+    std::vector<Event> all = server.handle(AutomatedRequest{1, 15, {{6, 6}}});
+    CHECK(count<MineExploded>(all) == 1 && count<UnitAdded>(all) == 3);
+    std::vector<const UnitAdded*> added;
+    for (const Event& e : all)
+        if (const UnitAdded* a = std::get_if<UnitAdded>(&e)) added.push_back(a);
+    CHECK(added.size() == 3 && same(added[0]->pos, {8, 8}) && added[0]->facing == 2 && added[0]->owner == 1);
+    CHECK(same(added[1]->pos, {5, 7}) && added[1]->facing == 4 && same(added[2]->pos, {8, 4}) && added[2]->facing == 0);
+    // Dropped units can act at once.
+    const BattleUnit& dropped = server.state().units().back();
+    CHECK(dropped.type->typeId == kTrooper && dropped.ap == dropped.type->actionPoints);
+    checkReplica(initial, all, server.state());
+
+    // Damaged by AA: half the units.
+    BattleState d = world(open(12));
+    add(d, kTank, 1, {0, 0});
+    add(d, kLightFlak, 0, {10, 10});
+    d.automated[1] = {15};
+    d.deployBudget[1] = 500;
+    BattleServer s2(d, {}, 1);
+    std::vector<Event> ev = s2.handle(AutomatedRequest{1, 15, {{6, 6}}});
+    CHECK(first<AutomatedArrived>(ev) && first<AutomatedArrived>(ev)->outcome == 2 && count<UnitAdded>(ev) == 2);
+}
+
+void testSupport() {
+    // Bridge: a river row ". . r w w r . ." gives one bridge site; deep
+    // water needs a road next to it.
+    std::vector<std::string> rows = open(8);
+    rows[3] = "..rwwr..";
+    BattleState s = world(rows);
+    s.bridgeSites = findBridgeSites(s.size(), [&](Point p) { return s.classAt(p); });
+    CHECK(s.bridgeSites.size() == 4 && s.isBridgeSite({3, 3}) && !s.isBridgeSite({3, 2}));
+    add(s, kTank, 1, {0, 0});
+    s.automated[1] = {1, 2};
+    s.deployBudget[1] = 100;
+    BattleMine mine;
+    mine.pos = {6, 6};
+    mine.hidden = {false, true, true, true, true};
+    s.addMine(mine);
+    const BattleState initial = s;
+    BattleServer server(s, {}, 1);
+    std::vector<Event> all = server.handle(AutomatedRequest{1, 1, {{3, 3}}});
+    CHECK(count<RequestRejected>(all) == 1);
+    std::vector<Event> ev = server.handle(AutomatedRequest{1, 1, {{2, 3}}});
+    all.insert(all.end(), ev.begin(), ev.end());
+    CHECK(count<BridgeBuilt>(ev) == 1 && server.state().roadTypeAt({2, 3}) == 1);
+    CHECK(automatedTargetOk(server.state(), 1, rules().automated.at(1), {3, 3}, true));
+    // Mine detection: a 10 x 10 square (x - 5 ... x + 4) for every human slot.
+    ev = server.handle(AutomatedRequest{1, 2, {{1, 1}}});
+    all.insert(all.end(), ev.begin(), ev.end());
+    CHECK(count<MinesRevealed>(ev) == 0); // (6, 6) is outside x - 5 ... x + 4
+    ev = server.handle(AutomatedRequest{1, 2, {{3, 3}}});
+    all.insert(all.end(), ev.begin(), ev.end());
+    CHECK(count<MinesRevealed>(ev) == 4 && !server.state().mine(0).hidden[1] && !server.state().mine(0).hidden[4]);
+    CHECK(server.state().mine(0).alive);
+    checkReplica(initial, all, server.state());
+
+    // Transport: picked up and put down with no AP left.
+    BattleState t = world(open(12));
+    const int tank = add(t, kTank, 1, {1, 1});
+    const int alien = add(t, kAlienTank, 0, {9, 9});
+    t.automated[1] = {0};
+    t.deployBudget[1] = 200;
+    const BattleState tInitial = t;
+    BattleServer s2(t, {}, 1);
+    std::vector<Event> tall = s2.handle(AutomatedRequest{1, 0, {{9, 9}, {5, 5}}}); // not his unit
+    CHECK(count<RequestRejected>(tall) == 1);
+    ev = s2.handle(AutomatedRequest{1, 0, {{1, 1}, {9, 9}}}); // occupied destination
+    CHECK(count<RequestRejected>(ev) == 1);
+    ev = s2.handle(AutomatedRequest{1, 0, {{1, 1}, {5, 5}}});
+    tall.insert(tall.end(), ev.begin(), ev.end());
+    CHECK(count<AutomatedArrived>(ev) == 2 && count<UnitTransported>(ev) == 2);
+    CHECK(same(s2.state().unit(tank).pos, {5, 5}) && s2.state().unit(tank).availableAp() == 0 &&
+          s2.state().unit(tank).armor == 50 && s2.state().unitAt({1, 1}) < 0);
+    CHECK(s2.state().deployBudget[1] == 170);
+    checkReplica(tInitial, tall, s2.state());
+    (void)alien;
+
+    // AA at the destination only: damaged, armor x (40 - 25) / 40.
+    BattleState a = world(open(16));
+    const int carried = add(a, kTank, 1, {1, 1});
+    add(a, kLightFlak, 0, {12, 12});
+    a.automated[1] = {0};
+    a.deployBudget[1] = 200;
+    BattleServer s3(a, {}, 1);
+    ev = s3.handle(AutomatedRequest{1, 0, {{1, 1}, {10, 10}}});
+    std::vector<int> outcomes;
+    for (const Event& e : ev)
+        if (const AutomatedArrived* x = std::get_if<AutomatedArrived>(&e)) outcomes.push_back(x->outcome);
+    CHECK(outcomes.size() == 2 && outcomes[0] == 1 && outcomes[1] == 2);
+    CHECK(same(s3.state().unit(carried).pos, {10, 10}) && s3.state().unit(carried).armor == 50 * 15 / 40);
+}
+
+void testAutomatedAi() {
+    // Scheduled rows are called in the AI turn whose T equals TurnArrival:
+    // an alien drop and a human bomber (AI-owned); the human transport is
+    // dropped by the race rule; a later row waits.
+    BattleState s = world(open(16));
+    add(s, kTank, 1, {0, 15});
+    s.scheduledAutomated = {{14, {5, 5}, {5, 5}, 1}, {4, {14, 14}, {14, 14}, 1}, {0, {14, 14}, {3, 3}, 1}, {14, {9, 9}, {9, 9}, 3}};
+    startBattle(s);
+    const BattleState initial = s;
+    BattleServer server(s, {}, 1);
+    std::vector<Event> all = server.start();
+    std::vector<Event> ev = server.handle(EndTurnRequest{1});
+    all.insert(all.end(), ev.begin(), ev.end());
+    std::vector<int> types;
+    for (const Event& e : ev)
+        if (const AutomatedArrived* a = std::get_if<AutomatedArrived>(&e)) types.push_back(a->typeId);
+    CHECK(types.size() == 2 && types[0] == 14 && types[1] == 4);
+    int alienDrops = 0;
+    for (const Event& e : ev)
+        if (const UnitAdded* a = std::get_if<UnitAdded>(&e)) alienDrops += a->owner == 0 && a->typeId == kAlienTank;
+    CHECK(alienDrops == 4);
+    for (const Event& e : ev)
+        if (const AutomatedArrived* a = std::get_if<AutomatedArrived>(&e)) CHECK(a->owner == 0);
+    checkReplica(initial, all, server.state());
+
+    // A random call (6.1) with strategic AI info: the medic goes to the most
+    // damaged alien unit, if the AI owns the prerequisite building.
+    BattleState r = world(open(16));
+    add(r, kTank, 1, {0, 15});
+    const int hurt = add(r, kAlienTank, 0, {8, 8});
+    r.unit(hurt).armor = 10;
+    r.unit(hurt).order = {4, 99, 100, 65535, {}, {}}; // keep it still
+    BuildingType lab;
+    lab.id = 250;
+    lab.armor = 100;
+    r.addBuilding({1000002, &lab, 0, 100, {12, 1}});
+    r.aiSupport = {true, 100, 1000, {10}};
+    startBattle(r);
+    BattleServer rs(r, {}, 1);
+    ev = aiTurn(rs);
+    const AutomatedArrived* medic = first<AutomatedArrived>(ev);
+    CHECK(medic && medic->typeId == 10 && same(medic->tile, {8, 8}));
+    CHECK(rs.state().unit(hurt).armor == 50);
+    CHECK(server.state().scheduledAutomated.size() == 1 && server.state().scheduledAutomated[0].turn == 3);
+}
+
 } // namespace
 
 int main() {
@@ -839,6 +1145,11 @@ int main() {
     testAi();
     testDeployment();
     testSides();
+    testAutomatedCalls();
+    testAntiAir();
+    testDrops();
+    testSupport();
+    testAutomatedAi();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return EXIT_FAILURE;

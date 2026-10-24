@@ -575,8 +575,9 @@ the resolution). Choices and differences:
   wall, unit or road on the tile is destroyed.
 - Damage with a value of 0 or less is still applied (it changes nothing)
   and still burns the tile, as described.
-- Not implemented yet: anti-air fire against automated units (6.3), the
-  `TechReward` of destroyed buildings, statistics (now specified in
+- Anti-air fire against automated units (6.3) is implemented with the
+  automated units (automated-units.md).
+- Not implemented yet: the `TechReward` of destroyed buildings, statistics (now specified in
   battle-flow.md 5.3), objectives, damaged
   building sprites after a hit, mine explosion animations, "move to fire"
   orders of the AI.

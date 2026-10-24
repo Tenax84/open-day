@@ -666,8 +666,9 @@ result travels to the clients in the `BattleOver` event (success, loser).
   battle at once).
 - Deployment (1.2), bought reinforcements and the per-turn income (4.2),
   counter-attack battles (4.3, with the campaign), tech buildings (5.2) and
-  the cheat requests are implemented. Not implemented yet: automated units,
-  the score (5.4), saving and restoring a battle, surrender.
+  the cheat requests are implemented. Automated units (4.4) are implemented
+  (automated-units.md); objectives are checked after each call. Not
+  implemented yet: the score (5.4), saving and restoring a battle, surrender.
 - Reinforcements use the lowest tech level of their type (the rows have no
   tech level column) and face the map center.
 - The computer player only plays when at least one human slot takes part;

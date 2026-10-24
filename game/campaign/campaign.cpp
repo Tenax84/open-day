@@ -349,6 +349,10 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
     const std::vector<int> deployable = deployableTypes(r);
     const std::map<int, int> levels = player.techLevels;
     const int multiplier = deployMultiplier();
+    // Automated units: the player's from his city, the computer player's
+    // from the colony (campaign.md 4.1 steps 4-5).
+    const std::vector<int> automated = automatedTypes(r);
+    BattleState::AiSupport aiSupport{true, colony.aiAutoChance, colony.aiAutoBudget, colony.aiAutomated};
 
     if (state == CampaignState::Tactic) {
         std::string name = provinceScenario(battleProvince);
@@ -379,7 +383,7 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
         b.provinceName = text.province;
         b.description = text.description;
         b.aftermath = text.aftermath;
-        b.prepare = [deployable, levels, budget, income](BattleState& s) {
+        b.prepare = [deployable, levels, budget, income, automated, aiSupport](BattleState& s) {
             // One human player: the other slots' units and buildings join him,
             // and so do their deployment zones (campaign.md 4.1).
             for (std::size_t i = 0; i < s.units().size(); ++i) {
@@ -400,6 +404,10 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
             s.techLevels[kCampaignPlayer] = levels;
             s.deployBudget[kCampaignPlayer] = budget;
             s.income[kCampaignPlayer] = income;
+            s.automated = {};
+            s.automated[kCampaignPlayer] = automated;
+            s.automatedNeedsBuildings = {};
+            s.aiSupport = aiSupport;
             s.deploying = !s.deployZone[kCampaignPlayer].empty();
         };
         return b;
@@ -535,13 +543,20 @@ CampaignBattle Campaign::battle(const CampaignResources& res, std::mt19937& rng)
     if (const auto t = r.buildings.find(deployType); t != r.buildings.end()) ci.deployProduction = t->second.resProduction;
     if (const auto t = r.buildings.find(kHeadquarters); t != r.buildings.end()) ci.hqProduction = t->second.resProduction;
     ci.multiplier = multiplier;
-    b.prepare = [deployable, levels, budget, ci](BattleState& s) {
+    b.prepare = [deployable, levels, budget, ci, automated, aiSupport](BattleState& s) {
         s.players = {0, kCampaignPlayer};
         s.purchasable = deployable;
         s.deployNeedsBuildings = true;
         s.techLevels[kCampaignPlayer] = levels;
         s.deployBudget[kCampaignPlayer] = budget;
         s.cityIncome = ci;
+        // The usable list follows the buildings still standing (campaign.md 6.4).
+        s.automated = {};
+        s.automated[kCampaignPlayer] = automated;
+        s.automatedNeedsBuildings = {};
+        s.automatedNeedsBuildings[kCampaignPlayer] = true;
+        s.aiSupport = aiSupport;
+        s.counterAttack = true; // the aliens attack the player's city
         s.deploying = !s.deployZone[kCampaignPlayer].empty();
     };
     return b;

@@ -15,6 +15,7 @@ struct SkirmishArmy {
     int tech = 0;
     int income = 0; // ReinfRes (battle-flow.md 4.2; share 100 % for one player)
     std::vector<int> units;
+    std::vector<int> automated; // human automated types of One Off Automated Available
 };
 
 int techRatio(const game::GlobalRules& rules, int v) {
@@ -43,6 +44,12 @@ std::unique_ptr<Screen> makeBriefing(App& app, const ScenarioEntry& scenario) {
                                army->levels[id] = 0;
                            }
                        });
+        if (db.hasTable("One Off Automated Available"))
+            db.forEach("SELECT Enum FROM \"One Off Automated Available\" WHERE Available <> 0 ORDER BY Counter",
+                       [&](const data::Row& r) {
+                           const auto it = app.data().rules.automated.find(static_cast<int>(r.integer(0)));
+                           if (it != app.data().rules.automated.end() && it->second.race == 0) army->automated.push_back(it->first);
+                       });
     } catch (const data::DbError&) {
     }
     // The original has no separate briefing screen: the army screen, then the
@@ -51,6 +58,7 @@ std::unique_ptr<Screen> makeBriefing(App& app, const ScenarioEntry& scenario) {
     ArmyConfig a;
     a.variant = ArmyConfig::Variant::Skirmish;
     a.units = army->units;
+    a.automated = army->automated;
     a.levels = &army->levels;
     a.techPoints = &army->tech;
     a.canUpgrade = true;
@@ -76,6 +84,11 @@ std::unique_ptr<Screen> makeBriefing(App& app, const ScenarioEntry& scenario) {
                 s.deployBudget[1] = scenario.budget;
                 s.income[1] = income;
                 s.techLevels[1] = levels;
+                // Automated units: the scenario's list, human types only *(OpenDay, like the unit list)*.
+                std::erase_if(s.automated[1], [&](int id) {
+                    const auto it = s.rules().automated.find(id);
+                    return it == s.rules().automated.end() || it->second.race != 0;
+                });
                 s.deploying = !s.deployZone[1].empty();
             };
             return makeBattle(app, std::move(config));

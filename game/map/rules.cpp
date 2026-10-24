@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 
 namespace openday::game {
 
@@ -149,8 +150,8 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                        r.mines[t.id] = std::move(t);
                    });
     if (global.hasTable("Automated Units"))
-        global.forEach("SELECT typeID, NameEnglish, Race, Category, Cost, Prerequisite, DeployOnce, facingsImageID, cursorID "
-                       "FROM \"Automated Units\"",
+        global.forEach("SELECT typeID, NameEnglish, Race, Category, Cost, Prerequisite, DeployOnce, facingsImageID, cursorID, "
+                       "ExplainEnglish, FrameAA, FrameAction, AAPosX, AAPosY FROM \"Automated Units\"",
                        [&](const data::Row& row) {
                            AutomatedType a;
                            a.id = toInt(row, 0);
@@ -162,8 +163,47 @@ GlobalRules loadGlobalRules(const data::SqliteDb& global) {
                            a.deployOnce = row.integer(6) != 0;
                            a.image = toUpper(row.text(7));
                            a.cursor = toUpper(row.text(8));
+                           a.explain = row.isNull(9) ? std::string() : row.text(9);
+                           a.frameAA = row.isNull(10) ? -1 : toInt(row, 10);
+                           a.frameAction = row.isNull(11) ? -1 : toInt(row, 11);
+                           a.aaX = toInt(row, 12);
+                           a.aaY = toInt(row, 13);
                            r.automated[a.id] = std::move(a);
                        });
+    // Per-type properties (automated-units.md 1.2), values stored as text.
+    if (global.hasTable("Automated Units Infos"))
+        global.forEach("SELECT typeID, Property, Value FROM \"Automated Units Infos\"", [&](const data::Row& row) {
+            const auto it = r.automated.find(toInt(row, 0));
+            if (it == r.automated.end()) return;
+            AutomatedType& a = it->second;
+            const std::string text = row.isNull(2) ? std::string() : row.text(2);
+            const int v = static_cast<int>(std::strtol(text.c_str(), nullptr, 10));
+            const int p = toInt(row, 1);
+            switch (p) {
+            case 0: a.armor = v; break;
+            case 1: a.damage = v; break;
+            case 2: a.armorDamage = toUpper(text) == "AR"; break;
+            case 3: a.mineDetectionRange = v; break;
+            case 4: a.damageArea = v; break;
+            case 5: a.dropUnit = v; break;
+            case 7: a.dropCount = v; break;
+            case 24: a.secondAAX = v; break;
+            case 25: a.secondAAY = v; break;
+            case 26: a.secondFrameAA = v; break;
+            case 27: a.secondFrameAction = v; break;
+            case 28: a.armorInc = v; break;
+            case 34: a.secondExplain = text; break;
+            case 35: a.actionInc = v; break;
+            default:
+                if (p >= 8 && p <= 17) { // unitPosX1, unitPosY1, ... unitPosX5, unitPosY5
+                    DropSlot& s = a.dropSlots[static_cast<std::size_t>((p - 8) / 2)];
+                    ((p - 8) % 2 == 0 ? s.dx : s.dy) = v;
+                } else if (p >= 29 && p <= 33) { // facing1 ... facing5
+                    a.dropSlots[static_cast<std::size_t>(p - 29)].facing = v;
+                }
+                break;
+            }
+        });
     if (global.hasTable("Tech Ratio"))
         global.forEach("SELECT MinRange, MaxRange, Ratio FROM \"Tech Ratio\" ORDER BY MinRange", [&](const data::Row& row) {
             r.techRatios.push_back({toInt(row, 0), toInt(row, 1), toInt(row, 2)});

@@ -127,7 +127,17 @@ struct MineType {
     std::string listbox{}; // LISTBOX.DBI name
 };
 
-// A called-in support action (Automated Units, data-model.md).
+// Automated Category Lookup (docs/mechanics/automated-units.md 0).
+enum class AutomatedCategory { Destroy = 0, Repair = 1, Build = 2, Mine = 3, Drop = 4, Transport = 5 };
+
+// One drop slot of a drop type: tile offset from the target and facing.
+struct DropSlot {
+    int dx = 0, dy = 0;
+    int facing = 0;
+};
+
+// A called-in support action (Automated Units and Automated Units Infos,
+// data-model.md, automated-units.md 1).
 struct AutomatedType {
     int id = 0; // typeID
     std::string name{};
@@ -138,6 +148,25 @@ struct AutomatedType {
     bool deployOnce = false;
     std::string image{};  // ANMSUNIT.FF AUTOUNIT code, LISTBOX.DBI code
     std::string cursor{}; // SYMBOLS.DBI targeting cursor
+    std::string explain{}; // ExplainEnglish: instruction shown while targeting
+    // Animation (1-based clip frames as stored; -1 = none).
+    int frameAA = -1, frameAction = -1;
+    int aaX = 0, aaY = 0;      // AA aim point in 1024-wide screen coordinates
+    int secondFrameAA = -1, secondFrameAction = -1;
+    int secondAAX = 0, secondAAY = 0;
+    std::string secondExplain{}; // transports: the instruction for the destination
+    // Properties (Automated Units Infos); a missing property is 0.
+    int armor = 0;          // hit points against AA fire
+    int damage = 0;
+    bool armorDamage = false; // damageType "AR"; otherwise AP damage
+    int mineDetectionRange = 0;
+    int damageArea = 0;
+    int dropUnit = 0;         // unitIDDrop: Unit Types.typeID
+    int dropCount = 0;        // nbDrop
+    std::array<DropSlot, 5> dropSlots{};
+    int armorInc = 0, actionInc = 0;
+
+    AutomatedCategory kind() const { return static_cast<AutomatedCategory>(category); }
 };
 
 // One bracket of the Tech Ratio table.
