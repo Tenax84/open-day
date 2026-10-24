@@ -240,7 +240,7 @@ private:
 class WaitScreen : public Screen {
 public:
     WaitScreen(App& app, int id, std::function<std::unique_ptr<Screen>()> next)
-        : Screen(app), id_(id), next_(std::move(next)) {
+        : Screen(app), next_(std::move(next)) {
         std::ifstream f(app.data().gameDir / "INTERF" / "WAITING.SMK", std::ios::binary);
         if (!f) return;
         std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -273,7 +273,6 @@ public:
     }
 
 private:
-    int id_;
     std::function<std::unique_ptr<Screen>()> next_;
     std::vector<std::uint8_t> picture_;
     int w_ = 0, h_ = 0;

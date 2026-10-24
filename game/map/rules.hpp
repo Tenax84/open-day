@@ -26,7 +26,7 @@ struct BuildingType {
     bool hasRuin = false;
     int id = 0; // TypeID; 130 = Headquarters
     int aiCategory = 9; // AI Category Lookup
-    std::string name;   // NameEnglish
+    std::string name{}; // NameEnglish
     int techReward = 0;
     int category = 0;   // Building Category Lookup (1 = ruin)
 };
@@ -70,7 +70,7 @@ struct UnitType {
     int typeId = 0;
     int cost = 0;
     int aiCategory = 0; // AI Category Lookup
-    std::string name;   // NameEnglish
+    std::string name{}; // NameEnglish
     int techLevel = 0;  // unitTechLevel of this row
 };
 
