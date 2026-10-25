@@ -1,7 +1,9 @@
 # Install rules and CPack packages: the engine only, never game data.
 #
-#   macOS:   OpenDay-<version>-macos-arm64.dmg    disk image: OpenDay.app, an
-#                                                 Applications link, tools/, docs
+#   macOS:   OpenDay-<version>-macos-arm64.dmg    disk image: OpenDay.app and an
+#                                                 Applications link only; the tools are
+#                                                 in Contents/MacOS, the docs in
+#                                                 Contents/Resources of the bundle
 #   Windows: OpenDay-<version>-windows-x64.exe    installer (NSIS): openday.exe +
 #                                                 tools/ + docs, Start menu, uninstaller
 #   Linux:   OpenDay-<version>-linux-x64.tar.gz   bin/ + share/doc/openday/
@@ -19,12 +21,16 @@ if(OPENDAY_BUILD_VIEWER)
     list(APPEND openday_tools mapview)
 endif()
 
-if(APPLE)
+if(APPLE AND OPENDAY_BUILD_VIEWER)
+    # Everything inside the bundle, so that the disk image holds nothing but
+    # the app to drag, and the updater (which replaces the bundle) updates
+    # the tools too.
+    install(TARGETS openday BUNDLE DESTINATION .)
+    set(openday_doc_dir OpenDay.app/Contents/Resources)
+    set(openday_tool_dir OpenDay.app/Contents/MacOS)
+elseif(APPLE)
     set(openday_doc_dir .)
     set(openday_tool_dir tools)
-    if(OPENDAY_BUILD_VIEWER)
-        install(TARGETS openday BUNDLE DESTINATION .)
-    endif()
 elseif(WIN32)
     set(openday_doc_dir .)
     set(openday_tool_dir tools)

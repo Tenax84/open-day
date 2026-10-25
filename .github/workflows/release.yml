@@ -88,8 +88,14 @@ jobs:
           hdiutil attach -nobrowse -readonly -mountpoint verify build/packages/*.dmg
           ls -l verify
           test -L verify/Applications
+          # Nothing but the app and the Applications link at the top level.
+          test "$(ls -A verify | grep -v '^\.' | sort | tr '
+' ' ')" = "Applications OpenDay.app "
+          test -f verify/OpenDay.app/Contents/Resources/LICENSE
           codesign --verify --strict --verbose=2 verify/OpenDay.app
-          for tool in verify/tools/*; do codesign --verify --strict --verbose=2 "$tool"; done
+          for tool in dbitool fftool installtool mdbtool mapview; do
+            codesign --verify --strict --verbose=2 "verify/OpenDay.app/Contents/MacOS/$tool"
+          done
           hdiutil detach verify
 
       # Silent install into a scratch folder, a start of the installed program

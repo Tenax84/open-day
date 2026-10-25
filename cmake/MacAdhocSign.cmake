@@ -9,8 +9,11 @@
 
 file(GLOB_RECURSE staged_bundles LIST_DIRECTORIES true "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/*.app")
 list(FILTER staged_bundles INCLUDE REGEX "\\.app$")
+# The command-line tools beside the main program in Contents/MacOS (or in
+# tools/ without a bundle): nested code is signed before its bundle.
 file(GLOB_RECURSE staged_tools "${CPACK_TEMPORARY_INSTALL_DIRECTORY}/*")
-list(FILTER staged_tools INCLUDE REGEX "/tools/[^/]+$")
+list(FILTER staged_tools INCLUDE REGEX "(/tools/[^/]+|\\.app/Contents/MacOS/[^/]+)$")
+list(FILTER staged_tools EXCLUDE REGEX "/Contents/MacOS/OpenDay$")
 
 foreach(item IN LISTS staged_tools staged_bundles)
     execute_process(COMMAND codesign --force --sign - --timestamp=none "${item}"

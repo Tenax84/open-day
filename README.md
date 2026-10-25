@@ -29,8 +29,8 @@ Download the package for your system from the
 [releases](https://github.com/Tenax84/open-day/releases) page:
 
 - **macOS (arm64):** open the `.dmg` and drag `OpenDay.app` onto the
-  Applications folder (the command-line tools are in the `tools` folder of the
-  disk image). The app is signed ad hoc only, not notarized: on first start,
+  Applications folder (the command-line tools are inside the app, in
+  `OpenDay.app/Contents/MacOS`). The app is signed ad hoc only, not notarized: on first start,
   right-click it and choose *Open* (on macOS 15 and later: try to open it once,
   then *System Settings → Privacy & Security → Open Anyway*), or run
   `xattr -dr com.apple.quarantine /Applications/OpenDay.app` in Terminal.
