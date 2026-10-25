@@ -4,11 +4,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <mutex>
+#include <string>
 #include <system_error>
 #include <thread>
 #include <utility>
@@ -125,6 +127,263 @@ bool waitForDialog(DialogChoice& choice) {
     return false;
 }
 
+fs::path chooseInstallerFile() {
+    static const SDL_DialogFileFilter filters[] = {
+        {"Game installer or CD image", "exe;iso;bin;img"},
+        {"All files", "*"},
+    };
+    DialogChoice choice;
+    SDL_ShowOpenFileDialog(dialogChosen, &choice, nullptr, filters, 2, nullptr, false);
+    if (!waitForDialog(choice)) return {};
+    return choice.path;
+}
+
+// --- Download from GOG -------------------------------------------------------
+//
+// GOG offers the offline installer only to a logged-in owner, so OpenDay does
+// not download it itself: it opens the game's GOG page in the browser and
+// watches the downloads folder. A finished installer is picked up and copied
+// from right away.
+
+constexpr const char* kGogStoreUrl = "https://www.gog.com/en/game/fallen_haven_liberation_day";
+constexpr const char* kGogLibraryUrl = "https://www.gog.com/en/account";
+
+fs::path downloadsDir() {
+    if (const char* d = SDL_GetUserFolder(SDL_FOLDER_DOWNLOADS); d && *d) return utf8Path(d);
+#ifdef _WIN32
+    const fs::path home = envPath("USERPROFILE");
+#else
+    const fs::path home = homeDir();
+#endif
+    return home.empty() ? fs::path() : home / "Downloads";
+}
+
+std::string lower(std::string s) {
+    for (char& c : s)
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    return s;
+}
+
+// GOG names its installers setup_<game>_<version>.exe; the first Fallen Haven
+// matches too, inspecting the file tells them apart.
+bool looksLikeGogInstaller(const std::string& name) {
+    const std::string n = lower(name);
+    return n.starts_with("setup_") && n.ends_with(".exe") && n.find("fallen") != std::string::npos &&
+           n.find("haven") != std::string::npos;
+}
+
+// Browsers write into a temporary file and rename it when the download is
+// complete (Firefox also leaves an empty placeholder under the final name).
+bool isPartialDownload(const std::string& name) {
+    const std::string n = lower(name);
+    return n.ends_with(".crdownload") || n.ends_with(".part") || n.ends_with(".download") || n.ends_with(".opdownload") ||
+           n.ends_with(".partial");
+}
+
+class DownloadWatcher {
+public:
+    explicit DownloadWatcher(fs::path dir) : dir_(std::move(dir)) {}
+
+    // Looks at the folder again. Returns the installer once it is complete
+    // and holds the game.
+    fs::path poll() {
+        using Clock = std::chrono::steady_clock;
+        const auto now = Clock::now();
+        const auto sysNow = fs::file_time_type::clock::now();
+        fs::path newest;
+        fs::file_time_type newestTime{};
+        std::uintmax_t newestSize = 0;
+        bool downloading = false;
+        std::error_code ec;
+        for (fs::directory_iterator it(dir_, ec), end; !ec && it != end; it.increment(ec)) {
+            const std::string name = utf8(it->path().filename());
+            std::error_code fec;
+            const auto mtime = it->last_write_time(fec);
+            if (fec) continue;
+            if (isPartialDownload(name)) {
+                // A stale leftover of an old download must not block forever.
+                if (sysNow - mtime < std::chrono::seconds(30)) downloading = true;
+                continue;
+            }
+            if (!looksLikeGogInstaller(name) || !it->is_regular_file(fec)) continue;
+            if (newest.empty() || mtime > newestTime) {
+                newest = it->path();
+                newestTime = mtime;
+                newestSize = it->file_size(fec);
+            }
+        }
+        if (newest.empty()) {
+            status_ = downloading ? "A download is in progress..." : "No installer in the folder yet.";
+            return {};
+        }
+        if (newest != path_ || newestSize != size_ || newestTime != time_) {
+            path_ = newest;
+            size_ = newestSize;
+            time_ = newestTime;
+            stableSince_ = now;
+            tried_ = false;
+        }
+        const std::string name = utf8(path_.filename());
+        if (tried_) return {}; // keeps the message of the failed attempt until the file changes
+        if (downloading || size_ == 0 || now - stableSince_ < std::chrono::seconds(2)) {
+            status_ = "Downloading " + name + "...";
+            return {};
+        }
+        tried_ = true;
+        try {
+            data::inspectSource(path_);
+        } catch (const std::exception& e) {
+            status_ = "Cannot use " + name + ": " + e.what();
+            return {};
+        }
+        return path_;
+    }
+
+    const std::string& status() const { return status_; }
+
+private:
+    fs::path dir_;
+    fs::path path_;
+    std::uintmax_t size_ = 0;
+    fs::file_time_type time_{};
+    std::chrono::steady_clock::time_point stableSince_{};
+    bool tried_ = false;
+    std::string status_;
+};
+
+// Splits `text` into lines of at most `width` characters at spaces.
+std::vector<std::string> wrap(const std::string& text, std::size_t width) {
+    std::vector<std::string> out;
+    std::string line;
+    std::size_t pos = 0;
+    while (pos <= text.size()) {
+        std::size_t next = text.find(' ', pos);
+        if (next == std::string::npos) next = text.size();
+        std::string word = text.substr(pos, next - pos);
+        while (word.size() > width) { // a long path: hard break
+            if (!line.empty()) out.push_back(std::move(line)), line.clear();
+            out.push_back(word.substr(0, width));
+            word.erase(0, width);
+        }
+        if (!line.empty() && line.size() + 1 + word.size() > width) out.push_back(std::move(line)), line.clear();
+        if (!line.empty()) line += ' ';
+        line += word;
+        pos = next + 1;
+    }
+    if (!line.empty()) out.push_back(line);
+    return out;
+}
+
+enum class GogResult { Found, ChooseFile, Cancel };
+
+// Opens GOG in the browser and shows a small window while it waits for the
+// installer to arrive in the downloads folder.
+GogResult downloadFromGog(fs::path& found) {
+    const fs::path dir = downloadsDir();
+    std::error_code ec;
+    if (dir.empty() || !fs::is_directory(dir, ec)) {
+        SDL_OpenURL(kGogLibraryUrl);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, kTitle,
+                                 "Your downloads folder was not found. Download the offline installer of the game "
+                                 "from your GOG library, then choose it with \"Installer or CD image...\".",
+                                 nullptr);
+        return GogResult::Cancel;
+    }
+    SDL_OpenURL(kGogLibraryUrl);
+
+    constexpr int kW = 640, kH = 300, kCols = (kW - 40) / 8;
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    if (!SDL_CreateWindowAndRenderer("OpenDay - download from GOG", kW, kH, 0, &window, &renderer))
+        return GogResult::ChooseFile;
+
+    struct Button {
+        SDL_FRect rect;
+        const char* label;
+        int id;
+    };
+    const Button buttons[] = {
+        {{20, kH - 44, 140, 26}, "My GOG library", 1},
+        {{170, kH - 44, 140, 26}, "GOG store page", 2},
+        {{320, kH - 44, 160, 26}, "Choose the file...", 3},
+        {{490, kH - 44, 130, 26}, "Cancel", 0},
+    };
+    std::vector<std::string> intro =
+        wrap("Your GOG library is open in the browser. Log in, open \"Fallen Haven: Liberation Day\" and download "
+             "the offline backup installer for Windows (setup_fallen_haven_..., with its .bin files if there are "
+             "any). Do not have the game yet? It is sold on the GOG store page.",
+             kCols);
+    intro.push_back("");
+    for (auto& l : wrap("OpenDay watches " + utf8(dir) + " and copies the game files as soon as the download is "
+                        "complete.", kCols))
+        intro.push_back(std::move(l));
+
+    DownloadWatcher watcher(dir);
+    GogResult result = GogResult::Cancel;
+    Uint64 lastPoll = 0;
+    for (bool running = true; running;) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            if (ev.type == SDL_EVENT_QUIT || ev.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED ||
+                (ev.type == SDL_EVENT_KEY_DOWN && ev.key.key == SDLK_ESCAPE)) {
+                running = false;
+            } else if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev.button.button == SDL_BUTTON_LEFT) {
+                const SDL_FPoint p{ev.button.x, ev.button.y};
+                for (const Button& b : buttons) {
+                    if (!SDL_PointInRectFloat(&p, &b.rect)) continue;
+                    if (b.id == 1) SDL_OpenURL(kGogLibraryUrl);
+                    else if (b.id == 2) SDL_OpenURL(kGogStoreUrl);
+                    else {
+                        result = b.id == 3 ? GogResult::ChooseFile : GogResult::Cancel;
+                        running = false;
+                    }
+                }
+            }
+        }
+        if (!running) break;
+        if (const Uint64 t = SDL_GetTicks(); t - lastPoll >= 500) {
+            lastPoll = t;
+            if (fs::path p = watcher.poll(); !p.empty()) {
+                found = std::move(p);
+                result = GogResult::Found;
+                break;
+            }
+        }
+
+        SDL_SetRenderDrawColor(renderer, 16, 20, 32, 255);
+        SDL_RenderClear(renderer);
+        SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+        float y = 20;
+        for (const std::string& l : intro) {
+            SDL_RenderDebugText(renderer, 20, y, l.c_str());
+            y += 14;
+        }
+        y += 10;
+        SDL_SetRenderDrawColor(renderer, 140, 190, 255, 255);
+        for (const std::string& l : wrap(watcher.status(), kCols)) {
+            SDL_RenderDebugText(renderer, 20, y, l.c_str());
+            y += 14;
+        }
+        float mx = 0, my = 0;
+        SDL_GetMouseState(&mx, &my);
+        const SDL_FPoint mouse{mx, my};
+        for (const Button& b : buttons) {
+            const bool hot = SDL_PointInRectFloat(&mouse, &b.rect);
+            SDL_SetRenderDrawColor(renderer, hot ? 60 : 40, hot ? 90 : 56, hot ? 150 : 96, 255);
+            SDL_RenderFillRect(renderer, &b.rect);
+            SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+            SDL_RenderRect(renderer, &b.rect);
+            const float tw = 8.0f * static_cast<float>(std::char_traits<char>::length(b.label));
+            SDL_RenderDebugText(renderer, b.rect.x + (b.rect.w - tw) / 2, b.rect.y + 9, b.label);
+        }
+        SDL_RenderPresent(renderer);
+        SDL_Delay(30);
+    }
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+    return result;
+}
+
 // Asks for the game folder, or for an installer or CD image to copy the
 // game from. Returns empty if the user gives up.
 fs::path askForGameDir() {
@@ -136,40 +395,47 @@ fs::path askForGameDir() {
         "and the other game folders;\n"
         "  - the GOG installer (setup_*.exe, with its .bin files next to it) or an image of the game "
         "CD (.iso, .bin): OpenDay copies the game files out of it into " +
-        utf8(userDir() / "game") + ".\n\n"
+        utf8(userDir() / "game") +
+        ";\n"
+        "  - download the installer from GOG: OpenDay opens your GOG library in the browser and copies the "
+        "game files as soon as the download is complete.\n\n"
         "You can also start OpenDay with --game-dir <folder> or --install-from <file>.";
     for (;;) {
         const SDL_MessageBoxButtonData buttons[] = {
             {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Game folder..."},
             {0, 2, "Installer or CD image..."},
+            {0, 3, "Download from GOG..."},
             {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit"},
         };
         const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "OpenDay: game files not found", text.c_str(),
-                                     3, buttons, nullptr};
+                                     4, buttons, nullptr};
         int pressed = 0;
         if (!SDL_ShowMessageBox(&box, &pressed) || pressed == 0) return {};
 
-        DialogChoice choice;
-        if (pressed == 1) {
-            SDL_ShowOpenFolderDialog(dialogChosen, &choice, nullptr, nullptr, false);
-            if (!waitForDialog(choice)) return {};
-            if (choice.path.empty()) continue; // cancelled: explain again
-            if (fs::path dir = validGameDir(choice.path); !dir.empty()) return dir;
-            const std::string msg = "This folder does not contain the game files:\n" + utf8(choice.path) +
-                                    "\n\nChoose the folder that holds GLOBALS, IMGS and INTERF.";
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, msg.c_str(), nullptr);
+        fs::path installer;
+        if (pressed == 3) {
+            const GogResult r = downloadFromGog(installer);
+            if (r == GogResult::Cancel) continue;
+            if (r == GogResult::ChooseFile) installer = chooseInstallerFile();
+        } else if (pressed == 2) {
+            installer = chooseInstallerFile();
+        }
+        if (pressed == 2 || pressed == 3) {
+            if (installer.empty()) continue;
+            std::string error;
+            if (fs::path dir = installGameFiles(installer, true, error); !dir.empty()) return dir;
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, error.c_str(), nullptr);
             continue;
         }
-        static const SDL_DialogFileFilter filters[] = {
-            {"Game installer or CD image", "exe;iso;bin;img"},
-            {"All files", "*"},
-        };
-        SDL_ShowOpenFileDialog(dialogChosen, &choice, nullptr, filters, 2, nullptr, false);
+
+        DialogChoice choice;
+        SDL_ShowOpenFolderDialog(dialogChosen, &choice, nullptr, nullptr, false);
         if (!waitForDialog(choice)) return {};
-        if (choice.path.empty()) continue;
-        std::string error;
-        if (fs::path dir = installGameFiles(choice.path, true, error); !dir.empty()) return dir;
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, error.c_str(), nullptr);
+        if (choice.path.empty()) continue; // cancelled: explain again
+        if (fs::path dir = validGameDir(choice.path); !dir.empty()) return dir;
+        const std::string msg = "This folder does not contain the game files:\n" + utf8(choice.path) +
+                                "\n\nChoose the folder that holds GLOBALS, IMGS and INTERF.";
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, msg.c_str(), nullptr);
     }
 }
 

@@ -54,6 +54,11 @@ OpenDay needs the game files of your own copy. Any of these works:
   image...* in the window OpenDay shows when it finds no game files, or
   start it once with `--install-from <file>`. This works the same on
   Windows, macOS and Linux.
+- **Download from GOG...** in the same window opens your GOG library in the
+  browser and watches your downloads folder. Download the offline backup
+  installer of the game there (log in to GOG in the browser; OpenDay never
+  sees your account) and OpenDay copies the game files out of it as soon as
+  the download, including any `.bin` files, is complete.
 - **An installed game folder**, the one that contains `GLOBALS`, `IMGS`,
   `INTERF`, `SCENS`, `ANMSUNIT` and so on. On Windows, OpenDay finds the
   usual GOG install locations by itself. A copy of the folder (or one
@@ -72,7 +77,7 @@ the `OPENDAY_GAME_DIR` environment variable, the folder remembered from an
 earlier start, the `game` folder above, and the usual GOG locations
 (including Wine prefixes and CrossOver bottles). If none holds the game, a
 message explains what to do and lets you choose a folder, an installer or a
-CD image.
+CD image, or download the installer from GOG.
 
 Installers made with Inno Setup 5.0 to 6.4 are read (GOG builds its offline
 installers with Inno Setup); old GOG installers that keep their files in
