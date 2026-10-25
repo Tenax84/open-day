@@ -89,8 +89,7 @@ jobs:
           ls -l verify
           test -L verify/Applications
           # Nothing but the app and the Applications link at the top level.
-          test "$(ls -A verify | grep -v '^\.' | sort | tr '
-' ' ')" = "Applications OpenDay.app "
+          test "$(ls verify | sort | xargs)" = "Applications OpenDay.app"
           test -f verify/OpenDay.app/Contents/Resources/LICENSE
           codesign --verify --strict --verbose=2 verify/OpenDay.app
           for tool in dbitool fftool installtool mdbtool mapview; do
