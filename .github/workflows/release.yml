@@ -31,7 +31,7 @@ jobs:
             configure: ''
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Install SDL3 build dependencies (Linux)
         if: runner.os == 'Linux'
@@ -116,7 +116,7 @@ jobs:
           if (Test-Path (Join-Path $dir 'openday.exe')) { throw 'uninstall left openday.exe behind' }
           exit 0 # not the expected exit code 2 of openday.exe
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: package-${{ runner.os }}
           path: |
@@ -133,7 +133,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: package-*
