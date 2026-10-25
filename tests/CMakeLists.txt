@@ -55,6 +55,10 @@ add_executable(zip_test zip_test.cpp)
 target_link_libraries(zip_test PRIVATE openday_formats openday_warnings)
 add_test(NAME zip_test COMMAND zip_test)
 
+add_executable(update_test update_test.cpp)
+target_link_libraries(update_test PRIVATE openday_update openday_warnings)
+add_test(NAME update_test COMMAND update_test)
+
 add_executable(mdb_test mdb_test.cpp)
 target_link_libraries(mdb_test PRIVATE openday_data openday_warnings)
 add_test(NAME mdb_test COMMAND mdb_test)
@@ -75,3 +79,11 @@ endif()
 add_executable(save_test save_test.cpp)
 target_link_libraries(save_test PRIVATE openday_game openday_warnings)
 add_test(NAME save_test COMMAND save_test)
+
+add_executable(lzma_test lzma_test.cpp)
+target_link_libraries(lzma_test PRIVATE openday_formats openday_warnings)
+add_test(NAME lzma_test COMMAND lzma_test)
+
+add_executable(install_test install_test.cpp)
+target_link_libraries(install_test PRIVATE openday_data openday_warnings)
+add_test(NAME install_test COMMAND install_test)

@@ -2,14 +2,18 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <system_error>
 #include <thread>
+#include <utility>
 
+#include "data/game_source.hpp"
 #include "data/mdb_import.hpp"
 #include "formats/game_path.hpp"
 
@@ -53,66 +57,126 @@ void addDriveC(std::vector<fs::path>& out, const fs::path& driveC) {
 }
 #endif
 
-struct FolderChoice {
+// Runs `work` on a worker thread while a small window shows a progress bar.
+// `status` gives the line under the two text lines and the fraction done.
+void runWithProgress(const char* windowTitle, const char* line1, const char* line2, const std::function<void()>& work,
+                     const std::function<std::pair<std::string, float>()>& status) {
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    if (!SDL_CreateWindowAndRenderer(windowTitle, 560, 120, 0, &window, &renderer)) {
+        work();
+        return;
+    }
+    std::atomic<bool> finished{false};
+    std::thread worker([&] {
+        work();
+        finished = true;
+    });
+    while (!finished) {
+        SDL_Event ev;
+        while (SDL_PollEvent(&ev)) {
+            // Closing the window cannot interrupt the work half way; the
+            // program ends after it.
+        }
+        const auto [line, fraction] = status();
+        SDL_SetRenderDrawColor(renderer, 16, 20, 32, 255);
+        SDL_RenderClear(renderer);
+        SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+        SDL_RenderDebugText(renderer, 20, 20, line1);
+        SDL_RenderDebugText(renderer, 20, 36, line2);
+        SDL_RenderDebugText(renderer, 20, 60, line.c_str());
+        const SDL_FRect frame{20, 84, 520, 16};
+        SDL_RenderRect(renderer, &frame);
+        const SDL_FRect bar{22, 86, 516.0f * std::clamp(fraction, 0.0f, 1.0f), 12};
+        SDL_SetRenderDrawColor(renderer, 90, 140, 220, 255);
+        SDL_RenderFillRect(renderer, &bar);
+        SDL_RenderPresent(renderer);
+        SDL_Delay(30);
+    }
+    worker.join();
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(window);
+}
+
+struct DialogChoice {
     std::atomic<bool> done{false};
     bool failed = false; // no dialog available (e.g. Linux without a portal or zenity)
     fs::path path;
 };
 
-void SDLCALL folderChosen(void* userdata, const char* const* filelist, int /*filter*/) {
-    auto* choice = static_cast<FolderChoice*>(userdata);
+void SDLCALL dialogChosen(void* userdata, const char* const* filelist, int /*filter*/) {
+    auto* choice = static_cast<DialogChoice*>(userdata);
     if (!filelist) choice->failed = true;
     else if (filelist[0]) choice->path = utf8Path(filelist[0]);
     choice->done = true;
 }
 
-// Asks for the game folder. Returns empty if the user gives up.
+// Waits for an SDL file dialog. Returns false (after telling the user) if
+// no dialog is available.
+bool waitForDialog(DialogChoice& choice) {
+    while (!choice.done) {
+        SDL_PumpEvents();
+        SDL_Delay(20);
+    }
+    if (!choice.failed) return true;
+    const std::string msg = std::string("The file dialog is not available: ") + SDL_GetError() +
+                            "\n\nStart OpenDay with --game-dir <folder> or --install-from <file> instead.";
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, msg.c_str(), nullptr);
+    return false;
+}
+
+// Asks for the game folder, or for an installer or CD image to copy the
+// game from. Returns empty if the user gives up.
 fs::path askForGameDir() {
     const std::string text =
         "OpenDay needs the files of the original game \"Fallen Haven: Liberation Day\" "
         "(for example the GOG release). They are not part of OpenDay.\n\n"
-        "Install the game (Windows), or copy the game folder from a Windows installation or "
-        "extract the GOG installer with innoextract (macOS, Linux), then either\n"
-        "  - put the folder at " + utf8(userDir() / "game") + ", or\n"
-        "  - choose the folder now, or\n"
-        "  - start OpenDay with --game-dir <folder> (or set OPENDAY_GAME_DIR).\n\n"
-        "The folder must contain GLOBALS, IMGS, INTERF and the other game folders.";
+        "Choose one of these:\n"
+        "  - the game folder of an installation (or a copy of it): it contains GLOBALS, IMGS, INTERF "
+        "and the other game folders;\n"
+        "  - the GOG installer (setup_*.exe, with its .bin files next to it) or an image of the game "
+        "CD (.iso, .bin): OpenDay copies the game files out of it into " +
+        utf8(userDir() / "game") + ".\n\n"
+        "You can also start OpenDay with --game-dir <folder> or --install-from <file>.";
     for (;;) {
         const SDL_MessageBoxButtonData buttons[] = {
-            {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Choose folder..."},
+            {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Game folder..."},
+            {0, 2, "Installer or CD image..."},
             {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Quit"},
         };
         const SDL_MessageBoxData box{SDL_MESSAGEBOX_INFORMATION, nullptr, "OpenDay: game files not found", text.c_str(),
-                                     2, buttons, nullptr};
+                                     3, buttons, nullptr};
         int pressed = 0;
-        if (!SDL_ShowMessageBox(&box, &pressed) || pressed != 1) return {};
+        if (!SDL_ShowMessageBox(&box, &pressed) || pressed == 0) return {};
 
-        FolderChoice choice;
-        SDL_ShowOpenFolderDialog(folderChosen, &choice, nullptr, nullptr, false);
-        while (!choice.done) {
-            SDL_PumpEvents();
-            SDL_Delay(20);
+        DialogChoice choice;
+        if (pressed == 1) {
+            SDL_ShowOpenFolderDialog(dialogChosen, &choice, nullptr, nullptr, false);
+            if (!waitForDialog(choice)) return {};
+            if (choice.path.empty()) continue; // cancelled: explain again
+            if (fs::path dir = validGameDir(choice.path); !dir.empty()) return dir;
+            const std::string msg = "This folder does not contain the game files:\n" + utf8(choice.path) +
+                                    "\n\nChoose the folder that holds GLOBALS, IMGS and INTERF.";
+            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, msg.c_str(), nullptr);
+            continue;
         }
-        if (choice.failed) {
-            const std::string msg = std::string("The folder dialog is not available: ") + SDL_GetError() +
-                                    "\n\nStart OpenDay with --game-dir <folder> instead.";
-            SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, kTitle, msg.c_str(), nullptr);
-            return {};
-        }
-        if (choice.path.empty()) continue; // cancelled: explain again
-        if (fs::path dir = validGameDir(choice.path); !dir.empty()) return dir;
-        const std::string msg = "This folder does not contain the game files:\n" + utf8(choice.path) +
-                                "\n\nChoose the folder that holds GLOBALS, IMGS and INTERF.";
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, msg.c_str(), nullptr);
+        static const SDL_DialogFileFilter filters[] = {
+            {"Game installer or CD image", "exe;iso;bin;img"},
+            {"All files", "*"},
+        };
+        SDL_ShowOpenFileDialog(dialogChosen, &choice, nullptr, filters, 2, nullptr, false);
+        if (!waitForDialog(choice)) return {};
+        if (choice.path.empty()) continue;
+        std::string error;
+        if (fs::path dir = installGameFiles(choice.path, true, error); !dir.empty()) return dir;
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, kTitle, error.c_str(), nullptr);
     }
 }
 
-// Runs the conversion on a worker thread while a small window shows the
-// progress.
+// Runs the conversion, with a progress window when interactive.
 bool convertWithProgress(const fs::path& gameDir, const fs::path& dataDir, bool interactive, data::ImportReport& report,
                          std::string& error) {
     std::atomic<std::size_t> done{0}, total{0};
-    std::atomic<bool> finished{false};
     std::mutex m;
     std::string current;
     auto progress = [&](std::size_t i, std::size_t n, const std::string& stem) {
@@ -128,51 +192,23 @@ bool convertWithProgress(const fs::path& gameDir, const fs::path& dataDir, bool 
         } catch (const std::exception& e) {
             error = e.what();
         }
-        finished = true;
     };
     if (!interactive) {
         work();
         return error.empty();
     }
-
-    SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
-    if (!SDL_CreateWindowAndRenderer("OpenDay - preparing the game data", 560, 120, 0, &window, &renderer)) {
-        work();
-        return error.empty();
-    }
-    std::thread worker(work);
-    while (!finished) {
-        SDL_Event ev;
-        while (SDL_PollEvent(&ev)) {
-            // Closing the window cannot interrupt a conversion half way; the
-            // program ends after it.
-        }
-        std::string stem;
-        {
-            std::lock_guard lock(m);
-            stem = current;
-        }
-        const std::size_t n = total, i = done;
-        SDL_SetRenderDrawColor(renderer, 16, 20, 32, 255);
-        SDL_RenderClear(renderer);
-        SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
-        SDL_RenderDebugText(renderer, 20, 20, "First start: converting the game databases.");
-        SDL_RenderDebugText(renderer, 20, 36, "This happens once and takes a few seconds.");
-        char line[160];
-        std::snprintf(line, sizeof line, "%zu / %zu  %s", n ? i + 1 : 0, n, stem.c_str());
-        SDL_RenderDebugText(renderer, 20, 60, line);
-        const SDL_FRect frame{20, 84, 520, 16};
-        SDL_RenderRect(renderer, &frame);
-        const SDL_FRect bar{22, 86, n ? 516.0f * static_cast<float>(i) / static_cast<float>(n) : 0.0f, 12};
-        SDL_SetRenderDrawColor(renderer, 90, 140, 220, 255);
-        SDL_RenderFillRect(renderer, &bar);
-        SDL_RenderPresent(renderer);
-        SDL_Delay(30);
-    }
-    worker.join();
-    SDL_DestroyRenderer(renderer);
-    SDL_DestroyWindow(window);
+    runWithProgress("OpenDay - preparing the game data", "First start: converting the game databases.",
+                    "This happens once and takes a few seconds.", work, [&] {
+                        std::string stem;
+                        {
+                            std::lock_guard lock(m);
+                            stem = current;
+                        }
+                        const std::size_t n = total, i = done;
+                        char line[160];
+                        std::snprintf(line, sizeof line, "%zu / %zu  %s", n ? i + 1 : 0, n, stem.c_str());
+                        return std::pair<std::string, float>(line, n ? static_cast<float>(i) / static_cast<float>(n) : 0.0f);
+                    });
     return error.empty();
 }
 
@@ -239,6 +275,60 @@ fs::path validGameDir(const fs::path& candidate) {
             pathExists(formats::findGameFile(dir, "IMGS")))
             return dir;
     }
+    return {};
+}
+
+fs::path installGameFiles(const fs::path& source, bool interactive, std::string& error) {
+    const fs::path target = userDir() / "game";
+    std::error_code ec;
+    if (fs::exists(target, ec) && !fs::is_empty(target, ec)) {
+        if (fs::path dir = validGameDir(target); !dir.empty()) return dir; // copied before
+        error = "The folder " + utf8(target) + " is in the way: it is not empty but holds no game. Remove it and try again.";
+        return {};
+    }
+    data::GameSource info;
+    try {
+        info = data::inspectSource(source);
+    } catch (const std::exception& e) {
+        error = "Cannot use " + utf8(source.filename()) + ":\n" + e.what();
+        return {};
+    }
+    std::printf("copying the game files from %s (%s) into %s\n", utf8(source).c_str(), info.description.c_str(),
+                utf8(target).c_str());
+    std::atomic<std::uint64_t> done{0}, total{0};
+    std::mutex m;
+    std::string current;
+    auto work = [&] {
+        try {
+            data::installFromSource(source, target, [&](std::uint64_t d, std::uint64_t t, const std::string& file) {
+                done = d;
+                total = t;
+                std::lock_guard lock(m);
+                current = file;
+            });
+        } catch (const std::exception& e) {
+            error = "Copying the game files from " + utf8(source.filename()) + " failed:\n" + e.what();
+        }
+    };
+    if (interactive) {
+        runWithProgress("OpenDay - copying the game files", "Copying the game files out of the installer or CD image.",
+                        "This happens once and takes a minute or two.", work, [&] {
+                            std::string file;
+                            {
+                                std::lock_guard lock(m);
+                                file = current;
+                            }
+                            const std::uint64_t t = total, d = done;
+                            char line[160];
+                            std::snprintf(line, sizeof line, "%3d%%  %s", t ? static_cast<int>(d * 100 / t) : 0, file.c_str());
+                            return std::pair<std::string, float>(line, t ? static_cast<float>(d) / static_cast<float>(t) : 0.0f);
+                        });
+    } else {
+        work();
+    }
+    if (!error.empty()) return {};
+    if (fs::path dir = validGameDir(target); !dir.empty()) return dir;
+    error = "The files copied from " + utf8(source.filename()) + " do not form a game folder.";
     return {};
 }
 

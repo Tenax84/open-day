@@ -1,12 +1,17 @@
 // openday: the game program.
 //
-//   openday [--game-dir DIR] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]
-//           [--cheats] [--script STEPS --shot OUT.png]
+//   openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]
+//           [--cheats] [--no-update-check] [--script STEPS --shot OUT.png]
 //
 // --game-dir  the game installation. Default: $OPENDAY_GAME_DIR, then the
 //             folder remembered in the per-user configuration, then the usual
 //             install locations (app/setup.cpp); if none holds the game, a
-//             dialog lets the user choose the folder.
+//             dialog lets the user choose the folder, or an installer or CD
+//             image to copy the game from.
+// --install-from
+//             copies the game files out of the GOG installer (setup_*.exe,
+//             with its .bin files) or a CD image (.iso, .bin) into
+//             <per-user dir>/game and uses that folder (engine/data/game_source.hpp)
 // --data      folder of the converted (SQLite) databases. Default:
 //             $OPENDAY_DATA_DIR, then <per-user dir>/data. On first start (or
 //             when the conversion is missing or outdated) the game databases
@@ -15,6 +20,9 @@
 // --scale     window scale of the 640 x 480 screen (default: the largest that
 //             fits the screen)
 // --cheats    enables the battle cheat keys Tab + W (win) and Tab + L (lose)
+// --no-update-check
+//             does not ask GitHub for a newer release this time (openday.cfg:
+//             check_updates=0 turns the check off for good; docs/updates.md)
 // --script    test input, steps separated by ';': click:X,Y (left), rclick:X,Y,
 //             rdown:X,Y (right button pressed, not released),
 //             move:X,Y, key:NAME (a letter, enter, esc, tab, up, down, left,
@@ -31,6 +39,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <stdexcept>
 
 #include "app/app.hpp"
 #include "app/screens.hpp"
@@ -58,6 +67,8 @@ void loadSettings(app::Settings& s, const app::setup::Config& c) {
     s.scrollSpeed = c.getInt("scroll_speed", s.scrollSpeed);
     s.autofire = c.getInt("autofire", s.autofire) != 0;
     s.overwatch = c.getInt("overwatch", s.overwatch) != 0;
+    s.checkUpdates = c.getInt("check_updates", s.checkUpdates) != 0;
+    s.updateDeclined = c.get("update_declined");
 }
 
 void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
@@ -70,6 +81,8 @@ void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
     c.setInt("scroll_speed", s.scrollSpeed);
     c.setInt("autofire", s.autofire);
     c.setInt("overwatch", s.overwatch);
+    c.setInt("check_updates", s.checkUpdates);
+    c.set("update_declined", s.updateDeclined);
 }
 
 int translateKey(SDL_Keycode k) {
@@ -173,8 +186,8 @@ void placeWindow(SDL_Window* window, int scale) {
 
 // `config` is null in the scripted test mode (settings are neither read nor
 // stored then).
-int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, bool mute, bool cheats, std::deque<Step> script,
-        const fs::path& shot) {
+int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, bool mute, bool cheats, bool updateCheck,
+        std::deque<Step> script, const fs::path& shot) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("OpenDay", 640, 480, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN, &window, &renderer)) {
@@ -190,6 +203,12 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         if (mute) app.settings().sound = app.settings().music = false;
         app.settings().cheats = cheats;
         audio.soundEnabled = app.settings().sound;
+        // Update check: not in the test mode, and not when switched off
+        // (openday.cfg check_updates=0 or --no-update-check).
+        if (config && updateCheck && app.settings().checkUpdates) {
+            app.setUpdater(std::make_unique<app::Updater>(app::setup::userDir() / "updates", OPENDAY_VERSION));
+            app.updater()->check();
+        }
         app.push(intro ? app::makeIntro(app) : app::makeMainMenu(app));
         app.applyChanges();
 
@@ -360,9 +379,9 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
 
 int main(int argc, char** argv) {
     app::setup::attachParentConsole();
-    fs::path gameDirArg, dataDirArg;
+    fs::path gameDirArg, dataDirArg, installFrom;
     int scale = 0; // 0 = fit the screen
-    bool intro = true, mute = false, cheats = false, convert = false;
+    bool intro = true, mute = false, cheats = false, convert = false, updateCheck = true;
     std::string script;
     fs::path shot;
     for (int i = 1; i < argc; ++i) {
@@ -371,15 +390,17 @@ int main(int argc, char** argv) {
         else if (a == "--mute") mute = true;
         else if (a == "--cheats") cheats = true;
         else if (a == "--convert") convert = true;
+        else if (a == "--no-update-check") updateCheck = false;
         else if (a == "--game-dir" && i + 1 < argc) gameDirArg = argPath(argv[++i]);
+        else if (a == "--install-from" && i + 1 < argc) installFrom = argPath(argv[++i]);
         else if (a == "--data" && i + 1 < argc) dataDirArg = argPath(argv[++i]);
         else if (a == "--scale" && i + 1 < argc) scale = std::clamp(std::atoi(argv[++i]), 1, 4);
         else if (a == "--script" && i + 1 < argc) script = argv[++i];
         else if (a == "--shot" && i + 1 < argc) shot = argPath(argv[++i]);
         else if (a.rfind("-psn_", 0) == 0) continue; // process serial number from older macOS Finder launches
         else {
-            std::fprintf(stderr, "usage: openday [--game-dir DIR] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]\n"
-                                 "               [--cheats] [--script STEPS --shot OUT.png]\n");
+            std::fprintf(stderr, "usage: openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]\n"
+                                 "               [--cheats] [--no-update-check] [--script STEPS --shot OUT.png]\n");
             return 2;
         }
     }
@@ -393,6 +414,10 @@ int main(int argc, char** argv) {
     try {
         app::setup::Config config = app::setup::Config::load();
         std::string error;
+        if (!installFrom.empty()) {
+            gameDirArg = app::setup::installGameFiles(installFrom, interactive, error);
+            if (gameDirArg.empty()) throw std::runtime_error(error);
+        }
         const fs::path gameDir = app::setup::findGameDir(gameDirArg, config, interactive, error);
         bool defaultData = false;
         const fs::path dataDir = app::setup::dataDir(dataDirArg, defaultData);
@@ -405,7 +430,7 @@ int main(int argc, char** argv) {
         } else {
             if (interactive) config.save(); // remembers the game folder
             app::GameData data = app::GameData::load(gameDir, dataDir);
-            rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, parseScript(script), shot);
+            rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, updateCheck, parseScript(script), shot);
         }
     } catch (const std::exception& e) {
         app::setup::reportError(e.what(), interactive);

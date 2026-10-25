@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "app/updater.hpp"
 #include "formats/dbi.hpp"
 #include "formats/palcycle.hpp"
 #include "formats/palette.hpp"
@@ -93,6 +94,8 @@ struct Settings {
     bool autofire = true;
     bool overwatch = true;
     bool cheats = false; // Tab + W / L, as the original with Cheats=1
+    bool checkUpdates = true;   // ask GitHub for a newer release on start
+    std::string updateDeclined; // a release the user said "No" to (not offered again)
 };
 
 class App {
@@ -131,6 +134,12 @@ public:
     const render::SmkFrames* encyclopediaPictures();
     const formats::DbiSprite* exeBitmap(int id, bool keyed = false);
 
+    // The updater (docs/updates.md), or nullptr when update checks are off.
+    Updater* updater() { return updater_.get(); }
+    void setUpdater(std::unique_ptr<Updater> updater) { updater_ = std::move(updater); }
+    // The update offer is made once per session.
+    bool updateOffered = false;
+
     // Plays a sound from SOUNDS\ by file name.
     void sound(const std::string& file);
     // Starts a random music track, as the original does when a game starts.
@@ -158,6 +167,7 @@ private:
     std::map<int, std::vector<std::uint8_t>> exeBitmapData_;
     bool exeLoaded_ = false;
     std::map<std::pair<int, bool>, formats::DbiSprite> exeBitmaps_;
+    std::unique_ptr<Updater> updater_;
 };
 
 // The interface atlas elements the screens use (frame and size, from

@@ -1,5 +1,6 @@
 // Front-end screens: intro video, main menu, resolution, skirmish list,
-// loading picture (docs/mechanics/interface.md sections 3-4).
+// loading picture (docs/mechanics/interface.md sections 3-4), and the
+// update dialog (docs/updates.md).
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -126,6 +127,16 @@ public:
     void handle(const ui::InputEvent& e) override {
         for (ui::Button& b : buttons_)
             if (b.handle(e)) return;
+        if (e.type == ui::InputEvent::Type::KeyDown && e.key == 'u' && updateAvailable()) app_.push(makeUpdateDialog(app_));
+    }
+
+    // A newer release is offered once per session, unless the user declined
+    // that version before; the line at the bottom stays (U opens the dialog).
+    void update(int) override {
+        Updater* u = app_.updater();
+        if (!u || app_.updateOffered || !updateAvailable()) return;
+        app_.updateOffered = true;
+        if (u->status().latest != app_.settings().updateDeclined) app_.push(makeUpdateDialog(app_));
     }
 
     void draw(render::IndexedSurface& s) override {
@@ -134,11 +145,115 @@ public:
         for (const ui::Button& b : buttons_) b.draw(s, app_.ui());
         app_.ui().standard->draw(s, 4, 480 - 18, "OpenDay " OPENDAY_VERSION " - not affiliated with the original publisher",
                                  app_.ui().grey);
+        if (updateAvailable())
+            app_.ui().standard->draw(s, 4, 480 - 36, "OpenDay " + app_.updater()->status().latest + " is available - press U",
+                                     app_.ui().white);
     }
 
 private:
+    bool updateAvailable() {
+        Updater* u = app_.updater();
+        if (!u) return false;
+        const Updater::State st = u->status().state;
+        return st == Updater::State::Available || st == Updater::State::Downloading || st == Updater::State::Ready ||
+               (st == Updater::State::Failed && !u->status().latest.empty());
+    }
+
     ui::Rect panel_;
     std::vector<ui::Button> buttons_;
+};
+
+// ---------------------------------------------------------------------------
+
+// The update dialog: a message box (frame 477: 254 x 144; YES 478, NO 482)
+// over the main menu that follows the updater's state.
+class UpdateDialog : public Screen {
+public:
+    explicit UpdateDialog(App& app) : Screen(app), box_{(640 - 254) / 2, (480 - 144) / 2, 254, 144} {
+        yes_.rect = {box_.x + 40, box_.y + 118, 53, 17};
+        yes_.firstFrame = 478;
+        yes_.caption = "Yes";
+        yes_.hotkey = ui::kKeyEnter;
+        yes_.onClick = [this] { onYes(); };
+        no_.rect = {box_.x + 161, box_.y + 118, 53, 17};
+        no_.firstFrame = 482;
+        no_.caption = "No";
+        no_.hotkey = ui::kKeyEscape;
+        no_.onClick = [this] { onNo(); };
+    }
+
+    bool overlay() const override { return true; }
+
+    void handle(const ui::InputEvent& e) override {
+        if (yes_.enabled && yes_.handle(e)) return;
+        no_.handle(e);
+    }
+
+    void update(int) override {
+        const Updater::Status st = updater().status();
+        // Yes is meaningless while the package is being downloaded.
+        yes_.enabled = st.state != Updater::State::Downloading;
+    }
+
+    void draw(render::IndexedSurface& s) override {
+        const ui::UiContext& ui = app_.ui();
+        ui::drawFrame(s, ui, 477, box_);
+        ui.standard->drawWrapped(s, box_.x + 12, box_.y + 12, box_.w - 24, 100, text(), ui.white);
+        yes_.draw(s, ui);
+        no_.draw(s, ui);
+    }
+
+private:
+    Updater& updater() { return *app_.updater(); }
+
+    std::string text() {
+        if (!failure_.empty()) return shorten(failure_) + "\n\nOpen the download page?";
+        const Updater::Status st = updater().status();
+        const std::string offer = "OpenDay " + st.latest + " is available (this is " + st.current + ").\n\n";
+        switch (st.state) {
+        case Updater::State::Downloading: {
+            if (st.total == 0) return "Downloading OpenDay " + st.latest + "...\n\nNo: cancel";
+            const int pct = static_cast<int>(st.received * 100 / st.total);
+            return "Downloading OpenDay " + st.latest + "... " + std::to_string(pct) + " %\n\nNo: cancel";
+        }
+        case Updater::State::Ready:
+#ifdef _WIN32
+            return "The installer of OpenDay " + st.latest + " is ready. OpenDay closes while it runs.\n\nStart it now?";
+#else
+            return "OpenDay " + st.latest + " is installed.\n\nRestart now?";
+#endif
+        case Updater::State::Failed: return shorten(st.error) + "\n\nOpen the download page?";
+        default:
+            if (!st.installable) return offer + shorten(st.error) + " Open the download page?";
+            return offer + "Download and install it now?";
+        }
+    }
+
+    static std::string shorten(const std::string& s) { return s.size() > 120 ? s.substr(0, 117) + "..." : s; }
+
+    void onYes() {
+        const Updater::Status st = updater().status();
+        if (st.state == Updater::State::Ready && failure_.empty()) {
+            std::string error;
+            if (updater().finish(error)) app_.quit();
+            else failure_ = error;
+            return;
+        }
+        if (st.state == Updater::State::Available && st.installable) return updater().download();
+        updater().openReleasePage();
+        app_.pop();
+    }
+
+    void onNo() {
+        const Updater::Status st = updater().status();
+        if (st.state == Updater::State::Downloading) return updater().cancel();
+        if (st.state == Updater::State::Available) app_.settings().updateDeclined = st.latest;
+        app_.pop();
+    }
+
+    ui::Rect box_;
+    ui::Button yes_, no_;
+    std::string failure_;
 };
 
 // ---------------------------------------------------------------------------
@@ -296,6 +411,7 @@ std::unique_ptr<Screen> makeVideo(App& app, const std::string& name, std::functi
 }
 std::unique_ptr<Screen> makeMainMenu(App& app) { return std::make_unique<MainMenu>(app); }
 std::unique_ptr<Screen> makeResolutionMenu(App& app) { return std::make_unique<ResolutionMenu>(app); }
+std::unique_ptr<Screen> makeUpdateDialog(App& app) { return std::make_unique<UpdateDialog>(app); }
 std::unique_ptr<Screen> makeSkirmishMenu(App& app) { return std::make_unique<SkirmishMenu>(app); }
 std::unique_ptr<Screen> makeWait(App& app, int id, std::function<std::unique_ptr<Screen>()> next) {
     return std::make_unique<WaitScreen>(app, id, std::move(next));

@@ -38,6 +38,12 @@ private:
 // game files. Empty if neither does.
 fs::path validGameDir(const fs::path& candidate);
 
+// Copies the game files out of a GOG installer (setup_*.exe) or an image of
+// the game CD (.iso, .bin) into userDir()/game (data/game_source.hpp), with
+// a progress window when `interactive`. Returns the game folder, or empty
+// with `error` set. A game copied there before is reused.
+fs::path installGameFiles(const fs::path& source, bool interactive, std::string& error);
+
 // Places where an installation is looked for when none is configured.
 std::vector<fs::path> defaultGameDirs();
 

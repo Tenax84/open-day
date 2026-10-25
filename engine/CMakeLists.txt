@@ -1,20 +1,33 @@
 add_library(openday_formats
     formats/bmp_palette.cpp
+    formats/byte_source.cpp
     formats/dbi.cpp
     formats/ff.cpp
     formats/game_path.cpp
+    formats/hash.cpp
     formats/inflate.cpp
+    formats/inno_setup.cpp
+    formats/iso9660.cpp
+    formats/json.cpp
+    formats/lzma.cpp
     formats/mdb.cpp
     formats/palcycle.cpp
     formats/pe_resources.cpp
     formats/png_writer.cpp
+    formats/sha256.cpp
     formats/smk.cpp
+    formats/tar.cpp
     formats/zip.cpp
 )
 target_include_directories(openday_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(openday_formats PRIVATE openday_warnings)
 
-add_library(openday_data data/mdb_import.cpp data/sqlite_db.cpp)
+# Release information of the updater (no network code; testable).
+add_library(openday_update update/release.cpp)
+target_include_directories(openday_update PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(openday_update PUBLIC openday_formats PRIVATE openday_warnings)
+
+add_library(openday_data data/game_source.cpp data/mdb_import.cpp data/sqlite_db.cpp)
 target_include_directories(openday_data PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(openday_data PUBLIC SQLite::SQLite3 openday_formats PRIVATE openday_warnings)
 
@@ -57,7 +70,13 @@ target_link_libraries(openday_ui PUBLIC openday_render openday_formats PRIVATE o
 
 # Windowing-system parts (SDL3), only with the viewer / game executables.
 if(OPENDAY_BUILD_VIEWER)
-    add_library(openday_platform platform/audio.cpp)
+    add_library(openday_platform platform/audio.cpp platform/http.cpp)
     target_include_directories(openday_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(openday_platform PUBLIC openday_formats SDL3::SDL3 PRIVATE openday_stb openday_warnings)
+    # HTTPS: WinHTTP on Windows; elsewhere libcurl, loaded at run time.
+    if(WIN32)
+        target_link_libraries(openday_platform PRIVATE winhttp)
+    else()
+        target_link_libraries(openday_platform PRIVATE ${CMAKE_DL_LIBS})
+    endif()
 endif()

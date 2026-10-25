@@ -16,6 +16,8 @@
 namespace openday::app {
 
 std::unique_ptr<Screen> makeResolutionMenu(App& app);
+// The update dialog (docs/updates.md) over the main menu.
+std::unique_ptr<Screen> makeUpdateDialog(App& app);
 std::unique_ptr<Screen> makeSkirmishMenu(App& app);
 // A WAITING.SMK loading picture (id 1-14) shown for one frame before `next`.
 std::unique_ptr<Screen> makeWait(App& app, int id, std::function<std::unique_ptr<Screen>()> next);

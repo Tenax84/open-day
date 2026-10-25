@@ -72,6 +72,9 @@ public:
         }
     }
 
+    // Input bytes used, up to the end of the final block.
+    std::size_t consumed() const { return pos_ - static_cast<std::size_t>(bitCount_ / 8); }
+
 private:
     std::span<const std::uint8_t> in_;
     std::vector<std::uint8_t>& out_;
@@ -227,11 +230,14 @@ private:
 
 } // namespace
 
-std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint, std::size_t maxSize) {
+std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint, std::size_t maxSize,
+                                  std::size_t* consumed) {
     std::vector<std::uint8_t> out;
     // DEFLATE expands at most 1032:1; a larger hint is not trusted.
     out.reserve(std::min({sizeHint, maxSize, compressed.size() * 1032 + 1024}));
-    Inflater(compressed, out, maxSize).run();
+    Inflater inflater(compressed, out, maxSize);
+    inflater.run();
+    if (consumed) *consumed = inflater.consumed();
     return out;
 }
 

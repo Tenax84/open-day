@@ -14,7 +14,7 @@ endif()
 
 set(OPENDAY_PACKAGE_VERSION "${PROJECT_VERSION}" CACHE STRING "Version in the package file names (the release tag)")
 
-set(openday_tools dbitool fftool mdbtool)
+set(openday_tools dbitool fftool installtool mdbtool)
 if(OPENDAY_BUILD_VIEWER)
     list(APPEND openday_tools mapview)
 endif()
@@ -106,6 +106,9 @@ elseif(WIN32)
     set(CPACK_NSIS_EXECUTABLES_DIRECTORY .)
     if(OPENDAY_BUILD_VIEWER)
         set(CPACK_PACKAGE_EXECUTABLES openday OpenDay)
+        # "Run OpenDay" on the last page: the updater starts the installer
+        # and quits (docs/updates.md).
+        set(CPACK_NSIS_MUI_FINISHPAGE_RUN openday.exe)
     endif()
 else()
     set(CPACK_GENERATOR TGZ)

@@ -13,10 +13,11 @@ add_executable(openday
     map_screen.cpp
     menus.cpp
     ui_frames.cpp
+    updater.cpp
 )
 target_include_directories(openday PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(openday PRIVATE OPENDAY_VERSION="${PROJECT_VERSION}")
-target_link_libraries(openday PRIVATE openday_game openday_ui openday_platform SDL3::SDL3 openday_warnings)
+target_link_libraries(openday PRIVATE openday_game openday_ui openday_platform openday_update SDL3::SDL3 openday_warnings)
 if(WIN32)
     # GUI subsystem: no console window when started from the Start menu or
     # Explorer; from a terminal the output still appears (console.cpp).

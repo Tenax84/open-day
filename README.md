@@ -44,34 +44,41 @@ Download the package for your system from the
 
 ### Getting the game files
 
-OpenDay needs the folder of an installed game, the one that contains
-`GLOBALS`, `IMGS`, `INTERF`, `SCENS`, `ANMSUNIT` and so on.
+OpenDay needs the game files of your own copy. Any of these works:
 
-- **Windows:** install the game from GOG (GOG Galaxy or the offline
-  installer). OpenDay finds the usual install locations by itself.
-- **macOS and Linux:** the GOG release is a Windows installer. Either extract
-  it with [innoextract](https://constexpr.org/innoextract/)
-  (`brew install innoextract`, or your distribution's `innoextract` package):
+- **The GOG installer** (`setup_fallen_haven_liberation_day_*.exe`, together
+  with its `.bin` files if it has any) or **an image of the game CD**
+  (`.iso`, or the `.bin` of a `.bin`/`.cue` pair). OpenDay does not run the
+  installer: it reads the files out of it and copies the game into the
+  per-user folder (`game` in the table below). Choose *Installer or CD
+  image...* in the window OpenDay shows when it finds no game files, or
+  start it once with `--install-from <file>`. This works the same on
+  Windows, macOS and Linux.
+- **An installed game folder**, the one that contains `GLOBALS`, `IMGS`,
+  `INTERF`, `SCENS`, `ANMSUNIT` and so on. On Windows, OpenDay finds the
+  usual GOG install locations by itself. A copy of the folder (or one
+  extracted with [innoextract](https://constexpr.org/innoextract/)) can be
+  put into the per-user `game` folder:
 
-  ```
-  innoextract --gog -d ~/fh-install setup_fallen_haven_liberation_day_*.exe
-  ```
-
-  (the game folder is `~/fh-install` or `~/fh-install/app`), or copy the
-  installed folder from a Windows PC. Then put the folder where OpenDay
-  looks for it:
-
+  - Windows: `%APPDATA%\OpenDay\game`
   - macOS: `~/Library/Application Support/OpenDay/game`
   - Linux: `~/.local/share/openday/game`
 
-  or choose it in the dialog OpenDay shows when it finds no game files, or
-  pass `--game-dir`. Upper or lower case file names both work.
+  or chosen with *Game folder...* in the same window, or passed with
+  `--game-dir`. Upper or lower case file names both work.
 
-OpenDay looks for the game in this order: `--game-dir`, the
-`OPENDAY_GAME_DIR` environment variable, the folder remembered from an
+OpenDay looks for the game in this order: `--install-from`, `--game-dir`,
+the `OPENDAY_GAME_DIR` environment variable, the folder remembered from an
 earlier start, the `game` folder above, and the usual GOG locations
 (including Wine prefixes and CrossOver bottles). If none holds the game, a
-message explains what to do and lets you choose the folder.
+message explains what to do and lets you choose a folder, an installer or a
+CD image.
+
+Installers made with Inno Setup 5.0 to 6.4 are read (GOG builds its offline
+installers with Inno Setup); old GOG installers that keep their files in
+a RAR archive, and password-protected installers, are not. A CD image must
+contain the game folders themselves; a disc that holds only a compressed
+setup cannot be used this way.
 
 ### First start
 
@@ -91,18 +98,20 @@ Per-user files (converted data, saves, settings in `openday.cfg`):
 ### Command line
 
 ```
-openday [--game-dir DIR] [--data DIR] [--convert] [--no-intro] [--mute] [--scale N] [--cheats]
+openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--no-intro] [--mute] [--scale N] [--cheats] [--no-update-check]
 ```
 
 | Option | Meaning |
 |---|---|
 | `--game-dir DIR` | the game folder (remembered for later starts) |
+| `--install-from FILE` | copy the game files out of the GOG installer or a CD image into the per-user `game` folder, then start |
 | `--data DIR` | folder of the converted databases (default: `data` in the per-user folder) |
 | `--convert` | convert the databases again |
 | `--no-intro` | skip the intro videos |
 | `--mute` | no sound or music for this run |
 | `--scale N` | window size as a multiple of 640×480 |
 | `--cheats` | Tab + W / Tab + L win or lose a battle |
+| `--no-update-check` | do not look for a newer release this time |
 
 Environment variables: `OPENDAY_GAME_DIR`, `OPENDAY_DATA_DIR`,
 `OPENDAY_SAVE_DIR` (saves folder). On macOS the program is
@@ -117,6 +126,18 @@ saved. Skirmish battles cannot be saved, as in the original. The ten slots
 are text files `saves/campaign.01` … `campaign.10` in the per-user folder.
 Saves of the original game (`SAVEGAME\savegame.NN` in the game folder) can
 be imported from the load dialog with *Original game saves*.
+
+### Updates
+
+On start OpenDay asks GitHub whether a newer release exists and, if so,
+offers it in the main menu. *Yes* downloads the package of your system,
+checks its SHA-256 and installs it: on Windows the installer runs (OpenDay
+closes meanwhile), on macOS the app in the Applications folder is replaced,
+on Linux the unpacked folder is updated; then the new version starts. Where
+that is not possible (e.g. a self-built copy or a read-only folder), the
+release page opens instead. *No* skips that version. Turn the check off with
+`check_updates=0` in `openday.cfg` or for one run with `--no-update-check`.
+Details: [docs/updates.md](docs/updates.md).
 
 ## Building from source
 
@@ -146,6 +167,10 @@ These work on your own game files; do not redistribute what they produce.
   does (`mdbtool --game-dir DIR OUT_DIR`, `--file X.mdb`, `--list`).
   `tools/mdb/mdb2sqlite.py` is the same converter in Python (standard
   library only; optional).
+- `installtool`: shows what a GOG installer or CD image contains and copies
+  the game files out of it (`installtool info FILE`,
+  `installtool install FILE GAME_DIR`; `inno-list` / `inno-extract` for
+  every file of an Inno Setup installer).
 - `dbitool`: inspects and extracts `IMGS\*.DBI` sprite archives.
 - `fftool`: inspects and extracts the `ANMSUNIT\ANMSUNIT.FF` unit animations
   and stand-alone `.SMK` files.

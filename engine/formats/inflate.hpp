@@ -19,9 +19,11 @@ struct InflateError : std::runtime_error {
 // Decompresses a raw DEFLATE stream (no zlib or gzip header). `sizeHint`
 // reserves the output buffer when the size is known; output beyond
 // `maxSize` bytes is refused. Throws InflateError on malformed or truncated
-// input.
+// input. `consumed` receives the number of input bytes the stream used
+// (data may follow it, as the gzip trailer does).
 std::vector<std::uint8_t> inflate(std::span<const std::uint8_t> compressed, std::size_t sizeHint = 0,
-                                  std::size_t maxSize = std::numeric_limits<std::size_t>::max());
+                                  std::size_t maxSize = std::numeric_limits<std::size_t>::max(),
+                                  std::size_t* consumed = nullptr);
 
 // CRC-32 (ISO-HDLC, as in ZIP and PNG). `crc` continues a running value.
 std::uint32_t crc32(std::span<const std::uint8_t> data, std::uint32_t crc = 0);

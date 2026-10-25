@@ -139,6 +139,12 @@ jobs:
           pattern: package-*
           merge-multiple: true
 
+      # Checksums for the updater (docs/updates.md); GitHub's own asset
+      # digests are preferred, this file is the fallback.
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum OpenDay-* > SHA256SUMS && cat SHA256SUMS
+
       - name: Create the GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

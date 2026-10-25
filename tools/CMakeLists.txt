@@ -4,6 +4,9 @@ target_link_libraries(dbitool PRIVATE openday_formats openday_warnings)
 add_executable(fftool fftool/main.cpp)
 target_link_libraries(fftool PRIVATE openday_formats openday_warnings)
 
+add_executable(installtool installtool/main.cpp)
+target_link_libraries(installtool PRIVATE openday_data openday_warnings)
+
 add_executable(mdbtool mdbtool/main.cpp)
 target_link_libraries(mdbtool PRIVATE openday_data openday_warnings)
 
