@@ -2,7 +2,8 @@ name: release
 
 # Builds the engine on every platform and publishes the packages as a GitHub
 # Release when a version tag (v*) is pushed. The packages contain OpenDay only;
-# no file of the original game is ever part of a release.
+# no file of the original game is ever part of a release. A manual run is a dry
+# run: everything up to the release itself (packages, checksums) is exercised.
 
 on:
   push:
@@ -128,7 +129,6 @@ jobs:
   publish:
     name: Publish release
     needs: package
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -146,6 +146,7 @@ jobs:
         run: sha256sum OpenDay-* > SHA256SUMS && cat SHA256SUMS
 
       - name: Create the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
