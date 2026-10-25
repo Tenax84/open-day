@@ -1,0 +1,64 @@
+name: Bug report
+description: Something does not work, crashes or behaves differently from the original game.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **do not attach files of the original game** (graphics, databases, saves, executables, screenshots of the original). Describe them instead. Screenshots and logs of OpenDay are welcome.
+  - type: input
+    id: version
+    attributes:
+      label: OpenDay version
+      description: The release you downloaded (e.g. 0.2.0), or the commit for a self-built copy.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS (Apple Silicon)
+        - macOS (Intel, self-built)
+        - Linux
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-details
+    attributes:
+      label: System details
+      description: OS version, and for Linux the distribution and desktop (X11 / Wayland).
+  - type: dropdown
+    id: source
+    attributes:
+      label: Game files
+      description: Where OpenDay gets the game files from.
+      options:
+        - Installed GOG folder
+        - GOG offline installer (Installer or CD image... / --install-from)
+        - CD image (.iso / .bin)
+        - Copied or innoextract-ed folder
+        - Other / not sure
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start a new campaign on the second colony
+        2. Attack the province ...
+        3. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log output or error message
+      description: Console output or the text of the error window, if any.
+      render: text

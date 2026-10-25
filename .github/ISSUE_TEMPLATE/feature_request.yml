@@ -1,0 +1,26 @@
+name: Missing feature or difference
+description: A feature of the original game that OpenDay lacks, or an improvement idea.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Network play (and with it death match) is known to be missing. For open-ended questions, [Discussions](https://github.com/Tenax84/open-day/discussions) may fit better.
+
+        Please describe the original game's behavior **in your own words**. Do not attach original game files or decompiled code.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What is missing or what should change, and where in the game it shows up.
+    validations:
+      required: true
+  - type: textarea
+    id: original
+    attributes:
+      label: Behavior of the original game
+      description: If this is about matching the original, how it behaves there.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

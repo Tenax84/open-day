@@ -22,7 +22,7 @@ Jogalap (nem jogi tanács): az EU 2009/24/EK irányelv 5. cikk (3) bek. (működ
 
 ## Projekt állapota
 
-- Git-repó inicializálva; GitHub: **`Tenax84/open-day`** (privát, később nyilvános). A `gh` CLI `Tenax84` fiókkal van bejelentkezve.
+- Git-repó inicializálva; GitHub: **`Tenax84/open-day`** (2026-10-25 óta **nyilvános**). Bekapcsolva: secret scanning + push protection, Dependabot (riasztások, biztonsági frissítések, `dependabot.yml` az Actionshöz), privát sebezhetőség-bejelentés, CodeQL alapbeállítás (C/C++, Actions), Discussions; külső PR-ek workflow-ja jóváhagyásra vár; rulesetek: `main` és `v*` tagek nem törölhetők/írhatók felül (direkt push a `main`-re megengedett). Közösségi fájlok: `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR sablonok. A `gh` CLI `Tenax84` fiókkal van bejelentkezve.
 - **Eldöntve (2026-10-22):**
   - Nyelv: **C++20 + CMake + SDL3**.
   - Licenc: **GPL-3.0** (`LICENSE`).

@@ -184,6 +184,13 @@ behavior, as permitted for interoperability. Findings are written up in our
 own words under `docs/`, and the engine is implemented solely from those
 documents. Decompiled code is never committed. See `docs/README.md`.
 
+## Contributing
+
+Bug reports, tests on macOS and Linux, research notes and code are welcome;
+please read [CONTRIBUTING.md](CONTRIBUTING.md) first. Questions and ideas go
+to [Discussions](https://github.com/Tenax84/open-day/discussions); security
+problems are reported privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 GPL-3.0, see [LICENSE](LICENSE). Third-party components:
