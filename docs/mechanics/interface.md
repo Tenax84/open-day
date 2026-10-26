@@ -557,10 +557,12 @@ keys `smooth_scaling` and `pixel_perfect` of `openday.cfg` are ignored.)*
 
 The interface art (the elements of the interface atlas, docs/formats/INTERFACE-SMK.md:
 panels, buttons, frames, the message strip) can be drawn a second time,
-over the scaled picture, from versions with more pixels. They come from the
-user's own *pack* or, where the pack has none, are enlarged by the engine.
-The pack is made by the user from their own installation, on their own
-computer; no enlarged art ships with OpenDay.
+over the scaled picture, from versions with more pixels. They come from a
+*pack* made from the user's own installation, on their own computer (by
+the game itself, see *Automatic pack*, or by hand); no enlarged art ships
+with OpenDay. An element without a pack picture keeps its original pixels:
+there is no fallback enlargement. *(Up to 0.5.0 such elements were enlarged
+with xBRZ; that was removed.)*
 
 - **Recording:** while a frame is drawn, every draw of an atlas element
   into the frame (or into a dialog's part of it) is noted: the element
@@ -580,20 +582,13 @@ computer; no enlarged art ships with OpenDay.
   coordinates (the version may have any size; it is filtered linearly).
   The sharp text is drawn over it. Nothing is drawn at `k` ≤ 1.01: the
   original pixels are as sharp as it gets.
-- **Enlarging:** an element without a pack picture is enlarged with xBRZ
-  (Zenju's "scale by rules" filter, GPL-3.0) from its colours in the game
-  palette (or the screen's own palette), by `n = clamp(⌈k⌉, 2, m)` with
-  `m = clamp(⌊4096 / longer side⌋, 2, 6)`; the window's linear filtering
-  covers the rest. It runs in the background (at most four elements at a
-  time, the rows of one element shared by the processor's threads); until
-  it is ready the original pixels show. When `k` changes so that `n`
-  changes, the element is enlarged again.
 - **Pack:** PNG files (any colour type; alpha is used) in
   `<per-user dir>/hd-interface/640/NNNN.png` and `.../1024/NNNN.png`, where
   `NNNN` is the atlas frame number with four digits. The picture covers the
-  whole element at any size, preferably a whole multiple of it. Elements
-  without a file are enlarged as above. The folder is looked at once per
-  element and run.
+  whole element at any size, preferably a whole multiple of it. The folder
+  is looked at once per element and run (and again after an automatic pack
+  was made). A pack counts as *present* when both `640` and `1024` hold at
+  least one PNG file.
 - **Export:** `openday --export-interface [DIR]` writes every element of
   both atlases (the frames the engine uses), in the game palette, with the
   pack's names into `DIR` (default `<per-user dir>/interface-export`): the
@@ -615,17 +610,18 @@ computer; no enlarged art ships with OpenDay.
      not; a GPU short of memory gives such empty pictures. The failed ones
      are enlarged once more in 32-pixel tiles (`-t 32`);
   4. the usable results replace the pictures of the same name in the pack
-     folder; the rest are left to xBRZ. The work folder is removed.
+     folder; the rest keep their original pixels. The work folder is
+     removed. It fails if no result was usable.
 
   The models are taken from the `models` folder next to the program
   (`-m`), whatever the working folder. On Windows the program runs without
   a console window and at below-normal priority (idle priority starves it
   while the game runs: the GPU work is fed by its CPU threads).
-- **Automatic pack:** when the game starts (not in the test mode) with
-  the option on and `hd_pack` missing from `openday.cfg`, the pack is made
-  in the background while the game runs, xBRZ showing until then:
-  1. a pack folder already holding PNG files counts as made (`hd_pack=1`);
-  2. the upscaler is looked for as above; if there is none, Real-ESRGAN
+- **Automatic pack:** whenever the option is on while the pack is not
+  present — at the start of the game (not in the test mode) or when the
+  user switches the option on — the pack is made in the background while
+  the game runs, the original pixels showing until then:
+  1. the upscaler is looked for as above; if there is none, Real-ESRGAN
      v0.2.5.0's portable build for the platform is downloaded from that
      project's GitHub release (`realesrgan-ncnn-vulkan-20220424-windows|macos|ubuntu.zip`,
      BSD-3-Clause; size and SHA-256 pinned in `app/hd_pack_auto.cpp`), and
@@ -635,15 +631,21 @@ computer; no enlarged art ships with OpenDay.
      engine's own HTTP client, the macOS program carries no quarantine mark.
      The macOS build holds x86_64 and arm64 code; for Linux there is an
      x86_64 build only (elsewhere nothing is downloaded);
-  3. the pack is made as in *Making a pack* with `realesr-animevideov3`;
-  4. on success the pack's pictures replace the enlarged ones at once (the
-     versions are forgotten and the folder looked at again), `hd_pack=1` and
-     the program (`upscaler`) are stored; if the upscaler made nothing
-     usable (no Vulkan device, say) `hd_pack=2`, and it is not tried again.
-     A failed download, or closing the game first (the upscaler is stopped,
-     the work folder removed), stores nothing: the next start tries again.
-     Deleting `hd_pack` from `openday.cfg` makes the pack again.
-- **Memory:** enlarged versions are kept up to 64 M texels (256 MB); above
+  2. the pack is made as in *Making a pack* with `realesr-animevideov3`;
+  3. on success the pack's pictures appear at once (the versions are
+     forgotten and the folder looked at again) and the program is stored
+     (`upscaler`);
+  4. on failure (no build for the platform, failed or damaged download, the
+     upscaler cannot start, ends with an error or makes nothing usable —
+     no Vulkan device, say) the option is switched off and stored, and a
+     message box (frame 477, OK 486) over the next screen drawn in the game
+     palette says "The HD interface could not be made, so it was switched
+     off." and the reason. Switching the option on again tries again.
+     Closing the game first stops the upscaler and removes the work folder;
+     the next start tries again.
+
+  The `hd_pack` key of earlier versions in `openday.cfg` is ignored.
+- **Memory:** pack pictures are kept up to 64 M texels (256 MB); above
   that, the ones used longest ago and not in the current frame are dropped.
 - Screenshots of the debug server and of the test mode show the original
   art. Switching the option takes effect with the next frame.

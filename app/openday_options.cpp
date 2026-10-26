@@ -44,7 +44,7 @@ constexpr Option kOptions[] = {
     {Section::Display, &Settings::fullscreen, "Full screen", "The game covers the whole screen (F11 switches)."},
     {Section::Display, &Settings::resizableWindow, "Resizable window", "The map screens grow with the window."},
     {Section::Display, &Settings::sharpText, "Sharp text", "Text is drawn smooth at the window's resolution."},
-    {Section::Display, &Settings::hdInterface, "HD interface", "Buttons and panels redrawn smooth (xBRZ or your own pack)."},
+    {Section::Display, &Settings::hdInterface, "HD interface", "Buttons and panels redrawn in high resolution (Real-ESRGAN)."},
 };
 
 // Fonts for re-lettering the art: bold capitals, like the captions drawn

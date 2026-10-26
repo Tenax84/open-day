@@ -18,10 +18,9 @@ class HdPackMaker {
 public:
     enum class Outcome : int {
         Running,
-        Made,           // the pack is there
-        UpscalerFailed, // the upscaler ran but made nothing usable (no Vulkan device, say)
-        NotAvailable,   // no upscaler: none for this platform, or the download failed
-        Cancelled,      // the game was closed first
+        Made,      // the pack is there
+        Failed,    // no upscaler, or it made nothing usable (error() says why)
+        Cancelled, // the game was closed first
     };
 
     // Starts at once. `remembered`: the `upscaler` of openday.cfg.
@@ -32,20 +31,23 @@ public:
     HdPackMaker& operator=(const HdPackMaker&) = delete;
 
     Outcome outcome() const { return outcome_.load(); }
-    // The upscaler used (valid once the outcome is in).
+    // The upscaler used, and why it failed (valid once the outcome is in).
     const std::filesystem::path& upscaler() const { return upscaler_; }
+    const std::string& error() const { return error_; }
 
 private:
     void work(const GameData& data, const std::string& remembered);
     std::filesystem::path download();
 
     std::filesystem::path userDir_, upscaler_;
+    std::string error_;
     std::atomic<Outcome> outcome_{Outcome::Running};
     std::atomic<bool> cancel_{false};
     std::thread thread_;
 };
 
-// The pack folder holds pictures already (made earlier, or by hand).
+// The pack folder holds pictures of both resolutions (made earlier, or by
+// hand); otherwise the pack is missing or was left half made.
 bool hdPackPresent(const std::filesystem::path& packDir);
 
 } // namespace openday::app

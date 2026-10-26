@@ -12,7 +12,6 @@ them into the programs:
 | [stb_truetype](https://github.com/nothings/stb) | rasterizing the interface font | public domain / MIT |
 | [stb_vorbis](https://github.com/nothings/stb) | decoding the Ogg Vorbis music | public domain / MIT |
 | [stb_image](https://github.com/nothings/stb) | reading the PNG files of an HD interface pack | public domain / MIT |
-| [xBRZ](https://sourceforge.net/projects/xbrz/) 1.9 | enlarging the interface art (HD interface) | GPL-3.0 |
 | [WebView2 SDK](https://www.nuget.org/packages/Microsoft.Web.WebView2) 1.0.4314.35 (Windows) | the GOG sign-in panel: header and static loader; the browser is the WebView2 runtime of Windows | BSD-3-Clause |
 | [Liberation Sans](https://github.com/liberationfonts/liberation-fonts) 2.1.5 | interface font, embedded in the program | SIL Open Font License 1.1 |
 

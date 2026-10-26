@@ -35,12 +35,6 @@ target_link_libraries(openday_data PUBLIC SQLite::SQLite3 openday_formats PRIVAT
 add_library(openday_stb STATIC render/stb_truetype_impl.cpp render/stb_vorbis_impl.c render/stb_image_impl.cpp)
 target_include_directories(openday_stb SYSTEM PUBLIC ${stb_SOURCE_DIR})
 
-# xBRZ, without the project's warning flags (third-party code).
-add_library(openday_xbrz STATIC ${xbrz_SOURCE_DIR}/xbrz.cpp)
-target_include_directories(openday_xbrz SYSTEM PUBLIC ${xbrz_SOURCE_DIR})
-target_compile_features(openday_xbrz PUBLIC cxx_std_20)
-target_compile_options(openday_xbrz PRIVATE $<IF:$<CXX_COMPILER_ID:MSVC>,/wd5279,-w>)
-
 # The interface font, embedded (cmake/EmbedFile.cmake).
 set(OPENDAY_FONT_DIR ${liberation_fonts_SOURCE_DIR})
 set(embedded_sources)

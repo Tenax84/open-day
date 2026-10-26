@@ -45,15 +45,6 @@ FetchContent_Declare(stb
 )
 FetchContent_MakeAvailable(stb)
 
-# xBRZ 1.9 (GPL-3.0): enlarges the interface art for the HD interface
-# (docs/mechanics/interface.md, "HD interface").
-FetchContent_Declare(xbrz
-    URL https://downloads.sourceforge.net/project/xbrz/xBRZ/xBRZ_1.9.zip
-    URL_HASH SHA256=b2dff73b3abd24a18a7cde78d5ff5ed8f0922296dce6ed734dce2264cd0a0fc9
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(xbrz)
-
 # Liberation Sans (SIL Open Font License 1.1): metric-compatible substitute
 # for the Arial text the original draws with Windows GDI
 # (docs/mechanics/interface.md). Embedded into the program.

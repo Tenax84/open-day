@@ -257,17 +257,13 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         render::ImageLayer imageLayer;
         imageLayer.setKeys([&app](const formats::DbiSprite& sp) { return app.hdKey(sp); });
         app::HdInterface hdInterface(renderer, app::setup::userDir() / "hd-interface");
-        // Automatic pack: made once, in the background, while the HD
-        // interface is on (openday.cfg hd_pack: 1 = made or found, 2 = the
-        // upscaler failed; missing = not yet, tried again at the next start).
+        // Automatic pack: whenever the HD interface is switched on (or the
+        // game starts with it on) and the pack is missing, it is made in the
+        // background; the original pixels show until then. If that fails,
+        // the option is switched off and the reason shown.
         std::unique_ptr<app::HdPackMaker> packMaker;
-        if (config && app.settings().hdInterface && config->getInt("hd_pack", 0) == 0) {
-            if (app::hdPackPresent(app::setup::userDir() / "hd-interface")) {
-                config->setInt("hd_pack", 1);
-            } else {
-                packMaker = std::make_unique<app::HdPackMaker>(data, app::setup::userDir(), config->get("upscaler"));
-            }
-        }
+        bool hdWanted = false; // the option as last seen
+        std::string packError; // shown over the next screen in the game palette
         SDL_Texture* texture = nullptr;
         int texW = 0, texH = 0;
         Uint64 last = SDL_GetTicks(), scriptLast = last;
@@ -305,21 +301,32 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             // The debug server's game speed (set_speed).
             const int gameMs = tools ? static_cast<int>(std::lround(elapsed * tools->speed())) : elapsed;
             app.update(gameMs);
+            const bool hdOn = config && app.settings().hdInterface;
+            if (hdOn && !hdWanted && !packMaker && !app::hdPackPresent(app::setup::userDir() / "hd-interface"))
+                packMaker = std::make_unique<app::HdPackMaker>(data, app::setup::userDir(), config->get("upscaler"));
+            hdWanted = hdOn;
             if (packMaker && packMaker->outcome() != app::HdPackMaker::Outcome::Running) {
                 switch (packMaker->outcome()) {
-                case app::HdPackMaker::Outcome::Made:
-                    config->setInt("hd_pack", 1);
-                    hdInterface.reload();
+                case app::HdPackMaker::Outcome::Made: hdInterface.reload(); break;
+                case app::HdPackMaker::Outcome::Failed:
+                    if (app.settings().hdInterface) {
+                        app.settings().hdInterface = hdWanted = false;
+                        packError = packMaker->error().empty() ? "unknown error" : packMaker->error();
+                    }
                     break;
-                case app::HdPackMaker::Outcome::UpscalerFailed: config->setInt("hd_pack", 2); break;
                 default: break;
                 }
                 if (!packMaker->upscaler().empty()) {
                     const std::u8string u = packMaker->upscaler().u8string();
                     config->set("upscaler", std::string(u.begin(), u.end()));
                 }
+                storeSettings(app.settings(), *config, mute);
                 config->save();
                 packMaker.reset();
+            }
+            if (!packError.empty() && app.top() && !app.top()->palette()) {
+                app.push(app::makeMessageDialog(app, "The HD interface could not be made, so it was switched off.\n\n" + packError));
+                packError.clear();
             }
             app.applyChanges();
             if (app.quitting()) return;
@@ -385,7 +392,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                                 (static_cast<float>(outH) - static_cast<float>(texH) * kk) / 2, static_cast<float>(texW) * kk,
                                 static_cast<float>(texH) * kk};
             SDL_RenderTexture(renderer, texture, nullptr, &dst);
-            if (hd) hdInterface.draw(imageLayer, own ? *own : data.palette, dst, kk);
+            if (hd) hdInterface.draw(imageLayer, dst, kk);
             if (sharp) sharpText.draw(textLayer, pal, dst, kk);
             SDL_RenderPresent(renderer);
         };

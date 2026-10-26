@@ -52,10 +52,15 @@ bool wanted(const std::string& name) {
 bool hdPackPresent(const fs::path& packDir) {
     std::error_code ec;
     for (const char* sub : {"640", "1024"}) {
+        bool any = false;
         for (const fs::directory_entry& f : fs::directory_iterator(packDir / sub, ec))
-            if (f.path().extension() == ".png") return true;
+            if (f.path().extension() == ".png") {
+                any = true;
+                break;
+            }
+        if (!any) return false;
     }
-    return false;
+    return true;
 }
 
 HdPackMaker::HdPackMaker(const GameData& data, fs::path userDir, std::string remembered)
@@ -69,7 +74,10 @@ HdPackMaker::~HdPackMaker() {
 }
 
 fs::path HdPackMaker::download() {
-    if (!kPackage.name) return {};
+    if (!kPackage.name) {
+        error_ = "Real-ESRGAN has no build for this platform";
+        return {};
+    }
     std::vector<std::uint8_t> bytes;
     bytes.reserve(kPackage.size);
     formats::Sha256 hash;
@@ -87,12 +95,13 @@ fs::path HdPackMaker::download() {
     const platform::HttpResponse res = platform::httpGet(req);
     if (cancel_) return {};
     if (!res.ok || res.status != 200) {
-        const std::string why = res.error.empty() ? "HTTP status " + std::to_string(res.status) : res.error;
-        std::fprintf(stderr, "upscaler download failed: %s\n", why.c_str());
+        error_ = "the upscaler download failed: " + (res.error.empty() ? "HTTP status " + std::to_string(res.status) : res.error);
+        std::fprintf(stderr, "%s\n", error_.c_str());
         return {};
     }
     if (bytes.size() != kPackage.size || hash.finishHex() != kPackage.sha256) {
-        std::fprintf(stderr, "upscaler download damaged (checksum mismatch)\n");
+        error_ = "the upscaler download is damaged (checksum mismatch)";
+        std::fprintf(stderr, "%s\n", error_.c_str());
         return {};
     }
     // Unpacked into a fresh folder, renamed when whole.
@@ -111,7 +120,8 @@ fs::path HdPackMaker::download() {
             if (!out) throw std::runtime_error("cannot write " + file.string());
         }
     } catch (const std::exception& e) {
-        std::fprintf(stderr, "cannot unpack the upscaler: %s\n", e.what());
+        error_ = std::string("cannot unpack the upscaler: ") + e.what();
+        std::fprintf(stderr, "%s\n", error_.c_str());
         fs::remove_all(part, ec);
         return {};
     }
@@ -122,7 +132,8 @@ fs::path HdPackMaker::download() {
     fs::remove_all(dir, ec);
     fs::rename(part, dir, ec);
     if (ec) {
-        std::fprintf(stderr, "cannot store the upscaler: %s\n", ec.message().c_str());
+        error_ = "cannot store the upscaler: " + ec.message();
+        std::fprintf(stderr, "%s\n", error_.c_str());
         fs::remove_all(part, ec);
         return {};
     }
@@ -133,11 +144,11 @@ void HdPackMaker::work(const GameData& data, const std::string& remembered) {
     fs::path upscaler = findUpscaler({}, remembered);
     if (upscaler.empty()) upscaler = download();
     if (cancel_) return outcome_.store(Outcome::Cancelled);
-    if (upscaler.empty()) return outcome_.store(Outcome::NotAvailable);
+    if (upscaler.empty()) return outcome_.store(Outcome::Failed);
     upscaler_ = upscaler;
-    const int rc = makeHdPack(data, upscaler, kModel, userDir_ / "hd-interface", userDir_ / "hd-interface.work", &cancel_);
+    const int rc = makeHdPack(data, upscaler, kModel, userDir_ / "hd-interface", userDir_ / "hd-interface.work", &cancel_, &error_);
     if (cancel_) return outcome_.store(Outcome::Cancelled);
-    outcome_.store(rc == 0 ? Outcome::Made : Outcome::UpscalerFailed);
+    outcome_.store(rc == 0 ? Outcome::Made : Outcome::Failed);
 }
 
 } // namespace openday::app

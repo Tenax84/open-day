@@ -1,8 +1,8 @@
 // HD interface (docs/mechanics/interface.md, "HD interface"): the interface
 // art of a frame (render/image_layer.hpp) drawn again from high-resolution
 // versions, over the scaled picture, where the original was visible. The
-// versions come from the user's own pack (PNG files in a folder) or, where
-// the pack has none, are enlarged with xBRZ when first needed.
+// versions come from the pack (PNG files in a folder); elements without one
+// keep their original pixels.
 #pragma once
 
 #include <SDL3/SDL.h>
@@ -13,7 +13,6 @@
 #include <map>
 #include <vector>
 
-#include "formats/palette.hpp"
 #include "render/image_layer.hpp"
 
 namespace openday::app {
@@ -37,9 +36,8 @@ public:
     static Picture loadPicture(const std::filesystem::path& file);
 
     // `picture`: where the frame is shown in the window (output pixels),
-    // `scale` output pixels per frame pixel. `palette` colours the enlarged
-    // art.
-    void draw(const render::ImageLayer& layer, const formats::Palette& palette, const SDL_FRect& picture, float scale);
+    // `scale` output pixels per frame pixel.
+    void draw(const render::ImageLayer& layer, const SDL_FRect& picture, float scale);
 
     // Forgets every version, so that the pack folder is looked at again (a
     // pack was made while the game ran).
@@ -48,8 +46,6 @@ public:
 private:
     struct Entry {
         SDL_Texture* texture = nullptr;
-        int factor = 0;     // of the texture; 0 = from the pack
-        int jobFactor = 0;  // of the job running
         std::future<Picture> job;
         bool packChecked = false, inPack = false, failed = false;
         std::uint64_t lastUsed = 0;
@@ -57,7 +53,7 @@ private:
     };
 
     // The entry's texture, made or asked for if needed (nullptr until ready).
-    SDL_Texture* texture(int key, Entry& e, const render::ImageLayer::Item& item, const formats::Palette& palette, float scale);
+    SDL_Texture* texture(int key, Entry& e);
     void evict();
 
     SDL_Renderer* renderer_;

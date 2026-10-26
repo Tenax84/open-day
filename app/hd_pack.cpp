@@ -53,11 +53,17 @@ fs::path programIn(const fs::path& p) {
 
 bool cancelled(const std::atomic<bool>* cancel) { return cancel && cancel->load(); }
 
+// Prints the reason of a failure and hands it to the caller.
+void fail(std::string* error, const std::string& why) {
+    std::fprintf(stderr, "%s\n", why.c_str());
+    if (error) *error = why;
+}
+
 #ifdef _WIN32
 // Windows: started directly, so that it gets no console window when the
 // game was not started from one (SDL's processes get one unless they run
 // in the background, and then their exit code is lost).
-int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel) {
+int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel, std::string* error) {
     std::wstring line;
     for (const std::string& a : args) {
         const fs::path p(std::u8string(reinterpret_cast<const char8_t*>(a.c_str())));
@@ -69,7 +75,7 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, nullptr,
                         nullptr, &si, &pi)) {
-        std::fprintf(stderr, "cannot start %s: error %lu\n", args[0].c_str(), GetLastError());
+        fail(error, "cannot start " + args[0].substr(args[0].find_last_of("/\\") + 1) + ": error " + std::to_string(GetLastError()));
         return -1;
     }
     CloseHandle(pi.hThread);
@@ -82,7 +88,7 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
     return cancelled(cancel) ? -1 : static_cast<int>(code);
 }
 #else
-int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel) {
+int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel, std::string* error) {
     std::vector<const char*> argv;
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -93,7 +99,7 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
     SDL_Process* p = SDL_CreateProcessWithProperties(props);
     SDL_DestroyProperties(props);
     if (!p) {
-        std::fprintf(stderr, "cannot start %s: %s\n", args[0].c_str(), SDL_GetError());
+        fail(error, "cannot start " + args[0].substr(args[0].find_last_of("/\\") + 1) + ": " + SDL_GetError());
         return -1;
     }
     int code = -1;
@@ -114,7 +120,7 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
 // `out`. `tile` 0 = the program's choice. Its own output is not shown. The
 // models are taken from the program's own folder.
 bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::path& in, const fs::path& out, int tile,
-                 const std::atomic<bool>* cancel) {
+                 const std::atomic<bool>* cancel, std::string* error) {
     std::vector<std::string> args = {utf8(upscaler), "-i", utf8(in), "-o", utf8(out), "-n", model, "-s", "4",
                                      "-t", std::to_string(tile), "-f", "png"};
     std::error_code ec;
@@ -122,8 +128,12 @@ bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::p
         args.push_back("-m");
         args.push_back(utf8(models));
     }
-    const int code = runProgram(args, cancel);
-    if (code != 0 && !cancelled(cancel)) std::fprintf(stderr, "the upscaler ended with code %d\n", code);
+    std::string why;
+    const int code = runProgram(args, cancel, &why);
+    if (code != 0 && !cancelled(cancel)) {
+        if (why.empty()) fail(error, "the upscaler ended with code " + std::to_string(code));
+        else if (error) *error = why; // printed already
+    }
     return code == 0;
 }
 
@@ -181,13 +191,13 @@ fs::path findUpscaler(const fs::path& given, const std::string& remembered) {
 }
 
 int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string& model, const fs::path& packDir,
-               const fs::path& workDir, const std::atomic<bool>* cancel) {
+               const fs::path& workDir, const std::atomic<bool>* cancel, std::string* error) {
     std::error_code ec;
     fs::remove_all(workDir, ec);
     const fs::path in = workDir / "in", out = workDir / "out";
     const int total = exportInterface(data, in);
     if (total == 0) {
-        std::fprintf(stderr, "no interface art found\n");
+        fail(error, "no interface art found");
         return 1;
     }
     int made = 0, failed = 0;
@@ -198,7 +208,7 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
         std::printf("upscaling %zu pictures (%s) with %s...\n", names.size(), sub, model.c_str());
         std::fflush(stdout);
         fs::create_directories(out / sub, ec);
-        if (!runUpscaler(upscaler, model, in / sub, out / sub, 0, cancel)) {
+        if (!runUpscaler(upscaler, model, in / sub, out / sub, 0, cancel, error)) {
             fs::remove_all(workDir, ec);
             return 1;
         }
@@ -215,7 +225,7 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
                 fs::remove(out / sub / n, ec);
                 fs::copy_file(in / sub / n, again / n, ec);
             }
-            runUpscaler(upscaler, model, again, out / sub, 32, cancel);
+            runUpscaler(upscaler, model, again, out / sub, 32, cancel, nullptr);
         }
         if (cancelled(cancel)) {
             fs::remove_all(workDir, ec);
@@ -235,9 +245,13 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
     }
     fs::remove_all(workDir, ec);
     std::printf("%d of %d pictures written to %s", made, total, utf8(packDir).c_str());
-    if (failed > 0) std::printf(" (%d left to xBRZ)", failed);
+    if (failed > 0) std::printf(" (%d keep their original pixels)", failed);
     std::printf("\n");
-    return made > 0 ? 0 : 1;
+    if (made == 0) {
+        fail(error, "the upscaler made no usable pictures (no Vulkan-capable GPU?)");
+        return 1;
+    }
+    return 0;
 }
 
 } // namespace openday::app

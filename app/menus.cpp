@@ -1,6 +1,6 @@
 // Front-end screens: intro video, main menu, resolution, skirmish list,
-// loading picture (docs/mechanics/interface.md sections 3-4), and the
-// update dialog (docs/updates.md).
+// loading picture (docs/mechanics/interface.md sections 3-4), the update
+// dialog (docs/updates.md) and a plain message dialog.
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -258,6 +258,42 @@ private:
 
 // ---------------------------------------------------------------------------
 
+// A message over the current screen: message box (frame 477: 254 x 144) with
+// OK (486).
+class MessageDialog : public Screen {
+public:
+    MessageDialog(App& app, std::string text)
+        : Screen(app), text_(std::move(text)), box_{(640 - 254) / 2, (480 - 144) / 2, 254, 144} {
+        if (text_.size() > 200) text_ = text_.substr(0, 197) + "...";
+        ok_.rect = {box_.x + 100, box_.y + 118, 53, 17};
+        ok_.firstFrame = 486;
+        ok_.caption = "OK";
+        ok_.hotkey = ui::kKeyEnter;
+        ok_.onClick = [this] { app_.pop(); };
+    }
+
+    bool overlay() const override { return true; }
+
+    void handle(const ui::InputEvent& e) override {
+        if (e.type == ui::InputEvent::Type::KeyDown && e.key == ui::kKeyEscape) return app_.pop();
+        ok_.handle(e);
+    }
+
+    void draw(render::IndexedSurface& s) override {
+        const ui::UiContext& ui = app_.ui();
+        ui::drawFrame(s, ui, 477, box_);
+        ui.standard->drawWrapped(s, box_.x + 12, box_.y + 12, box_.w - 24, 100, text_, ui.white);
+        ok_.draw(s, ui);
+    }
+
+private:
+    std::string text_;
+    ui::Rect box_;
+    ui::Button ok_;
+};
+
+// ---------------------------------------------------------------------------
+
 class ResolutionMenu : public Screen {
 public:
     explicit ResolutionMenu(App& app) : Screen(app), panel_(centred(286, 228)) {
@@ -412,6 +448,7 @@ std::unique_ptr<Screen> makeVideo(App& app, const std::string& name, std::functi
 std::unique_ptr<Screen> makeMainMenu(App& app) { return std::make_unique<MainMenu>(app); }
 std::unique_ptr<Screen> makeResolutionMenu(App& app) { return std::make_unique<ResolutionMenu>(app); }
 std::unique_ptr<Screen> makeUpdateDialog(App& app) { return std::make_unique<UpdateDialog>(app); }
+std::unique_ptr<Screen> makeMessageDialog(App& app, std::string text) { return std::make_unique<MessageDialog>(app, std::move(text)); }
 std::unique_ptr<Screen> makeSkirmishMenu(App& app) { return std::make_unique<SkirmishMenu>(app); }
 std::unique_ptr<Screen> makeWait(App& app, int id, std::function<std::unique_ptr<Screen>()> next) {
     return std::make_unique<WaitScreen>(app, id, std::move(next));
