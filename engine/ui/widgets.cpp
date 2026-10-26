@@ -30,6 +30,20 @@ void drawFrame(render::IndexedSurface& s, const UiContext& ui, int frame, const 
     frameRect(s, r, ui.grey);
 }
 
+void drawTiled(render::IndexedSurface& s, const formats::DbiSprite& from, const Rect& src, const Rect& dst) {
+    if (src.w <= 0 || src.h <= 0) return;
+    for (int y = std::max(0, dst.y); y < std::min(s.height(), dst.y + dst.h); ++y) {
+        const int sy = src.y + (y - dst.y) % src.h;
+        if (sy < 0 || sy >= from.height) continue;
+        std::uint8_t* row = s.row(y);
+        for (int x = std::max(0, dst.x); x < std::min(s.width(), dst.x + dst.w); ++x) {
+            const int sx = src.x + (x - dst.x) % src.w;
+            if (sx >= 0 && sx < from.width)
+                row[x] = from.pixels[static_cast<std::size_t>(sy) * static_cast<std::size_t>(from.width) + static_cast<std::size_t>(sx)];
+        }
+    }
+}
+
 bool Button::handle(const InputEvent& e) {
     if (!enabled) {
         state_ = State::Normal;
@@ -67,12 +81,16 @@ bool Button::handle(const InputEvent& e) {
     }
 }
 
+int Button::imageOffset() const {
+    if (!enabled) return 3;
+    if (state_ == State::Pressed) return 2;
+    if (toggle && checked) return 4;
+    if (state_ == State::Hover) return 1;
+    return 0;
+}
+
 void Button::draw(render::IndexedSurface& s, const UiContext& ui) const {
-    int offset = 0;
-    if (!enabled) offset = 3;
-    else if (state_ == State::Pressed) offset = 2;
-    else if (toggle && checked) offset = 4;
-    else if (state_ == State::Hover) offset = 1;
+    const int offset = imageOffset();
     if (firstFrame >= 0 && ui.atlas && ui.atlas->get(firstFrame + offset)) {
         drawFrame(s, ui, firstFrame + offset, rect);
         return;

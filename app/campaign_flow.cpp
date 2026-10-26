@@ -11,6 +11,7 @@
 #include <sstream>
 
 #include "app/campaign.hpp"
+#include "app/openday_options.hpp"
 #include "app/setup.hpp"
 #include "campaign/savegame_import.hpp"
 #include "formats/pe_resources.hpp"
@@ -350,6 +351,7 @@ public:
         ui::Button restart = makeButton({p_.x + 10, p_.y + 340, 110, 17}, 689, "Restart", 0, nullptr);
         restart.enabled = false;
         buttons_.push_back(restart);
+        openDay_ = OpenDayButton(app, [p = p_] { return p; }, resolution);
         auto group = [&](ui::RadioGroup& g, int y, int n, int checked, std::function<void(int)> change) {
             for (int i = 0; i < n; ++i) g.items.push_back(makeButton({p_.x + 36, p_.y + y + 21 * i, 19, 19}, 665, "", 0, nullptr, true));
             g.check(checked);
@@ -366,7 +368,7 @@ public:
     void handle(const ui::InputEvent& e) override {
         for (ui::Button& b : buttons_)
             if (b.handle(e)) return;
-        if (sound_.handle(e) || anim_.handle(e)) return;
+        if (openDay_.handle(e) || sound_.handle(e) || anim_.handle(e)) return;
         scroll_.handle(e);
     }
 
@@ -375,6 +377,7 @@ public:
         s.fill(ui.black);
         ui::drawFrame(s, ui, 648, p_);
         for (const ui::Button& b : buttons_) b.draw(s, ui);
+        openDay_.draw(s, ui);
         sound_.draw(s, ui);
         anim_.draw(s, ui);
         scroll_.draw(s, ui);
@@ -386,6 +389,7 @@ private:
     ui::Rect p_;
     std::vector<ui::Button> buttons_;
     ui::RadioGroup sound_, anim_, scroll_;
+    OpenDayButton openDay_;
 };
 
 // --- Battles --------------------------------------------------------------------------

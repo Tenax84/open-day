@@ -7,7 +7,9 @@
 #include <set>
 
 #include "app/campaign.hpp"
+#include "app/map_drag.hpp"
 #include "app/map_screen.hpp"
+#include "app/view_layout.hpp"
 #include "formats/pe_resources.hpp"
 #include "map/map_objects.hpp"
 
@@ -65,11 +67,7 @@ class CityScreen : public Screen {
 public:
     CityScreen(App& app, CampaignPtr ctx) : Screen(app), ctx_(std::move(ctx)), colors_(app.data().palette) {
         large_ = app.settings().resolution == 1;
-        width_ = large_ ? 1024 : 640;
-        height_ = large_ ? 768 : 480;
-        viewW_ = (width_ - 131) / 56 * 56;
-        viewH_ = (height_ - 24) / 28 * 28;
-        viewport_.resize(viewW_, viewH_);
+        setLayout(ViewLayout::standard(large_));
         rebuildScene();
         buildMinimap();
         buildControls();
@@ -82,11 +80,38 @@ public:
     int width() const override { return width_; }
     int height() const override { return height_; }
     bool paletteCycling() const override { return true; }
+    bool resizable() const override { return true; }
+
+    // The view keeps its centre; the controls follow the panel and the strip.
+    void resize(int w, int h) override {
+        const float cx = camX_ + static_cast<float>(viewW_) / 2, cy = camY_ + static_cast<float>(viewH_) / 2;
+        setLayout(ViewLayout(w, h, large_));
+        camX_ = cx - static_cast<float>(viewW_) / 2;
+        camY_ = cy - static_cast<float>(viewH_) / 2;
+        clampCamera();
+        drag_ = {};
+        minimapDrag_ = false;
+        buildControls();
+    }
 
     void handle(const ui::InputEvent& e) override {
         if (e.type == ui::InputEvent::Type::MouseMove) {
             mouseX_ = e.x;
             mouseY_ = e.y;
+            // Right-button drag: the map follows the cursor pixel by pixel.
+            if (drag_.follow(e.x, e.y, camX_, camY_)) return clampCamera();
+            if (drag_.held) return;
+            // Left-button drag on the minimap: the view follows the cursor.
+            if (minimapDrag_) return minimapJump(e.x, e.y);
+        }
+        if (e.type == ui::InputEvent::Type::MouseUp && e.button == 1) minimapDrag_ = false;
+        // A right click without dragging cancels the segment or the picked structure.
+        if (e.type == ui::InputEvent::Type::MouseUp && e.button == 3) {
+            if (drag_.release()) {
+                segmentStart_.reset();
+                picked_.reset();
+            }
+            return;
         }
         for (ui::Button& b : buttons_)
             if (b.handle(e)) return;
@@ -113,15 +138,14 @@ public:
             if (row < static_cast<int>(options_.size())) selectEntry(row);
             return;
         }
-        const ui::Rect mm = minimapRect();
-        if (mm.contains(e.x, e.y) && e.button == 1) {
-            const double s = 112.0 / city().size();
-            centerOn({static_cast<int>((e.x - mm.x) / s), static_cast<int>((e.y - mm.y) / s)});
-            return;
+        if (minimapRect().contains(e.x, e.y) && e.button == 1) {
+            minimapDrag_ = app_.settings().minimapDrag;
+            return minimapJump(e.x, e.y);
         }
         if (e.x >= viewW_ || e.y >= viewH_) return;
         const game::Point tile = tileAt(e.x, e.y);
         if (e.button == 3) {
+            if (app_.settings().dragScroll) return drag_.press(e.x, e.y, camX_, camY_);
             segmentStart_.reset();
             picked_.reset();
             return;
@@ -142,6 +166,7 @@ public:
             }
         }
         if (messageMs_ > 0) messageMs_ -= ms;
+        if (app_.top() != this) minimapDrag_ = false; // the release goes to the screen on top
         edgeScroll(ms);
     }
 
@@ -150,11 +175,11 @@ public:
         s.fill(ui.black);
         drawMap();
         for (int y = 0; y < viewH_; ++y) std::copy_n(viewport_.row(y), viewW_, s.row(y));
-        ui::drawFrame(s, ui, 100, {viewW_, 0, width_ - viewW_, height_});
+        drawSidePanel(app_, s, 100, layout_);
         drawNumber(s, ui, {viewW_ + 64, 26, 40, 14}, ctx_->campaign.player.credits);
         drawMinimap(s, ui);
         drawList(s, ui);
-        ui::drawFrame(s, ui, 498, {0, viewH_, viewW_, height_ - viewH_});
+        drawMessageStrip(app_, s, layout_);
         const ui::Rect msg{64, viewH_ + 5, viewW_ - 135 - 64, 20};
         fillBox(s, msg, ui.black);
         if (messageMs_ > 0) ui.standard->drawIn(s, msg.x + 2, msg.y, msg.w - 4, msg.h, message_, ui.white, render::Align::Left);
@@ -178,6 +203,8 @@ private:
     void buildControls() {
         const int px = viewW_;
         auto at = [px](int x, int y, int w, int h) { return ui::Rect{px + x, y, w, h}; };
+        buttons_.clear();
+        tabs_.items.clear();
         buttons_.push_back(makeButton(at(5, 0, 44, 43), 143, "", ui::kKeyF1, [this] { openEncyclopediaHere(); }));
         buttons_.push_back(makeButton(at(11, 171, 110, 17), 105, "Map", ui::kKeyF4, [this] { openMap(); }));
         buttons_.push_back(makeButton(at(9, 407, 53, 17), 121, "Up", 0, [this] { scrollList(-1); }));
@@ -195,7 +222,7 @@ private:
             buildingsTab_ = i == 0;
             rebuildList();
         };
-        tabs_.check(1); // Defenses first
+        tabs_.check(buildingsTab_ ? 0 : 1); // Defenses first
         recycle_ = makeButton(at(11, 435, 53, 17), 147, "Recycle", 'r', [this] {
             mode_ = mode_ == Mode::Recycle ? Mode::Build : Mode::Recycle;
             picked_.reset();
@@ -246,7 +273,7 @@ private:
         m.ctx = ctx_;
         m.resolution = large_ ? 1 : 0;
         m.viewport = [this](game::Point& tl, int& span) {
-            tl = tileAt(0, 0);
+            tl = viewportTopLeft();
             span = std::max(viewW_ / 54, viewH_ / 28);
         };
         m.centre = [this](game::Point t) { centerOn(t); };
@@ -305,6 +332,15 @@ private:
 
     // --- Map -----------------------------------------------------------------
 
+    void setLayout(const ViewLayout& l) {
+        layout_ = l;
+        width_ = l.width;
+        height_ = l.height;
+        viewW_ = l.viewW;
+        viewH_ = l.viewH;
+        viewport_.resize(viewW_, viewH_);
+    }
+
     void rebuildScene() {
         scene_ = std::make_unique<game::MapScene>(city().terrain, game::mapObjectSprites(city().objects(), rules(), city().terrain));
         buildMinimap();
@@ -321,6 +357,15 @@ private:
         clampCamera();
     }
 
+    // The top-left tile of the viewport frame on the overview map.
+    game::Point viewportTopLeft() const {
+        if (!app_.settings().exactMinimap) return tileAt(0, 0);
+        double u = 0, v = 0;
+        minimapPointOfView(camX_, camY_, city().size(), viewW_, viewH_, u, v);
+        const double half = std::max(viewW_ / 54, viewH_ / 28) / 2.0;
+        return {static_cast<int>(std::floor(u - half + 0.5)), static_cast<int>(std::floor(v - half + 0.5))};
+    }
+
     void clampCamera() {
         const game::Rect b = game::iso::mapBounds(city().size());
         camX_ = std::clamp(camX_, static_cast<float>(-viewW_ / 2), static_cast<float>(b.w - viewW_ / 2));
@@ -334,19 +379,21 @@ private:
     }
 
     void edgeScroll(int ms) {
-        if (mouseX_ < 0 || app_.top() != this) return;
+        if (mouseX_ < 0 || app_.top() != this || drag_.dragging() || minimapDrag_) return;
         const int dx = mouseX_ < 5 ? -1 : mouseX_ >= width_ - 5 ? 1 : 0;
         const int dy = mouseY_ < 5 ? -1 : mouseY_ >= height_ - 5 ? 1 : 0;
         if (!dx && !dy) {
             scrollAcc_ = 0;
             return;
         }
-        static constexpr int kInterval[3] = {100, 50, 0};
-        scrollAcc_ += ms;
-        if (scrollAcc_ >= kInterval[std::clamp(app_.settings().scrollSpeed, 0, 2)]) {
-            scrollAcc_ = 0;
-            scrollStep(dx, dy);
+        const Settings& st = app_.settings();
+        if (!st.edgeScroll) return;
+        if (!st.smoothEdgeScroll) {
+            if (edgeScrollStep(scrollAcc_, st.scrollSpeed, ms)) scrollStep(dx, dy);
+            return;
         }
+        edgeScrollBy(dx, dy, st.scrollSpeed, ms, camX_, camY_);
+        clampCamera();
     }
 
     const formats::DbiSprite* symbol(const std::string& name) {
@@ -635,6 +682,18 @@ private:
 
     ui::Rect minimapRect() const { return {viewW_ + 12, 49, 112, 112}; }
 
+    // Centres the view on the minimap point under (x, y), clamped into the image.
+    void minimapJump(int x, int y) {
+        const ui::Rect mm = minimapRect();
+        x = std::clamp(x, mm.x, mm.x + mm.w - 1);
+        y = std::clamp(y, mm.y, mm.y + mm.h - 1);
+        const double s = 112.0 / city().size();
+        if (!app_.settings().exactMinimap)
+            return centerOn({static_cast<int>((x - mm.x) / s), static_cast<int>((y - mm.y) / s)});
+        cameraOnMinimapPoint((x - mm.x + 0.5) / s, (y - mm.y + 0.5) / s, city().size(), viewW_, viewH_, camX_, camY_);
+        clampCamera();
+    }
+
     std::uint8_t color(int r, int g, int b) {
         const int key = (r << 16) | (g << 8) | b;
         const auto it = colorCache_.find(key);
@@ -673,14 +732,7 @@ private:
         for (const game::CityBuilding& bd : city().buildings)
             for (int dy = 0; dy < bd.h; ++dy)
                 for (int dx = 0; dx < bd.w; ++dx) square({bd.pos.x + dx, bd.pos.y + dy}, colorOf(0, std::clamp(bd.owner, 0, 4)));
-        const game::Point tl = tileAt(0, 0);
-        const int span = std::max(viewW_ / 54, viewH_ / 28);
-        ui::Rect v{r.x + static_cast<int>(tl.x * sc), r.y + static_cast<int>(tl.y * sc), static_cast<int>(span * sc),
-                   static_cast<int>(span * sc)};
-        v.x = std::clamp(v.x, r.x, r.x + r.w - 2);
-        v.y = std::clamp(v.y, r.y, r.y + r.h - 2);
-        v.w = std::min(v.w, r.x + r.w - v.x);
-        v.h = std::min(v.h, r.y + r.h - v.y);
+        const ui::Rect v = minimapFrame(r, sc, n, camX_, camY_, viewW_, viewH_, app_.settings().exactMinimap);
         frameBox(s, v, ui.black);
         frameBox(s, {v.x + 1, v.y + 1, v.w - 2, v.h - 2}, ui.white);
     }
@@ -739,10 +791,12 @@ private:
     formats::Palette colors_;
     std::map<int, std::uint8_t> colorCache_;
     bool large_ = false;
+    ViewLayout layout_;
     int width_ = 640, height_ = 480, viewW_ = 504, viewH_ = 448;
     std::unique_ptr<game::MapScene> scene_;
     render::IndexedSurface viewport_;
     float camX_ = 0, camY_ = 0;
+    MapDrag drag_;
     int mouseX_ = -1, mouseY_ = -1, scrollAcc_ = 0;
     std::vector<ui::Button> buttons_;
     ui::RadioGroup tabs_;
@@ -756,6 +810,7 @@ private:
     int messageMs_ = 0;
     std::vector<formats::DbiSprite> tinted_;
     std::vector<std::uint8_t> minimap_;
+    bool minimapDrag_ = false; // the left button went down on the minimap
     std::set<std::pair<int, int>> builtHere_;
     bool confirmed_ = false;
     bool introChecked_ = false;

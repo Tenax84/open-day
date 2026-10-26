@@ -64,6 +64,9 @@ struct UiContext {
 
 // Draws an atlas frame, or a plain box when the frame is missing.
 void drawFrame(render::IndexedSurface& s, const UiContext& ui, int frame, const Rect& r);
+// Fills `dst` with the `src` part of a sprite, repeated in both directions
+// and clipped to the surface (transparency ignored).
+void drawTiled(render::IndexedSurface& s, const formats::DbiSprite& from, const Rect& src, const Rect& dst);
 
 // A push button or, with `toggle`, a toggle / radio item. Frames: first + 0
 // normal, +1 hover, +2 pressed, +3 disabled; a checked toggle shows +4
@@ -83,6 +86,8 @@ public:
     // Returns true if the event was used.
     bool handle(const InputEvent& e);
     void draw(render::IndexedSurface& s, const UiContext& ui) const;
+    // The frame shown now, relative to firstFrame (0-4, see above).
+    int imageOffset() const;
 
 private:
     enum class State { Normal, Hover, Pressed } state_ = State::Normal;

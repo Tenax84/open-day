@@ -460,6 +460,8 @@ std::vector<ToolInfo> DebugTools::toolList() {
          schema(R"J("timeout_ms":{"type":"integer","description":"Real-time limit; default 120000"},"screenshot":{"type":"boolean"})J")},
         {"set_speed", "Sets the game speed factor (0.1-20; 1 = normal). Animations and waits in game time run that much faster.",
          schema(R"J("speed":{"type":"number"})J", R"J("speed")J")},
+        {"set_window_size", "Resizes the game window (window coordinates, before the display scaling). With the resizable-window option the map screens are laid out for the new size; the screenshot shows the new layout.",
+         schema(R"J("width":{"type":"integer"},"height":{"type":"integer"},"screenshot":{"type":"boolean"})J", R"J("width","height")J")},
         {"list_scenarios", "The skirmish scenarios (index, title, province, map size, deployment budget).", schema("")},
         {"start_skirmish", "Starts a skirmish scenario at once, from any screen: by index (list_scenarios) or by title or file name.",
          schema(R"J("scenario":{"type":["integer","string"]},"briefing":{"type":"boolean","description":"Show the mission briefing first; default false"},"screenshot":{"type":"boolean"})J",
@@ -576,7 +578,7 @@ std::optional<ToolResult> DebugTools::reply(const std::shared_ptr<ToolCall>& cal
 }
 
 void DebugTools::send(const ui::InputEvent& e) {
-    if (app_.top()) app_.top()->handle(e);
+    app_.handle(e);
     app_.applyChanges();
 }
 
@@ -614,6 +616,7 @@ std::string DebugTools::screenInfo() const {
     w.endArray();
     if (Screen* top = app_.screens().empty() ? nullptr : app_.screens().back().get()) {
         w.field("top", screenName(*top)).field("width", top->width()).field("height", top->height());
+        w.field("frame_width", app_.frameWidth()).field("frame_height", app_.frameHeight()).field("pixel_scale", app_.pixelScale());
     }
     w.field("speed", speed_);
     if (BattleControl* b = battle()) w.key("battle").raw(battleSummary(*b));
@@ -697,6 +700,11 @@ std::optional<ToolResult> DebugTools::start(const std::shared_ptr<ToolCall>& cal
     if (name == "set_speed") {
         speed_ = std::clamp(argNumber(a, "speed", 1), 0.1, 20.0);
         return textResult("speed " + std::to_string(speed_));
+    }
+    if (name == "set_window_size") {
+        app_.requestedWindowW = std::clamp(requireInt(a, "width"), 160, 8192);
+        app_.requestedWindowH = std::clamp(requireInt(a, "height"), 120, 8192);
+        return reply(call, [this] { return screenInfo(); }, 100);
     }
     if (name == "list_scenarios") {
         JsonWriter w;

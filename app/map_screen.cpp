@@ -11,6 +11,7 @@
 
 #include "app/campaign.hpp"
 #include "app/screens.hpp"
+#include "app/view_layout.hpp"
 #include "battle/battle_state.hpp"
 #include "data/sqlite_db.hpp"
 
@@ -34,17 +35,10 @@ game::Rgb fixedRgb(const game::GlobalRules& rules, int type) {
 class MapScreen : public Screen {
 public:
     MapScreen(App& app, MapScreenConfig c) : Screen(app), c_(std::move(c)) {
-        const bool large = c_.resolution == 1;
-        width_ = large ? 1024 : 640;
-        height_ = large ? 768 : 480;
-        viewW_ = (width_ - 131) / 56 * 56;
-        viewH_ = (height_ - 24) / 28 * 28;
-        // The map square, centred horizontally; the picture centred in it.
-        const int side = std::min(viewW_, viewH_);
-        square_ = {(viewW_ - side) / 2, 0, side, side};
+        const ViewLayout standard = ViewLayout::standard(c_.resolution == 1);
+        // The picture's size follows the standard view's map square.
+        const int side = std::min(standard.viewW, standard.viewH);
         pic_ = c_.picture.width > 0 ? std::min(c_.picture.width, side) : side * 396 / 448;
-        ox_ = square_.x + (square_.w - pic_) / 2;
-        oy_ = square_.y + (square_.h - pic_) / 2;
         scale_ = static_cast<double>(pic_) / std::max(1, c_.mapSize);
         block_ = static_cast<int>(std::ceil(scale_));
         base_.resize(pic_, pic_, app.ui().black);
@@ -52,29 +46,16 @@ public:
             for (int y = 0; y < std::min(pic_, c_.picture.height); ++y)
                 std::copy_n(c_.picture.pixels.begin() + static_cast<std::ptrdiff_t>(y) * c_.picture.width, pic_, base_.row(y));
         if (c_.staticMarkers) c_.staticMarkers(base_, scale_, block_);
-
-        const int px = viewW_;
-        auto at = [px](int x, int y, int w, int h) { return ui::Rect{px + x, y, w, h}; };
-        ui::Rect closeRect = c_.closeRect;
-        closeRect.x += px;
-        buttons_.push_back(makeButton(closeRect, c_.closeFrame, c_.closeCaption, ui::kKeyEscape, [this] { close(); }));
-        buttons_.push_back(makeButton(at(5, 0, 44, 43), c_.emblemFrame, "", ui::kKeyF1, [this] {
-            if (c_.encyclopedia) c_.encyclopedia(selectedType());
-        }));
-        buttons_.push_back(makeButton(at(8, 431, 53, 17), 13, "Up", 0, [this] { list_.scroll(-1); }));
-        buttons_.push_back(makeButton(at(75, 431, 53, 17), 17, "Down", 0, [this] { list_.scroll(1); }));
-        static constexpr int kItemFrame[5] = {46, 52, 58, 64, 70};
-        for (std::size_t i = 0; i < c_.items.size() && i < 5; ++i)
-            players_.items.push_back(makeButton(at(10 + 19 * static_cast<int>(i), 73, 19, 19),
-                                                kItemFrame[std::clamp(c_.items[i].color, 0, 4)], "", 0, nullptr, true));
-        players_.check(std::clamp(c_.initialItem, 0, static_cast<int>(players_.items.size()) - 1));
-        players_.onChange = [this](int) { fillList(); };
-        list_.rect = at(12, 96, 116, 330);
         list_.rowHeight = 17;
         list_.onSelect = [this](int) { phase_ = 0; };
+        setLayout(standard);
+        players_.check(std::clamp(c_.initialItem, 0, static_cast<int>(players_.items.size()) - 1));
+        players_.onChange = [this](int) { fillList(); };
         fillList();
     }
 
+    bool resizable() const override { return true; }
+    void resize(int w, int h) override { setLayout(ViewLayout(w, h, c_.resolution == 1)); }
     int width() const override { return width_; }
     int height() const override { return height_; }
     bool overlay() const override { return true; }
@@ -108,7 +89,7 @@ public:
         if (c_.markers) c_.markers(s, ox_, oy_, scale_, phase_);
         drawViewport(s, ui);
         // Side panel.
-        ui::drawFrame(s, ui, c_.panelFrame, {viewW_, 0, width_ - viewW_, height_});
+        drawSidePanel(app_, s, c_.panelFrame, layout_);
         for (const ui::Button& b : buttons_) b.draw(s, ui);
         drawNumber(s, ui, {viewW_ + 64, 26, 40, 14}, c_.resource ? c_.resource() : 0);
         const ui::Rect name{viewW_ + 6, 53, 121, 15};
@@ -121,6 +102,40 @@ public:
     }
 
 private:
+    // The map square centred horizontally in the view, the picture centred
+    // in it; the controls on the panel.
+    void setLayout(const ViewLayout& l) {
+        layout_ = l;
+        width_ = l.width;
+        height_ = l.height;
+        viewW_ = l.viewW;
+        viewH_ = l.viewH;
+        const int side = std::min(viewW_, viewH_);
+        square_ = {(viewW_ - side) / 2, 0, side, side};
+        ox_ = square_.x + (square_.w - pic_) / 2;
+        oy_ = square_.y + (square_.h - pic_) / 2;
+
+        const int px = viewW_;
+        auto at = [px](int x, int y, int w, int h) { return ui::Rect{px + x, y, w, h}; };
+        ui::Rect closeRect = c_.closeRect;
+        closeRect.x += px;
+        buttons_.clear();
+        buttons_.push_back(makeButton(closeRect, c_.closeFrame, c_.closeCaption, ui::kKeyEscape, [this] { close(); }));
+        buttons_.push_back(makeButton(at(5, 0, 44, 43), c_.emblemFrame, "", ui::kKeyF1, [this] {
+            if (c_.encyclopedia) c_.encyclopedia(selectedType());
+        }));
+        buttons_.push_back(makeButton(at(8, 431, 53, 17), 13, "Up", 0, [this] { list_.scroll(-1); }));
+        buttons_.push_back(makeButton(at(75, 431, 53, 17), 17, "Down", 0, [this] { list_.scroll(1); }));
+        static constexpr int kItemFrame[5] = {46, 52, 58, 64, 70};
+        const int checked = players_.checked();
+        players_.items.clear();
+        for (std::size_t i = 0; i < c_.items.size() && i < 5; ++i)
+            players_.items.push_back(makeButton(at(10 + 19 * static_cast<int>(i), 73, 19, 19),
+                                                kItemFrame[std::clamp(c_.items[i].color, 0, 4)], "", 0, nullptr, true));
+        players_.check(checked);
+        list_.rect = at(12, 96, 116, 330);
+    }
+
     const MapScreenItem* selectedItem() const {
         const int i = players_.checked();
         return i >= 0 && i < static_cast<int>(c_.items.size()) ? &c_.items[static_cast<std::size_t>(i)] : nullptr;
@@ -184,6 +199,7 @@ private:
     }
 
     MapScreenConfig c_;
+    ViewLayout layout_;
     int width_ = 640, height_ = 480, viewW_ = 504, viewH_ = 448;
     ui::Rect square_;
     int pic_ = 396, ox_ = 0, oy_ = 0, block_ = 1;

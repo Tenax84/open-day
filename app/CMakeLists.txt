@@ -14,8 +14,10 @@ add_executable(openday
     map_screen.cpp
     mcp_server.cpp
     menus.cpp
+    openday_options.cpp
     ui_frames.cpp
     updater.cpp
+    view_layout.cpp
 )
 target_include_directories(openday PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(openday PRIVATE OPENDAY_VERSION="${PROJECT_VERSION}")

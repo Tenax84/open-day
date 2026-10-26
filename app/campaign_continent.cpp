@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "app/campaign.hpp"
+#include "app/view_layout.hpp"
 #include "formats/bmp_palette.hpp"
 #include "formats/pe_resources.hpp"
 
@@ -41,55 +42,25 @@ class ContinentScreen : public Screen {
 public:
     ContinentScreen(App& app, CampaignPtr ctx, ContinentMode mode) : Screen(app), ctx_(std::move(ctx)), mode_(mode) {
         large_ = app.settings().resolution == 1;
-        width_ = large_ ? 1024 : 640;
-        height_ = large_ ? 768 : 480;
-        viewW_ = (width_ - 131) / 56 * 56;
-        viewH_ = (height_ - 24) / 28 * 28;
         map_ = colonyMap(app, *ctx_);
-        if (map_) {
-            ox_ = (viewW_ - map_->width()) / 2;
-            oy_ = (viewH_ - map_->height()) / 2;
-        }
-        const game::Campaign& c = ctx_->campaign;
-        const int px = viewW_;
-        auto at = [px](int x, int y, int w, int h) { return ui::Rect{px + x, y, w, h}; };
         if (mode_ == ContinentMode::Win) {
-            buttons_.push_back(makeButton(at(11, 454, 110, 17), 21, "Continue", ui::kKeyEnter, [this] { closeWin(); }));
             hint_ = campaignText(app, 883, "You are victorious. Hit the continue button.");
-            selected_ = c.battleProvince;
+            selected_ = ctx_->campaign.battleProvince;
             blink_ = 10;
             app.sound("PROVINCE.WAV");
+        } else if (mode_ == ContinentMode::Normal) {
+            hint_ = campaignText(app, 884, "Choose the province you wish to attack.");
         } else {
-            buttons_.push_back(makeButton(at(11, 387, 110, 17), 198, "Intelligence", 'i', [this] {
-                if (selected_ > 0) app_.push(makeIntelDialog(app_, ctx_, selected_));
-            }));
-            if (mode_ == ContinentMode::Normal) {
-                attack_ = static_cast<int>(buttons_.size());
-                buttons_.push_back(makeButton(at(11, 407, 110, 17), 202, "Attack", 'a', [this] { attack(); }));
-                buttons_.back().enabled = false;
-                buttons_.push_back(makeButton(at(11, 456, 110, 17), 210, "Back", ui::kKeyEscape, [this] { app_.pop(); }));
-                hint_ = campaignText(app, 884, "Choose the province you wish to attack.");
-            } else {
-                buttons_.push_back(makeButton(at(11, 456, 110, 17), 21, "Continue", ui::kKeyEscape, [this] { app_.pop(); }));
-                hint_ = campaignText(app, 882, "Click the continue button.");
-            }
+            hint_ = campaignText(app, 882, "Click the continue button.");
         }
-        // The emblem: the encyclopedia's default page with the colony's
-        // building list as the context (encyclopedia.md 3).
-        buttons_.push_back(makeButton(at(5, 0, 44, 43), 214, "", ui::kKeyF1, [this] {
-            EncyclopediaRequest r;
-            r.levels = ctx_->campaign.player.techLevels;
-            r.context = ctx_->campaign.colony.buildingsAvailable;
-            openEncyclopedia(app_, std::move(r));
-        }));
-        buttons_.push_back(makeButton({viewW_ - 60, viewH_ + 8, 53, 17}, 693, "Menu", ui::kKeyF2, [this] {
-            app_.push(makeCampaignOptions(app_, ctx_, large_ ? 1 : 0));
-        }));
+        setLayout(ViewLayout::standard(large_));
         buildOwnedLayer();
     }
 
     int width() const override { return width_; }
     int height() const override { return height_; }
+    bool resizable() const override { return true; }
+    void resize(int w, int h) override { setLayout(ViewLayout(w, h, large_)); }
 
     void handle(const ui::InputEvent& e) override {
         for (ui::Button& b : buttons_)
@@ -119,17 +90,60 @@ public:
         const ui::UiContext& ui = app_.ui(large_ ? 1 : 0);
         s.fill(ui.black);
         drawMap(s);
-        ui::drawFrame(s, ui, 192, {viewW_, 0, width_ - viewW_, height_});
+        drawSidePanel(app_, s, 192, layout_);
         const game::Campaign& c = ctx_->campaign;
         drawNumber(s, ui, {viewW_ + 63, 26, 38, 14}, c.cityBudget(app_.data().rules));
         drawNumber(s, ui, {viewW_ + 63, 56, 38, 14}, c.player.credits);
         drawNumber(s, ui, {viewW_ + 63, 86, 38, 14}, c.player.tech);
         drawText(s, ui);
-        ui::drawFrame(s, ui, 498, {0, viewH_, viewW_, height_ - viewH_});
+        drawMessageStrip(app_, s, layout_);
         for (const ui::Button& b : buttons_) b.draw(s, ui);
     }
 
 private:
+    // The map centred in the view; the controls on the panel and the strip.
+    void setLayout(const ViewLayout& l) {
+        layout_ = l;
+        width_ = l.width;
+        height_ = l.height;
+        viewW_ = l.viewW;
+        viewH_ = l.viewH;
+        if (map_) {
+            ox_ = (viewW_ - map_->width()) / 2;
+            oy_ = (viewH_ - map_->height()) / 2;
+        }
+        const int px = viewW_;
+        auto at = [px](int x, int y, int w, int h) { return ui::Rect{px + x, y, w, h}; };
+        buttons_.clear();
+        attack_ = -1;
+        if (mode_ == ContinentMode::Win) {
+            buttons_.push_back(makeButton(at(11, 454, 110, 17), 21, "Continue", ui::kKeyEnter, [this] { closeWin(); }));
+        } else {
+            buttons_.push_back(makeButton(at(11, 387, 110, 17), 198, "Intelligence", 'i', [this] {
+                if (selected_ > 0) app_.push(makeIntelDialog(app_, ctx_, selected_));
+            }));
+            if (mode_ == ContinentMode::Normal) {
+                attack_ = static_cast<int>(buttons_.size());
+                buttons_.push_back(makeButton(at(11, 407, 110, 17), 202, "Attack", 'a', [this] { attack(); }));
+                buttons_.back().enabled = selected_ > 0 && ctx_->campaign.attackable(selected_);
+                buttons_.push_back(makeButton(at(11, 456, 110, 17), 210, "Back", ui::kKeyEscape, [this] { app_.pop(); }));
+            } else {
+                buttons_.push_back(makeButton(at(11, 456, 110, 17), 21, "Continue", ui::kKeyEscape, [this] { app_.pop(); }));
+            }
+        }
+        // The emblem: the encyclopedia's default page with the colony's
+        // building list as the context (encyclopedia.md 3).
+        buttons_.push_back(makeButton(at(5, 0, 44, 43), 214, "", ui::kKeyF1, [this] {
+            EncyclopediaRequest r;
+            r.levels = ctx_->campaign.player.techLevels;
+            r.context = ctx_->campaign.colony.buildingsAvailable;
+            openEncyclopedia(app_, std::move(r));
+        }));
+        buttons_.push_back(makeButton({viewW_ - 60, viewH_ + 8, 53, 17}, 693, "Menu", ui::kKeyF2, [this] {
+            app_.push(makeCampaignOptions(app_, ctx_, large_ ? 1 : 0));
+        }));
+    }
+
     int background() const {
         const game::Colony& col = ctx_->campaign.colony;
         const int frames = std::max(1, col.animationFrames);
@@ -234,6 +248,7 @@ private:
     CampaignPtr ctx_;
     ContinentMode mode_;
     bool large_ = false;
+    ViewLayout layout_;
     int width_ = 640, height_ = 480, viewW_ = 504, viewH_ = 448;
     const render::SmkFrames* map_ = nullptr;
     int ox_ = 0, oy_ = 0;

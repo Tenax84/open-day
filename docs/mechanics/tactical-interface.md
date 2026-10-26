@@ -50,7 +50,10 @@ The viewport size is computed from the screen size `W × H`:
     view_h = floor((H − 24) / 28) × 28
 
 (504×448 and 840×728). The side panel starts at `x = view_w`, the message
-strip at `y = view_h`. The isometric renderer keeps an off-screen buffer one
+strip at `y = view_h`. *(OpenDay: with the resizable window,
+interface.md "OpenDay options", the screen may have any size from the
+standard size up; the panel and the strip then keep their size and the view
+takes the rest.)* The isometric renderer keeps an off-screen buffer one
 tile (56 px) wider and three half-tiles (84 px) taller than the viewport for
 scrolling.
 
@@ -291,6 +294,31 @@ with a 1-px **white** rectangle just inside it.
 **Click:** a left button press inside the minimap image converts the point
 back to a tile (`tile = floor(pixel / s)`) and centres the viewport on it.
 
+*(OpenDay option "Exact minimap", on by default, also on the city screen
+and for the frame on the MAP screen (7):)* the frame of the original starts
+at the view's top-left tile, but the isometric view is turned 45° against
+the top-down minimap, so the square is not centred on what the view shows:
+after a click the clicked point lies about 4–5 tiles up and right of the
+frame's centre. With the option, both use the exact middle of the view in
+tile units (`u`, `v`, where tile `(x, y)` covers `[x, x + 1)`, its diamond
+centre being `(x + 0.5, y + 0.5)`):
+
+- Click: `u = (pixel + 0.5) / s`, and the camera is placed so that this
+  point is in the middle of the view (not snapped to a tile), then clamped
+  like any scrolling.
+- Frame: the same `max(view_w / 54, view_h / 28)`-tile square, centred on
+  the middle of the view (`u − span / 2` …), the part outside the image cut
+  off. The MAP screen's frame gets the nearest whole top-left tile.
+- Off gives the original click and frame.
+
+*(OpenDay option "Drag on the minimap", on by default, also on the city
+screen:)* while the left button pressed on the minimap image is held, every
+mouse move centres the view on the point under the cursor (as a click
+would, exact or not by the option above); outside the image the point is
+clamped to its edge. Edge scrolling pauses meanwhile. Releasing the button,
+or another screen or dialog coming on top, ends it. Off: only the press
+moves the view, as in the original.
+
 ### 2.7 Info card (right mouse button)
 
 Pressing the **right** mouse button over a map tile replaces the minimap by
@@ -436,7 +464,10 @@ tile inverse of isometric-map.md) and then:
      - it is an own unit that may be selected (owned by you, not a convoy
        unit) → **select it** (or add it, GROUP on), play `SELECT`, centre
        the map on it, leave fire mode, show the path preview to its
-       remembered destination if it has one, refresh the info box;
+       remembered destination if it has one, refresh the info box.
+       *(OpenDay option "Keep the view when selecting", on by default: a
+       click does not move the view; unit cycling, 2.2, still centres on
+       the selected unit. Off gives the original behaviour.)*;
      - otherwise, if a unit is selected and the clicked unit is an
        **enemy** (tactical-combat.md 1.1 relation) → shot request at it;
    - **a building** that is an enemy building of yours and a unit is
@@ -543,6 +574,9 @@ See 2.7. The right button does not deselect and does not cancel orders.
   screen** (not the viewport): within 5 px of the left / right / top /
   bottom screen edge the map scrolls in that direction; corners combine two
   directions. This also works over the side panel and the message strip.
+  *(OpenDay option "Edge scrolling", **off** by default, also on the city
+  screen: off, the screen edges do nothing; the keys and the right-button
+  drag still scroll. On gives the behaviour of the original.)*
 - **Keys:** arrow keys scroll in their direction; `Home` = up-left,
   `Page Up` = up-right, `End` = down-left, `Page Down` = down-right (the
   numeric-keypad layout).
@@ -552,7 +586,22 @@ See 2.7. The right button does not deselect and does not cancel orders.
 - **Speed:** steps are repeated at most once per interval set by the
   `ScrollSpeed` option: 0 → 100 ms, 1 → 50 ms (default), 2 → no delay
   (every frame). Values outside 0–2 read from the INI become 1.
+- *(OpenDay option "Smooth edge scrolling", on by default, also on the city
+  screen; it matters only while "Edge scrolling" is on:)* edge scrolling does not step by tiles but glides pixel by pixel at the same 2:1 ratio, proportional to
+  the frame time: `ScrollSpeed` 0 → 10, 1 → 20, 2 → 40 tiles per second
+  (560 / 1120 / 2240 px/s horizontally, half that vertically). The keys
+  still step by whole tiles. Off gives the original stepping above.
 - Scrolling is refused while the view does not accept input (3.1).
+- *(OpenDay option "Drag the map with the right button", on by default,
+  also on the city screen:)* **right-button drag:**
+  pressing the right button over the viewport and moving the cursor at
+  least 4 px (on either axis) grabs the map, which then follows the cursor
+  pixel by pixel until the release, clamped like the other scrolling. The
+  info card of the press (2.7) closes when the drag starts; smaller moves
+  keep it. Edge scrolling pauses during a drag. On the city screen a right
+  click cancels on the release, and only when it did not become a drag.
+  Off: the right button works as in the original (the info card on the
+  press; on the city screen the cancel on the press).
 
 ### 3.7 Keys
 

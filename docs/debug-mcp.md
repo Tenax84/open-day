@@ -44,7 +44,9 @@ the game and reconnect (`/mcp` in Claude Code).
 ## Coordinates
 
 `click` and `mouse_move` take logical screen pixels: the coordinates of the
-`screenshot` image, 640 × 480 or 1024 × 768 depending on the screen. Battle
+`screenshot` image, 640 × 480 or 1024 × 768 depending on the screen, or any
+larger size when the map screens follow the window (interface.md, "Resizable
+window"). Battle
 tools take map tiles (x, y); `battle_state` gives the screen position of the
 units that are in view, `battle_center` moves the view.
 
@@ -54,7 +56,7 @@ units that are in view, `battle_center` moves the view.
 
 | Tool | |
 |---|---|
-| `get_screen` | the screen stack (class names, bottom first), size of the top screen, game speed, battle summary |
+| `get_screen` | the screen stack (class names, bottom first), size of the top screen and of the picture (`frame_width`, `frame_height`; `pixel_scale` = the scale of a picture laid out for the window, 0 = standard size scaled to fit), game speed, battle summary |
 | `screenshot` | the last frame as an 8-bit PNG (compressed, about 30-70 KB) |
 | `click` | `x`, `y`, `button` (left/right/middle), `hold` (press without release: the info card) |
 | `mouse_move` | `x`, `y` (hover, edge scrolling) |
@@ -63,6 +65,7 @@ units that are in view, `battle_center` moves the view.
 | `wait` | `ms` of game time |
 | `wait_idle` | in a battle: until the animations have played and you can give orders again (or the battle ended); `timeout_ms` (real time, default 120 s) |
 | `set_speed` | game speed factor 0.1-20: the elapsed time of each frame is multiplied by it |
+| `set_window_size` | `width`, `height` (window coordinates): resizes the game window, e.g. to try the resizable layout; a minimised window is not resized |
 | `list_scenarios` | the skirmish catalog: index, title, province, map size, budget, file name |
 | `start_skirmish` | `scenario` (index, title or file name), `briefing`: starts it from any screen |
 | `main_menu` | back to the main menu from anywhere |

@@ -83,6 +83,13 @@ public:
     virtual bool updatesBelow() const { return false; }
     // The running battle, for the debug server (app/battle_control.hpp).
     virtual BattleControl* battleControl() { return nullptr; }
+    // A resizable screen lays itself out for any size from the standard size
+    // of the resolution up: with the resizable-window option for the window's
+    // size, otherwise for the standard size (App::layout). Other screens keep
+    // their size and are scaled to the window, or centred over a resizable
+    // screen.
+    virtual bool resizable() const { return false; }
+    virtual void resize(int w, int h) { (void)w, (void)h; }
 
 protected:
     App& app_;
@@ -97,6 +104,14 @@ struct Settings {
     bool autofire = true;
     bool overwatch = true;
     bool cheats = false; // Tab + W / L, as the original with Cheats=1
+    // OpenDay's own options (the OPENDAY button of the in-game options):
+    bool edgeScroll = false;       // the map scrolls with the cursor at the screen edge
+    bool smoothEdgeScroll = true; // edge scrolling glides pixel by pixel, not by tiles
+    bool dragScroll = true;       // the right button drags the map
+    bool keepViewOnSelect = true; // a click on a unit does not centre the view on it
+    bool exactMinimap = true;     // minimap click and frame centred on the exact point
+    bool minimapDrag = true;      // dragging on the minimap moves the view
+    bool resizableWindow = true;  // the map screens grow with the window
     bool checkUpdates = true;   // ask GitHub for a newer release on start
     std::string updateDeclined; // a release the user said "No" to (not offered again)
 };
@@ -126,6 +141,21 @@ public:
     // The stack, bottom first.
     const std::vector<std::unique_ptr<Screen>>& screens() const { return screens_; }
     void applyChanges();
+    // The window's drawing area in pixels: lays out the resizable screens
+    // (Screen::resizable) for it.
+    void layout(int pixelW, int pixelH);
+    // The size of the picture drawn this frame: the size of the lowest screen
+    // drawn. A screen smaller than the picture is drawn centred in it.
+    int frameWidth() const;
+    int frameHeight() const;
+    // The scale of the picture in the window, when it is laid out for the
+    // window; 0: the standard size, scaled to fit the window.
+    float pixelScale() const;
+    // Passes an event in picture coordinates to the top screen.
+    void handle(ui::InputEvent e);
+    // A window size the debug server asked for (in window coordinates), taken
+    // by the main loop.
+    int requestedWindowW = 0, requestedWindowH = 0;
     // Updates the top screen (and the screens below it that overlays keep
     // running) and draws the top screen over the screens below its overlays.
     void update(int elapsedMs);
@@ -151,6 +181,9 @@ public:
     void startMusic();
 
 private:
+    const Screen* frameScreen() const;
+    void layoutScreens();
+
     GameData& data_;
     platform::AudioPlayer& audio_;
     Settings settings_;
@@ -166,6 +199,10 @@ private:
     };
     std::vector<Change> pending_;
     bool quit_ = false;
+    int windowW_ = 0, windowH_ = 0; // the window's drawing area in pixels
+    int layoutW_ = 640, layoutH_ = 480;
+    float scale_ = 0;
+    render::IndexedSurface scratch_; // a centred screen's picture
     std::unique_ptr<game::EncyclopediaData> encyclopedia_;
     std::unique_ptr<render::SmkFrames> encyclopediaPictures_;
     bool picturesLoaded_ = false;

@@ -142,6 +142,64 @@ void App::applyChanges() {
             break;
         }
     }
+    if (!changes.empty()) layoutScreens();
+}
+
+void App::layout(int pixelW, int pixelH) {
+    windowW_ = pixelW;
+    windowH_ = pixelH;
+    layoutScreens();
+}
+
+void App::layoutScreens() {
+    const int stdW = settings_.resolution == 1 ? 1024 : 640, stdH = settings_.resolution == 1 ? 768 : 480;
+    layoutW_ = stdW;
+    layoutH_ = stdH;
+    scale_ = 0;
+    // Resizable window (interface.md): the scale at which the standard size
+    // just fits, so the interface keeps its share of the window; the other
+    // side gets as many picture pixels as the window's shape allows.
+    if (settings_.resizableWindow && windowW_ > 0 && windowH_ > 0) {
+        if (static_cast<long long>(windowW_) * stdH <= static_cast<long long>(windowH_) * stdW) {
+            layoutH_ = std::max(stdH, static_cast<int>((static_cast<long long>(windowH_) * stdW + windowW_ / 2) / windowW_));
+            scale_ = static_cast<float>(windowW_) / static_cast<float>(stdW);
+        } else {
+            layoutW_ = std::max(stdW, static_cast<int>((static_cast<long long>(windowW_) * stdH + windowH_ / 2) / windowH_));
+            scale_ = static_cast<float>(windowH_) / static_cast<float>(stdH);
+        }
+    }
+    for (const auto& s : screens_)
+        if (s->resizable() && (s->width() != layoutW_ || s->height() != layoutH_)) s->resize(layoutW_, layoutH_);
+}
+
+const Screen* App::frameScreen() const {
+    if (screens_.empty()) return nullptr;
+    std::size_t first = screens_.size() - 1;
+    while (first > 0 && screens_[first]->overlay()) --first;
+    return screens_[first].get();
+}
+
+int App::frameWidth() const {
+    const Screen* s = frameScreen();
+    return s ? s->width() : 640;
+}
+
+int App::frameHeight() const {
+    const Screen* s = frameScreen();
+    return s ? s->height() : 480;
+}
+
+float App::pixelScale() const {
+    const Screen* s = frameScreen();
+    return s && s->resizable() ? scale_ : 0;
+}
+
+void App::handle(ui::InputEvent e) {
+    Screen* s = top();
+    if (!s) return;
+    e.x -= (frameWidth() - s->width()) / 2;
+    e.y -= (frameHeight() - s->height()) / 2;
+    s->handle(e);
 }
 
 void App::update(int ms) {
@@ -156,7 +214,26 @@ void App::draw(render::IndexedSurface& target) {
     if (screens_.empty()) return;
     std::size_t first = screens_.size() - 1;
     while (first > 0 && screens_[first]->overlay()) --first;
-    for (std::size_t i = first; i < screens_.size(); ++i) screens_[i]->draw(target);
+    for (std::size_t i = first; i < screens_.size(); ++i) {
+        Screen& sc = *screens_[i];
+        const int w = sc.width(), h = sc.height();
+        if (w == target.width() && h == target.height()) {
+            sc.draw(target);
+            continue;
+        }
+        // A screen of another size (a dialog over a resizable screen),
+        // centred: drawn over its part of the picture.
+        const int ox = (target.width() - w) / 2, oy = (target.height() - h) / 2;
+        scratch_.resize(w, h);
+        const int x0 = std::max(0, -ox), x1 = std::min(w, target.width() - ox);
+        auto rows = [&](auto&& copy) {
+            if (x1 <= x0) return;
+            for (int y = std::max(0, -oy); y < std::min(h, target.height() - oy); ++y) copy(y);
+        };
+        rows([&](int y) { std::copy(target.row(y + oy) + ox + x0, target.row(y + oy) + ox + x1, scratch_.row(y) + x0); });
+        sc.draw(scratch_);
+        rows([&](int y) { std::copy(scratch_.row(y) + x0, scratch_.row(y) + x1, target.row(y + oy) + ox + x0); });
+    }
 }
 
 const game::EncyclopediaData& App::encyclopedia() {

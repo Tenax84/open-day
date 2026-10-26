@@ -73,6 +73,13 @@ void loadSettings(app::Settings& s, const app::setup::Config& c) {
     s.scrollSpeed = c.getInt("scroll_speed", s.scrollSpeed);
     s.autofire = c.getInt("autofire", s.autofire) != 0;
     s.overwatch = c.getInt("overwatch", s.overwatch) != 0;
+    s.edgeScroll = c.getInt("edge_scroll", s.edgeScroll) != 0;
+    s.smoothEdgeScroll = c.getInt("smooth_edge_scroll", s.smoothEdgeScroll) != 0;
+    s.dragScroll = c.getInt("drag_scroll", s.dragScroll) != 0;
+    s.keepViewOnSelect = c.getInt("keep_view_on_select", s.keepViewOnSelect) != 0;
+    s.exactMinimap = c.getInt("exact_minimap", s.exactMinimap) != 0;
+    s.minimapDrag = c.getInt("minimap_drag", s.minimapDrag) != 0;
+    s.resizableWindow = c.getInt("resizable_window", s.resizableWindow) != 0;
     s.checkUpdates = c.getInt("check_updates", s.checkUpdates) != 0;
     s.updateDeclined = c.get("update_declined");
 }
@@ -87,6 +94,13 @@ void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
     c.setInt("scroll_speed", s.scrollSpeed);
     c.setInt("autofire", s.autofire);
     c.setInt("overwatch", s.overwatch);
+    c.setInt("edge_scroll", s.edgeScroll);
+    c.setInt("smooth_edge_scroll", s.smoothEdgeScroll);
+    c.setInt("drag_scroll", s.dragScroll);
+    c.setInt("keep_view_on_select", s.keepViewOnSelect);
+    c.setInt("exact_minimap", s.exactMinimap);
+    c.setInt("minimap_drag", s.minimapDrag);
+    c.setInt("resizable_window", s.resizableWindow);
     c.setInt("check_updates", s.checkUpdates);
     c.set("update_declined", s.updateDeclined);
 }
@@ -207,6 +221,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         platform::AudioPlayer audio;
         app::App app(data, audio);
         if (config) loadSettings(app.settings(), *config);
+        else app.settings().resizableWindow = false; // the test mode's coordinates are the standard screen's
         if (mute) app.settings().sound = app.settings().music = false;
         app.settings().cheats = cheats;
         audio.soundEnabled = app.settings().sound;
@@ -237,13 +252,23 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         Uint64 last = SDL_GetTicks();
         int waitMs = 0;
         bool scripted = !script.empty() || !shot.empty();
+        // The scale of a w x h picture in the window: to fit (a resizable
+        // screen is laid out in the window's shape, so it fills it).
+        auto pictureScale = [](int outW, int outH, int w, int h) {
+            return std::min(static_cast<float>(outW) / static_cast<float>(w), static_cast<float>(outH) / static_cast<float>(h));
+        };
         while (!app.quitting()) {
-            app::Screen* screen = app.top();
-            const int w = screen->width(), h = screen->height();
-            // Window pixels -> logical screen pixels (letter-boxed).
+            if (app.requestedWindowW > 0 && app.requestedWindowH > 0) {
+                SDL_SetWindowSize(window, app.requestedWindowW, app.requestedWindowH);
+                SDL_SyncWindow(window);
+                app.requestedWindowW = app.requestedWindowH = 0;
+            }
             int outW = 0, outH = 0;
             SDL_GetRenderOutputSize(renderer, &outW, &outH);
-            const float k = std::min(static_cast<float>(outW) / static_cast<float>(w), static_cast<float>(outH) / static_cast<float>(h));
+            app.layout(outW, outH);
+            const int w = app.frameWidth(), h = app.frameHeight();
+            // Window pixels -> logical screen pixels (letter-boxed).
+            const float k = pictureScale(outW, outH, w, h);
             const float ox = (static_cast<float>(outW) - static_cast<float>(w) * k) / 2;
             const float oy = (static_cast<float>(outH) - static_cast<float>(h) * k) / 2;
             float pixelRatio = SDL_GetWindowPixelDensity(window);
@@ -287,7 +312,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     break;
                 default: send = false; break;
                 }
-                if (send && app.top()) app.top()->handle(e);
+                if (send) app.handle(e);
                 app.applyChanges();
                 if (app.quitting()) break;
             }
@@ -304,7 +329,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     const Step st = script.front();
                     script.pop_front();
                     auto send = [&](ui::InputEvent e) {
-                        if (app.top()) app.top()->handle(e);
+                        app.handle(e);
                         app.applyChanges();
                     };
                     ui::InputEvent e;
@@ -351,9 +376,11 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             if (app.quitting()) break;
             audio.update();
 
-            screen = app.top();
-            if (surface.width() != screen->width() || surface.height() != screen->height())
-                surface.resize(screen->width(), screen->height());
+            app::Screen* screen = app.top();
+            SDL_GetRenderOutputSize(renderer, &outW, &outH);
+            app.layout(outW, outH);
+            if (surface.width() != app.frameWidth() || surface.height() != app.frameHeight())
+                surface.resize(app.frameWidth(), app.frameHeight());
             app.draw(surface);
             if (surface.width() != texW || surface.height() != texH) {
                 SDL_DestroyTexture(texture);
@@ -382,7 +409,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderClear(renderer);
             SDL_GetRenderOutputSize(renderer, &outW, &outH);
-            const float kk = std::min(static_cast<float>(outW) / static_cast<float>(texW), static_cast<float>(outH) / static_cast<float>(texH));
+            const float kk = pictureScale(outW, outH, texW, texH);
             const SDL_FRect dst{(static_cast<float>(outW) - static_cast<float>(texW) * kk) / 2,
                                 (static_cast<float>(outH) - static_cast<float>(texH) * kk) / 2, static_cast<float>(texW) * kk,
                                 static_cast<float>(texH) * kk};

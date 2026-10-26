@@ -14,8 +14,11 @@
 
 #include "anim/battle_session.hpp"
 #include "app/battle_control.hpp"
+#include "app/map_drag.hpp"
 #include "app/map_screen.hpp"
+#include "app/openday_options.hpp"
 #include "app/screens.hpp"
+#include "app/view_layout.hpp"
 #include "battle/automated.hpp"
 #include "battle/combat.hpp"
 #include "battle/objectives.hpp"
@@ -192,21 +195,17 @@ public:
         : Screen(app), config_(std::move(config)), entry_(config_.entry), session_(std::move(session)),
           colors_(app.data().palette) {
         large_ = app.settings().resolution == 1;
-        width_ = large_ ? 1024 : 640;
-        height_ = large_ ? 768 : 480;
-        viewW_ = (width_ - 131) / 56 * 56;
-        viewH_ = (height_ - 24) / 28 * 28;
-        viewport_.resize(viewW_, viewH_);
+        setLayout(ViewLayout::standard(large_));
         session_->animations().animator().playSound = [this](const render::Animation& a) {
             app_.audio().soundEnabled = app_.settings().sound;
             app_.audio().play(a.audio);
         };
         // Automated-unit clips centre the view on their tile (automated-units.md 8.3).
-        session_->animations().setView(width_, viewW_, viewH_);
         session_->animations().onCenter = [this](game::Point tile) { centerOn(tile); };
         buildMinimapTerrain();
         centerOnHuman();
         buildControls();
+        buildDeployList();
         app.startMusic();
         const bool log = std::getenv("OPENDAY_LOG") != nullptr;
         session_->log = [this, log](const game::Event& e) {
@@ -222,6 +221,29 @@ public:
     int height() const override { return height_; }
     bool paletteCycling() const override { return true; }
     BattleControl* battleControl() override { return this; }
+    bool resizable() const override { return true; }
+
+    // The view keeps its centre; the controls follow the panel and the strip.
+    void resize(int w, int h) override {
+        const float cx = camX_ + static_cast<float>(viewW_) / 2, cy = camY_ + static_cast<float>(viewH_) / 2;
+        setLayout(ViewLayout(w, h, large_));
+        camX_ = cx - static_cast<float>(viewW_) / 2;
+        camY_ = cy - static_cast<float>(viewH_) / 2;
+        clampCamera();
+        drag_ = {};
+        minimapDrag_ = false;
+        const ui::ListBox deploy = deployList_, automated = autoList_;
+        buildControls();
+        deployList_.rows = deploy.rows;
+        deployList_.selected = deploy.selected;
+        deployList_.top = deploy.top;
+        autoList_.rows = automated.rows;
+        autoList_.selected = automated.selected;
+        autoList_.top = automated.top;
+        // The dialogs follow the view's middle.
+        if (dialog_ == Dialog::Menu) openMenu();
+        else if (dialog_ == Dialog::Goal) placeGoalButtons();
+    }
 
     // --- BattleControl (the debug server) ---------------------------------
 
@@ -355,9 +377,25 @@ public:
         if (e.type == ui::InputEvent::Type::MouseMove) {
             mouseX_ = e.x;
             mouseY_ = e.y;
+            // Right-button drag: the map follows the cursor pixel by pixel;
+            // a small jitter keeps the info card.
+            if (drag_.follow(e.x, e.y, camX_, camY_)) {
+                clampCamera();
+                infoTile_.reset();
+                return;
+            }
+            if (drag_.held) return;
+            // Left-button drag on the minimap: the view follows the cursor.
+            if (minimapDrag_) return minimapJump(e.x, e.y);
         }
+        if (e.type == ui::InputEvent::Type::MouseUp && e.button == 3) drag_.release();
+        if (e.type == ui::InputEvent::Type::MouseUp && e.button == 1) minimapDrag_ = false;
         if (e.type != ui::InputEvent::Type::KeyDown) infoTile_.reset(); // any mouse event ends the info card
-        if (dialog_ != Dialog::None) return handleDialog(e);
+        if (dialog_ != Dialog::None) {
+            drag_ = {};
+            minimapDrag_ = false;
+            return handleDialog(e);
+        }
         const Mode mode = this->mode();
         if (e.type == ui::InputEvent::Type::KeyDown && handleScrollKey(e.key)) return;
         // Cheat keys: Tab, then W or L (tactical-interface.md 3.7).
@@ -381,22 +419,20 @@ public:
         if (mode == Mode::Automated) {
             if (autoList_.handle(e)) return;
         }
-        // Minimap click: centre the view.
-        const ui::Rect mm = minimapRect();
-        if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1 && mm.contains(e.x, e.y)) {
-            const int n = session_->scene().terrain().size;
-            const double s = 112.0 / n;
-            centerOn({static_cast<int>((e.x - mm.x) / s), static_cast<int>((e.y - mm.y) / s)});
-            return;
+        // Minimap click: centre the view; with the option, held for dragging.
+        if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1 && minimapRect().contains(e.x, e.y)) {
+            minimapDrag_ = app_.settings().minimapDrag;
+            return minimapJump(e.x, e.y);
         }
         if (e.type == ui::InputEvent::Type::KeyDown && e.key == ui::kKeyEscape) fire_ = false;
         if (e.x >= viewW_ || e.y >= viewH_ || e.type != ui::InputEvent::Type::MouseDown) return;
         const game::Point tile = tileAt(e.x, e.y);
-        if (!session_->state().inside(tile)) return;
         if (e.button == 3) {
-            infoTile_ = tile;
+            if (app_.settings().dragScroll) drag_.press(e.x, e.y, camX_, camY_);
+            if (session_->state().inside(tile)) infoTile_ = tile;
             return;
         }
+        if (!session_->state().inside(tile)) return;
         if (e.button != 1 || session_->animations().busy()) return;
         if (mode == Mode::Deploy) deployClick(tile);
         else if (mode == Mode::Tactic) tacticClick(tile);
@@ -413,6 +449,7 @@ public:
         tickAcc_ += ms;
         const int tickMs = 1000 / game::kTicksPerSecond;
         for (; tickAcc_ >= tickMs; tickAcc_ -= tickMs) session_->animations().tick();
+        if (app_.top() != this) minimapDrag_ = false; // the release goes to the screen on top
         edgeScroll(ms);
         const Mode mode = this->mode();
         const game::BattleState& st = session_->state();
@@ -454,7 +491,7 @@ public:
         for (int y = 0; y < viewH_; ++y) std::copy_n(viewport_.row(y), viewW_, s.row(y));
         const Mode mode = this->mode();
         const int panelFrame = mode == Mode::Deploy ? 0 : mode == Mode::Tactic ? 226 : mode == Mode::Automated ? 507 : 310;
-        ui::drawFrame(s, ui, panelFrame, {viewW_, 0, width_ - viewW_, height_});
+        drawSidePanel(app_, s, panelFrame, layout_);
         drawStrip(s, ui);
         for (const ui::Button& b : buttons(mode)) b.draw(s, ui);
         drawResource(s, ui);
@@ -522,6 +559,26 @@ private:
 
     // --- Camera --------------------------------------------------------------
 
+    void setLayout(const ViewLayout& l) {
+        layout_ = l;
+        width_ = l.width;
+        height_ = l.height;
+        viewW_ = l.viewW;
+        viewH_ = l.viewH;
+        viewport_.resize(viewW_, viewH_);
+        // The AA offsets scale with the resolution, not the window.
+        session_->animations().setView(ViewLayout::standard(large_).width, viewW_, viewH_);
+    }
+
+    // The top-left tile of the viewport frame on the overview maps (2.6).
+    game::Point viewportTopLeft() const {
+        if (!app_.settings().exactMinimap) return tileAt(0, 0);
+        double u = 0, v = 0;
+        minimapPointOfView(camX_, camY_, session_->scene().terrain().size, viewW_, viewH_, u, v);
+        const double half = std::max(viewW_ / 54, viewH_ / 28) / 2.0;
+        return {static_cast<int>(std::floor(u - half + 0.5)), static_cast<int>(std::floor(v - half + 0.5))};
+    }
+
     void clampCamera() {
         const game::Rect b = game::iso::mapBounds(session_->scene().terrain().size);
         camX_ = std::clamp(camX_, static_cast<float>(-viewW_ / 2), static_cast<float>(b.w - viewW_ / 2));
@@ -566,22 +623,24 @@ private:
         }
     }
 
-    // Edge scrolling: within 5 px of the screen edges (3.6).
+    // Edge scrolling, when switched on: within 5 px of the screen edges, pixel
+    // by pixel or by tiles (3.6).
     void edgeScroll(int ms) {
-        if (dialog_ != Dialog::None || mouseX_ < 0 || app_.top() != this) return;
+        if (dialog_ != Dialog::None || mouseX_ < 0 || app_.top() != this || drag_.dragging() || minimapDrag_) return;
         const int dx = mouseX_ < 5 ? -1 : mouseX_ >= width_ - 5 ? 1 : 0;
         const int dy = mouseY_ < 5 ? -1 : mouseY_ >= height_ - 5 ? 1 : 0;
         if (!dx && !dy) {
             scrollAcc_ = 0;
             return;
         }
-        static constexpr int kInterval[3] = {100, 50, 0};
-        const int interval = kInterval[std::clamp(app_.settings().scrollSpeed, 0, 2)];
-        scrollAcc_ += ms;
-        if (scrollAcc_ >= interval) {
-            scrollAcc_ = 0;
-            scrollStep(dx, dy);
+        const Settings& st = app_.settings();
+        if (!st.edgeScroll) return;
+        if (!st.smoothEdgeScroll) {
+            if (edgeScrollStep(scrollAcc_, st.scrollSpeed, ms)) scrollStep(dx, dy);
+            return;
         }
+        edgeScrollBy(dx, dy, st.scrollSpeed, ms, camX_, camY_);
+        clampCamera();
     }
 
     // --- Controls ------------------------------------------------------------
@@ -612,7 +671,6 @@ private:
         strip(deployButtons_);
         deployList_.rect = at(9, 206, 120, 5 * 39);
         deployList_.rowHeight = 39;
-        buildDeployList();
 
         // Tactical view (2.1).
         tacticButtons_ = {
@@ -791,7 +849,9 @@ private:
 
     // --- Tactical orders -----------------------------------------------------
 
-    void select(int u) {
+    // With the OpenDay option a click leaves the view where it is; unit
+    // cycling always centres on the picked unit.
+    void select(int u, bool centre = false) {
         if (group_) {
             if (std::find(selection_.begin(), selection_.end(), u) != selection_.end()) return;
             if (selection_.size() >= 64) {
@@ -807,7 +867,7 @@ private:
         preview_.clear();
         plannedTarget_.reset();
         app_.sound("SELECT.WAV");
-        centerOn(session_->state().unit(u).pos);
+        if (centre || !app_.settings().keepViewOnSelect) centerOn(session_->state().unit(u).pos);
         const game::Point pos = session_->state().unit(u).pos;
         if (const auto it = destination_.find(u); it != destination_.end() && !samePoint(it->second, pos)) plan(it->second);
     }
@@ -1013,7 +1073,7 @@ private:
         }
         const bool group = group_;
         group_ = false;
-        select(pick);
+        select(pick, true);
         group_ = group;
     }
 
@@ -1137,8 +1197,13 @@ private:
     void openGoal() {
         dialog_ = Dialog::Goal;
         app_.sound("OBJECTIF.WAV");
-        dialogButtons_ = {button({40 + 308, 40 + 205, 110, 17}, 634, "Continue", ui::kKeyEscape, [this] { dialog_ = Dialog::None; }),
-                          button({40 + 298, 40 + 230, 19, 19}, 638, "", 0, [this] { markers_ = !markers_; }, true)};
+        placeGoalButtons();
+    }
+
+    void placeGoalButtons() {
+        const ui::Rect d = goalRect();
+        dialogButtons_ = {button({d.x + 308, d.y + 205, 110, 17}, 634, "Continue", ui::kKeyEscape, [this] { dialog_ = Dialog::None; }),
+                          button({d.x + 298, d.y + 230, 19, 19}, 638, "", 0, [this] { markers_ = !markers_; }, true)};
     }
 
     // The in-game options (interface.md 4, "In-game options dialog"). The
@@ -1177,6 +1242,7 @@ private:
         dialogButtons_.push_back(quit);
         dialogButtons_.push_back(save);
         dialogButtons_.push_back(surrender);
+        openDay_ = OpenDayButton(app_, [this] { return menuRect(); }, large_ ? 1 : 0);
         // Sounds on/off and scroll speed (interface.md, in-game options).
         soundGroup_ = {};
         for (int i = 0; i < 2; ++i) soundGroup_.items.push_back(button({p.x + 36, p.y + 71 + 21 * i, 19, 19}, 665, "", 0, nullptr, true));
@@ -1220,6 +1286,13 @@ private:
         confirm_ = std::move(c);
     }
 
+    // The objectives dialog: at (40, 40) of the standard view, which a larger
+    // view keeps in its middle.
+    ui::Rect goalRect() const {
+        const ViewLayout standard = ViewLayout::standard(large_);
+        return {40 + (viewW_ - standard.viewW) / 2, 40 + (viewH_ - standard.viewH) / 2, 448, 268};
+    }
+
     ui::Rect menuRect() const { return {(viewW_ - 403) / 2, (viewH_ - 371) / 2, 403, 371}; }
 
     void handleDialog(const ui::InputEvent& e) {
@@ -1232,13 +1305,13 @@ private:
         for (ui::Button& b : dialogButtons_)
             if (b.handle(e)) return;
         if (dialog_ == Dialog::Menu) {
-            if (soundGroup_.handle(e) || animGroup_.handle(e)) return;
+            if (openDay_.handle(e) || soundGroup_.handle(e) || animGroup_.handle(e)) return;
             scrollGroup_.handle(e);
         }
     }
 
     void drawGoal(render::IndexedSurface& s, const ui::UiContext& ui) {
-        const ui::Rect dlg{40, 40, 448, 268};
+        const ui::Rect dlg = goalRect();
         ui::drawFrame(s, ui, 633, dlg);
         const render::Font& f = *ui.standard;
         const ui::Rect area{dlg.x + 20, dlg.y + 20, dlg.w - 40, dlg.h - 50};
@@ -1264,6 +1337,7 @@ private:
     void drawMenu(render::IndexedSurface& s, const ui::UiContext& ui) {
         ui::drawFrame(s, ui, 648, menuRect());
         for (const ui::Button& b : dialogButtons_) b.draw(s, ui);
+        openDay_.draw(s, ui);
         soundGroup_.draw(s, ui);
         animGroup_.draw(s, ui);
         scrollGroup_.draw(s, ui);
@@ -1287,7 +1361,7 @@ private:
         m.playerName = [this](int slot) { return playerName(slot); };
         m.clickable = [this] { return mode() != Mode::Wait; }; // your turn or your deployment
         m.viewport = [this](game::Point& tl, int& span) {
-            tl = tileAt(0, 0);
+            tl = viewportTopLeft();
             span = std::max(viewW_ / 54, viewH_ / 28);
         };
         m.centre = [this](game::Point t) { centerOn(t); };
@@ -1438,6 +1512,19 @@ private:
 
     ui::Rect minimapRect() const { return {viewW_ + 12, 49, 112, 112}; }
 
+    // Centres the view on the minimap point under (x, y), clamped into the image.
+    void minimapJump(int x, int y) {
+        const ui::Rect mm = minimapRect();
+        x = std::clamp(x, mm.x, mm.x + mm.w - 1);
+        y = std::clamp(y, mm.y, mm.y + mm.h - 1);
+        const int n = session_->scene().terrain().size;
+        const double s = 112.0 / n;
+        if (!app_.settings().exactMinimap)
+            return centerOn({static_cast<int>((x - mm.x) / s), static_cast<int>((y - mm.y) / s)});
+        cameraOnMinimapPoint((x - mm.x + 0.5) / s, (y - mm.y + 0.5) / s, n, viewW_, viewH_, camX_, camY_);
+        clampCamera();
+    }
+
     void buildMinimapTerrain() {
         const game::TerrainMap& t = session_->scene().terrain();
         const int n = t.size;
@@ -1511,16 +1598,8 @@ private:
                 if (w.alive) square(w.pos, b + 1, colors_(wall->second.r, wall->second.g, wall->second.b));
         for (const game::BattleUnit& u : st.units())
             if (u.alive) square(u.pos, b, objectColor(1, u.owner, u.type->race));
-        // The visible part: from the viewport's top-left tile, a square of
-        // max(view_w / 54, view_h / 28) tiles.
-        const game::Point tl = tileAt(0, 0);
-        const int span = std::max(viewW_ / 54, viewH_ / 28);
-        ui::Rect v{r.x + static_cast<int>(tl.x * sc), r.y + static_cast<int>(tl.y * sc), static_cast<int>(span * sc),
-                   static_cast<int>(span * sc)};
-        v.x = std::clamp(v.x, r.x, r.x + r.w - 2);
-        v.y = std::clamp(v.y, r.y, r.y + r.h - 2);
-        v.w = std::min(v.w, r.x + r.w - v.x);
-        v.h = std::min(v.h, r.y + r.h - v.y);
+        // The visible part: a square of max(view_w / 54, view_h / 28) tiles.
+        const ui::Rect v = minimapFrame(r, sc, n, camX_, camY_, viewW_, viewH_, app_.settings().exactMinimap);
         frameRect(s, v, ui.black);
         frameRect(s, {v.x + 1, v.y + 1, v.w - 2, v.h - 2}, ui.white);
     }
@@ -1656,8 +1735,8 @@ private:
     }
 
     void drawStrip(render::IndexedSurface& s, const ui::UiContext& ui) {
-        const ui::Rect strip{0, viewH_, viewW_, height_ - viewH_};
-        ui::drawFrame(s, ui, 498, strip);
+        const ui::Rect strip = layout_.strip();
+        drawMessageStrip(app_, s, layout_);
         const render::Font& f = *ui.standard;
         const int secs = clockMs_ / 1000;
         char clock[16];
@@ -1675,9 +1754,12 @@ private:
     std::unique_ptr<game::BattleSession> session_;
     ColorMatcher colors_;
     bool large_ = false;
+    ViewLayout layout_;
     int width_ = 640, height_ = 480, viewW_ = 504, viewH_ = 448;
     render::IndexedSurface viewport_;
     float camX_ = 0, camY_ = 0;
+    MapDrag drag_;
+    bool minimapDrag_ = false; // the left button went down on the minimap
     int mouseX_ = -1, mouseY_ = -1;
     int scrollAcc_ = 0, tickAcc_ = 0;
     int clockMs_ = 0;
@@ -1692,6 +1774,7 @@ private:
     bool firstMap_ = false;
     std::vector<ui::Button> deployButtons_, tacticButtons_, waitButtons_, dialogButtons_, autoButtons_;
     ui::RadioGroup soundGroup_, animGroup_, scrollGroup_;
+    OpenDayButton openDay_;             // opens the OpenDay options
     ui::ListBox deployList_;
     std::vector<const game::UnitType*> deployTypes_;
     std::vector<int> deployed_;

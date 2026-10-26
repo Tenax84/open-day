@@ -346,6 +346,8 @@ campaign only the host can save). See [savegame.md](savegame.md) 1.
 | *Quit* | (197, 340) | 53×17 | 649 | hot key string 123; confirmation string 819 |
 | *Back* (resume) | (336, 340) | 53×17 | 653 | Esc; closes the dialog |
 
+| *OpenDay* *(OpenDay addition)* | centred between *Quit* and *Back*, y 340 | 53×17 | see below | `O`; opens the OpenDay options |
+
 (Earlier versions of this document called the button at (10, 340)
 *Restart scenario*; that was wrong — it is *Surrender*.)
 
@@ -373,6 +375,100 @@ not traced; exiting is assumed)*.
    "...SAVING..." box is closed; on failure an OK box shows string **817**
    ("A problem occured during saving. Please try again."). On success
    nothing else is shown; the options dialog stays open *(?)*.
+
+### OpenDay options *(OpenDay addition)*
+
+OpenDay's own settings, which the original does not have, are kept out of
+the original dialogs: the in-game options of the battle views and of the
+strategic screens get one more button, *OpenDay*, centred between *Quit*
+(ends at x 250) and *Back* (starts at x 336). The atlas has no such button,
+so it is made from the four frames of *Back* (653–656): the 5 columns at
+each end are kept, columns 5–12 (plain face) are repeated in between, and
+the caption is drawn in bold capitals, 10 px, 1 px letter spacing, colour
+nearest to RGB (206, 196, 148); the button is 53 px wide or wider if the
+caption needs it.
+
+The dialog opens over the options at the same place and is drawn from the
+same panel (648):
+
+- The title strip is re-lettered: panel rectangle (152, 12)–(252, 35)
+  is covered with the lettering-free part (88, 12)–(152, 35) repeated, and
+  "OPENDAY" is drawn centred in (84, 13, 231×19), bold 17 px, 3 px letter
+  spacing, colour nearest to RGB (162, 154, 103).
+- The controls of the options are covered by one black box (14, 41,
+  373×289) made from the CD player's box (167, 67, 220×225): the 3-pixel
+  edges and corners are kept, the rest is repeated.
+- Inside: a section heading ("CAMERA", bold 12 px, the title's colour),
+  then one row per setting: the on/off lamp (665) at x + 16, the name in
+  the standard font in white and a description of up to two lines in grey
+  under it (the first row at y + 32 of the box, the description 18 px
+  under the name; a row is 18 px plus its description's lines of 14 px
+  tall, with 4 px between rows). A click on the lamp or anywhere on the row switches the
+  setting at once (like the original options, there is no confirmation).
+- *Back* (653) at (336, 340), `Esc`, closes the dialog.
+
+| Setting | `openday.cfg` key | Default | Effect |
+|---|---|---|---|
+| Edge scrolling | `edge_scroll` | **off** | tactical-interface.md 3.6 |
+| Smooth edge scrolling | `smooth_edge_scroll` | on | tactical-interface.md 3.6 |
+| Drag the map with the right button | `drag_scroll` | on | tactical-interface.md 3.6 |
+| Keep the view when selecting | `keep_view_on_select` | on | tactical-interface.md 3.2 (click on an own unit) |
+| Exact minimap | `exact_minimap` | on | tactical-interface.md 2.6 (click and viewport frame) |
+| Drag on the minimap | `minimap_drag` | on | tactical-interface.md 2.6 (dragging with the left button) |
+| Resizable window | `resizable_window` | on | the map screens are laid out for the window's size (below) |
+
+#### Resizable window
+
+The original draws every screen at 640×480 or 1024×768. OpenDay's window
+can always be resized; with this option off, the picture keeps its size and
+is scaled to fit the window (letter-boxed, as before). With the option on:
+
+- **Screens that follow the window:** the battle views, the city screen,
+  the continent screen, the map screens over the battle and the city, and
+  the OpenDay options over a battle. Every other screen (front-end menus,
+  videos, loading pictures, army screen, report, message boxes, the in-game
+  options of the strategic screens) keeps its size and is scaled to fit the
+  window as before.
+- **Size of the picture:** the standard size `W0 × H0` is the resolution's
+  (640×480 or 1024×768). With the window's drawing area `w × h` in pixels,
+  the scale is `k = min(w / W0, h / H0)` (not rounded), so the interface
+  takes the same share of the window as at the standard size. The side
+  that limits `k` keeps its standard length, the other gets the window's
+  shape: `W0 × max(H0, round(h × W0 / w))` when `w × H0 ≤ h × W0`,
+  otherwise `max(W0, round(w × H0 / h)) × H0`. The picture is scaled by
+  `k` (nearest pixel, as with the option off) and fills the window, up to
+  a rounding pixel. A wider window shows more of the map sideways, a
+  taller one more downwards; a window of the standard shape shows the
+  standard layout, only larger or smaller.
+- **Layout of the map screens:** the side panel (136 px wide with the
+  640×480 art, 184 px with the 1024×768 art) stays at the right edge and
+  the message strip (32 / 40 px high) under the view, the view takes the
+  rest: `view_w = W − panel`, `view_h = H − strip`. At the standard sizes
+  this is the original's layout (tactical-interface.md 1.1). All panel
+  controls keep their offsets from the panel's top-left corner, the strip's
+  from its right end, as at 1024×768.
+- **Panel below its art:** where the screen is taller than the panel art,
+  the rows 480–767 of the panel's 1024×768 art (its filler, the left
+  columns as wide as the panel) are repeated downwards, under the small
+  art too; without the 1024×768 atlas the rest is black.
+- **Strip wider than its art:** the left part up to 140 px before the art's
+  right end is drawn at the left, the last 140 px at the strip's right end,
+  and the 60 px left of that piece are repeated in between (they lie under
+  the message box at both sizes).
+- **Contents of the view:** the isometric map shows more tiles; the colony
+  map of the continent screen and the overview picture of the map screens
+  keep their size and stay centred in the view (the map screen's square is
+  `min(view_w, view_h)`, the picture as at the standard size). The
+  minimap's viewport frame covers `max(view_w / 54, view_h / 28)` tiles.
+- **Dialogs:** the objectives dialog keeps its place relative to the
+  middle of the view (at (40, 40) of the standard view); the in-game
+  options, its yes / no boxes and the OpenDay options are centred on the
+  view as before. The encyclopedia, a dialog that leaves the screen below
+  visible but does not follow the window, is drawn at its standard size in
+  the middle of the picture, the input shifted to match.
+- **On resizing:** the view keeps its centre (map screens) and the controls
+  are placed again; a drag in progress ends. Switching the option off or on
+  takes effect at once.
 
 ### Save and load dialogs (`CInterfSave` / `CInterfLoad`)
 
@@ -479,7 +575,8 @@ text boxes) and the game program `app/` (screens).
 - Load / save: panels 739 / 750 with ten slots (black boxes at x 52, y 40 +
   32 × slot, 217 × 21); BACK at (10, 383) and LOAD / SAVE at (176, 383) *(OpenDay
   positions)*. OpenDay saves in its own format (campaign.md 8).
-- The program window is scaled; the mouse pointer is the system arrow.
+- The program window is scaled, or the map screens are laid out for it
+  (resizable window, above); the mouse pointer is the system arrow.
 - The music starts (random track, as described) when a battle screen opens.
 - The encyclopedia is implemented as specified in
   [encyclopedia.md](encyclopedia.md) (not reachable from the main menu, as
