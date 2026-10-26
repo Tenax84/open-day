@@ -1,5 +1,6 @@
 #include "app/hd_pack_auto.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -63,6 +64,24 @@ bool hdPackPresent(const fs::path& packDir) {
     return true;
 }
 
+void drawHdPackProgress(render::IndexedSurface& s, const ui::UiContext& ui, const HdPackMaker& maker) {
+    const int pct = static_cast<int>(std::clamp(maker.progress(), 0.0f, 1.0f) * 100.0f);
+    const std::string text =
+        std::string(maker.downloading() ? "Downloading the upscaler... " : "Making the HD interface... ") + std::to_string(pct) + " %";
+    const int lh = ui.standard ? ui.standard->lineHeight() : 14;
+    const int w = 220, h = lh + 16, x = s.width() - w - 6, y = 6;
+    auto fill = [&s](int fx, int fy, int fw, int fh, std::uint8_t c) {
+        for (int r = std::max(fy, 0); r < std::min(fy + fh, s.height()); ++r)
+            std::fill(s.row(r) + std::max(fx, 0), s.row(r) + std::min(fx + fw, s.width()), c);
+    };
+    fill(x, y, w, h, ui.grey);
+    fill(x + 1, y + 1, w - 2, h - 2, ui.black);
+    if (ui.standard) ui.standard->draw(s, x + 6, y + 3, text, ui.white);
+    const int bx = x + 6, by = y + 5 + lh, bw = w - 12;
+    fill(bx, by, bw, 6, ui.grey);
+    fill(bx + 1, by + 1, (bw - 2) * pct / 100, 4, ui.highlight);
+}
+
 HdPackMaker::HdPackMaker(const GameData& data, fs::path userDir, std::string remembered)
     : userDir_(std::move(userDir)) {
     thread_ = std::thread([this, &data, r = std::move(remembered)] { work(data, r); });
@@ -89,7 +108,10 @@ fs::path HdPackMaker::download() {
         hash.update({d, n});
         return true;
     };
-    req.onProgress = [this](std::uint64_t, std::uint64_t) { return !cancel_.load(); };
+    req.onProgress = [this](std::uint64_t received, std::uint64_t) {
+        progress_ = static_cast<float>(std::min(received, kPackage.size)) / static_cast<float>(kPackage.size);
+        return !cancel_.load();
+    };
     std::printf("downloading the upscaler (%s)...\n", kPackage.name);
     std::fflush(stdout);
     const platform::HttpResponse res = platform::httpGet(req);
@@ -142,11 +164,16 @@ fs::path HdPackMaker::download() {
 
 void HdPackMaker::work(const GameData& data, const std::string& remembered) {
     fs::path upscaler = findUpscaler({}, remembered);
-    if (upscaler.empty()) upscaler = download();
+    if (upscaler.empty()) {
+        downloading_ = true;
+        upscaler = download();
+        downloading_ = false;
+        progress_ = 0;
+    }
     if (cancel_) return outcome_.store(Outcome::Cancelled);
     if (upscaler.empty()) return outcome_.store(Outcome::Failed);
     upscaler_ = upscaler;
-    const int rc = makeHdPack(data, upscaler, kModel, userDir_ / "hd-interface", userDir_ / "hd-interface.work", &cancel_, &error_);
+    const int rc = makeHdPack(data, upscaler, kModel, userDir_ / "hd-interface", userDir_ / "hd-interface.work", &cancel_, &error_, &progress_);
     if (cancel_) return outcome_.store(Outcome::Cancelled);
     outcome_.store(rc == 0 ? Outcome::Made : Outcome::Failed);
 }

@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <thread>
 #include <vector>
 
@@ -63,7 +64,8 @@ void fail(std::string* error, const std::string& why) {
 // Windows: started directly, so that it gets no console window when the
 // game was not started from one (SDL's processes get one unless they run
 // in the background, and then their exit code is lost).
-int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel, std::string* error) {
+int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel, std::string* error,
+               const std::function<void()>& poll) {
     std::wstring line;
     for (const std::string& a : args) {
         const fs::path p(std::u8string(reinterpret_cast<const char8_t*>(a.c_str())));
@@ -81,6 +83,7 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
     CloseHandle(pi.hThread);
     while (WaitForSingleObject(pi.hProcess, 100) == WAIT_TIMEOUT) {
         if (cancelled(cancel)) TerminateProcess(pi.hProcess, 1);
+        if (poll) poll();
     }
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
@@ -88,7 +91,8 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
     return cancelled(cancel) ? -1 : static_cast<int>(code);
 }
 #else
-int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel, std::string* error) {
+int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel, std::string* error,
+               const std::function<void()>& poll) {
     std::vector<const char*> argv;
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -109,6 +113,7 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
             SDL_WaitProcess(p, true, &code);
             break;
         }
+        if (poll) poll();
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     SDL_DestroyProcess(p);
@@ -118,9 +123,10 @@ int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* ca
 
 // Runs the upscaler on every PNG of `in`, writing PNGs of the same names into
 // `out`. `tile` 0 = the program's choice. Its own output is not shown. The
-// models are taken from the program's own folder.
+// models are taken from the program's own folder. `poll` is called about ten
+// times a second while it runs.
 bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::path& in, const fs::path& out, int tile,
-                 const std::atomic<bool>* cancel, std::string* error) {
+                 const std::atomic<bool>* cancel, std::string* error, const std::function<void()>& poll = {}) {
     std::vector<std::string> args = {utf8(upscaler), "-i", utf8(in), "-o", utf8(out), "-n", model, "-s", "4",
                                      "-t", std::to_string(tile), "-f", "png"};
     std::error_code ec;
@@ -129,7 +135,7 @@ bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::p
         args.push_back(utf8(models));
     }
     std::string why;
-    const int code = runProgram(args, cancel, &why);
+    const int code = runProgram(args, cancel, &why, poll);
     if (code != 0 && !cancelled(cancel)) {
         if (why.empty()) fail(error, "the upscaler ended with code " + std::to_string(code));
         else if (error) *error = why; // printed already
@@ -191,7 +197,7 @@ fs::path findUpscaler(const fs::path& given, const std::string& remembered) {
 }
 
 int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string& model, const fs::path& packDir,
-               const fs::path& workDir, const std::atomic<bool>* cancel, std::string* error) {
+               const fs::path& workDir, const std::atomic<bool>* cancel, std::string* error, std::atomic<float>* progress) {
     std::error_code ec;
     fs::remove_all(workDir, ec);
     const fs::path in = workDir / "in", out = workDir / "out";
@@ -201,6 +207,10 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
         return 1;
     }
     int made = 0, failed = 0;
+    int finished = 0; // pictures of the resolutions already done
+    auto report = [&](int done) {
+        if (progress) progress->store(static_cast<float>(std::min(done, total)) / static_cast<float>(total));
+    };
     for (const char* sub : {"640", "1024"}) {
         if (!fs::is_directory(in / sub, ec)) continue;
         std::vector<fs::path> names;
@@ -208,7 +218,17 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
         std::printf("upscaling %zu pictures (%s) with %s...\n", names.size(), sub, model.c_str());
         std::fflush(stdout);
         fs::create_directories(out / sub, ec);
-        if (!runUpscaler(upscaler, model, in / sub, out / sub, 0, cancel, error)) {
+        // Progress: the pictures the upscaler has written so far.
+        int polls = 0;
+        auto poll = [&] {
+            if (++polls % 5 != 0) return;
+            std::error_code e;
+            int n = 0;
+            for (const fs::directory_entry& f : fs::directory_iterator(out / sub, e))
+                if (f.path().extension() == ".png") ++n;
+            report(finished + n);
+        };
+        if (!runUpscaler(upscaler, model, in / sub, out / sub, 0, cancel, error, poll)) {
             fs::remove_all(workDir, ec);
             return 1;
         }
@@ -242,6 +262,8 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
             }
             ++failed;
         }
+        finished += static_cast<int>(names.size());
+        report(finished);
     }
     fs::remove_all(workDir, ec);
     std::printf("%d of %d pictures written to %s", made, total, utf8(packDir).c_str());

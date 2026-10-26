@@ -11,6 +11,8 @@
 #include <thread>
 
 #include "app/app.hpp"
+#include "render/indexed_surface.hpp"
+#include "ui/widgets.hpp"
 
 namespace openday::app {
 
@@ -31,6 +33,10 @@ public:
     HdPackMaker& operator=(const HdPackMaker&) = delete;
 
     Outcome outcome() const { return outcome_.load(); }
+    // While running: whether the upscaler is being downloaded (else the
+    // pictures are being made), and how far that step is (0 to 1).
+    bool downloading() const { return downloading_.load(); }
+    float progress() const { return progress_.load(); }
     // The upscaler used, and why it failed (valid once the outcome is in).
     const std::filesystem::path& upscaler() const { return upscaler_; }
     const std::string& error() const { return error_; }
@@ -42,12 +48,17 @@ private:
     std::filesystem::path userDir_, upscaler_;
     std::string error_;
     std::atomic<Outcome> outcome_{Outcome::Running};
-    std::atomic<bool> cancel_{false};
+    std::atomic<bool> cancel_{false}, downloading_{false};
+    std::atomic<float> progress_{0};
     std::thread thread_;
 };
 
 // The pack folder holds pictures of both resolutions (made earlier, or by
 // hand); otherwise the pack is missing or was left half made.
 bool hdPackPresent(const std::filesystem::path& packDir);
+
+// The progress strip of a running maker, drawn in the top right corner of the
+// frame.
+void drawHdPackProgress(render::IndexedSurface& s, const ui::UiContext& ui, const HdPackMaker& maker);
 
 } // namespace openday::app

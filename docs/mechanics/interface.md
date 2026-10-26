@@ -644,6 +644,13 @@ with xBRZ; that was removed.)*
      Closing the game first stops the upscaler and removes the work folder;
      the next start tries again.
 
+  While it runs, a strip in the top right corner of the frame (220 pixels
+  wide, 6 from the edges; over screens drawn in the game palette only, not
+  over videos) says "Downloading the upscaler... N %" (bytes received of
+  the pinned size) or "Making the HD interface... N %" (pictures the
+  upscaler has written into its output folder, counted twice a second, of
+  all the pictures of both resolutions), with a bar below.
+
   The `hd_pack` key of earlier versions in `openday.cfg` is ignored.
 - **Memory:** pack pictures are kept up to 64 M texels (256 MB); above
   that, the ones used longest ago and not in the current frame are dropped.

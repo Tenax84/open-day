@@ -350,6 +350,8 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                 render::ImageLayer::setActive(&imageLayer);
             }
             app.draw(surface);
+            // The automatic pack's progress, over screens in the game palette.
+            if (packMaker && !screen->palette()) app::drawHdPackProgress(surface, app.ui(), *packMaker);
             render::TextLayer::setActive(nullptr);
             render::ImageLayer::setActive(nullptr);
             if (sharp) {

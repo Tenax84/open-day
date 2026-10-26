@@ -26,9 +26,11 @@ std::filesystem::path findUpscaler(const std::filesystem::path& given, const std
 // element the upscaler fails on is tried once more in small tiles, then keeps
 // its original pixels. Returns 0 on success; prints its progress, and on
 // failure stores the reason in `*error`. Setting `*cancel` stops the
-// upscaler and returns 1 (pictures already moved stay).
+// upscaler and returns 1 (pictures already moved stay). `*progress` follows
+// the share of the pictures made so far (0 to 1).
 int makeHdPack(const GameData& data, const std::filesystem::path& upscaler, const std::string& model,
                const std::filesystem::path& packDir, const std::filesystem::path& workDir,
-               const std::atomic<bool>* cancel = nullptr, std::string* error = nullptr);
+               const std::atomic<bool>* cancel = nullptr, std::string* error = nullptr,
+               std::atomic<float>* progress = nullptr);
 
 } // namespace openday::app
