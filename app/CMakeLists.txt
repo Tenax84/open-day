@@ -1,6 +1,7 @@
 add_executable(openday
     app.cpp
     setup.cpp
+    setup_ui.cpp
     battle_screen.cpp
     campaign_army.cpp
     campaign_city.cpp
@@ -10,6 +11,7 @@ add_executable(openday
     debug_tools.cpp
     encyclopedia_screen.cpp
     game.cpp
+    gog_download.cpp
     hd_interface.cpp
     hd_pack.cpp
     main.cpp
@@ -21,6 +23,7 @@ add_executable(openday
     ui_frames.cpp
     updater.cpp
     view_layout.cpp
+    window_icon.cpp
 )
 target_include_directories(openday PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(openday PRIVATE OPENDAY_VERSION="${PROJECT_VERSION}")
@@ -30,10 +33,28 @@ if(WIN32)
     # GUI subsystem: no console window when started from the Start menu or
     # Explorer; from a terminal the output still appears (console.cpp).
     set_target_properties(openday PROPERTIES WIN32_EXECUTABLE ON)
+    target_sources(openday PRIVATE openday.rc) # the program icon
+endif()
+if(NOT WIN32 AND NOT APPLE)
+    # The window icon (window_icon.cpp), embedded (cmake/EmbedFile.cmake).
+    set(icon_png ${PROJECT_SOURCE_DIR}/assets/icon/openday-256.png)
+    set(icon_cpp ${CMAKE_CURRENT_BINARY_DIR}/embedded/windowIcon.cpp)
+    add_custom_command(OUTPUT ${icon_cpp}
+        COMMAND ${CMAKE_COMMAND} -DINPUT=${icon_png} -DOUTPUT=${icon_cpp} -DSYMBOL=windowIcon
+                -P ${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake
+        DEPENDS ${icon_png} ${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake
+        COMMENT "Embedding openday-256.png")
+    target_sources(openday PRIVATE ${icon_cpp})
+    target_compile_definitions(openday PRIVATE OPENDAY_WINDOW_ICON)
 endif()
 if(APPLE)
-    # OpenDay.app; neutral name and no icon (no branding of the original game).
+    # OpenDay.app; neutral name and the project's own icon (no branding of
+    # the original game).
+    set(icon_icns ${PROJECT_SOURCE_DIR}/assets/icon/openday.icns)
+    set_source_files_properties(${icon_icns} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    target_sources(openday PRIVATE ${icon_icns})
     set_target_properties(openday PROPERTIES
+        MACOSX_BUNDLE_ICON_FILE openday.icns
         MACOSX_BUNDLE TRUE
         OUTPUT_NAME OpenDay
         MACOSX_BUNDLE_INFO_PLIST ${PROJECT_SOURCE_DIR}/cmake/Info.plist.in

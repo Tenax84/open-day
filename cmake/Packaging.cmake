@@ -58,6 +58,9 @@ install(FILES ${stb_SOURCE_DIR}/LICENSE DESTINATION ${openday_doc_dir}/licenses 
 if(OPENDAY_BUILD_VIEWER AND DEFINED sdl3_SOURCE_DIR)
     install(FILES ${sdl3_SOURCE_DIR}/LICENSE.txt DESTINATION ${openday_doc_dir}/licenses RENAME SDL3.txt)
 endif()
+if(EXISTS "${OPENDAY_WEBVIEW2_DIR}/LICENSE.txt" AND TARGET openday_platform)
+    install(FILES ${OPENDAY_WEBVIEW2_DIR}/LICENSE.txt DESTINATION ${openday_doc_dir}/licenses RENAME WebView2.txt)
+endif()
 
 # Platform part of the package name.
 string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" openday_arch)
@@ -106,6 +109,8 @@ elseif(WIN32)
     set(CPACK_NSIS_MANIFEST_DPI_AWARE ON)
     set(CPACK_NSIS_UNINSTALL_NAME Uninstall)
     set(CPACK_NSIS_INSTALLED_ICON_NAME openday.exe)
+    set(CPACK_NSIS_MUI_ICON "${PROJECT_SOURCE_DIR}/assets/icon/openday.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${PROJECT_SOURCE_DIR}/assets/icon/openday.ico")
     set(CPACK_NSIS_URL_INFO_ABOUT "${CPACK_PACKAGE_HOMEPAGE_URL}")
     set(CPACK_NSIS_HELP_LINK "${CPACK_PACKAGE_HOMEPAGE_URL}")
     # Start menu shortcut; openday.exe is in the installation root, not bin/.

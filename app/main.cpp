@@ -66,7 +66,9 @@
 #include "app/mcp_server.hpp"
 #include "app/screens.hpp"
 #include "app/setup.hpp"
+#include "app/setup_ui.hpp"
 #include "app/sharp_text.hpp"
+#include "app/window_icon.hpp"
 #include "formats/png_writer.hpp"
 #include "render/image_layer.hpp"
 #include "render/text_layer.hpp"
@@ -195,38 +197,6 @@ int scriptKey(const std::string& k) {
     return k.empty() ? 0 : static_cast<unsigned char>(k[0]);
 }
 
-// Sizes the (hidden) window so that it fits the usable area of its display,
-// title bar and taskbar included, and shows it centred there. scale > 0 asks
-// for that multiple of 640 x 480 (reduced when it does not fit); 0 picks the
-// largest whole multiple that fits, or the largest 4:3 size below 2x.
-void placeWindow(SDL_Window* window, int scale) {
-    SDL_Rect area{};
-    if (!SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &area) || area.w <= 0 || area.h <= 0) {
-        SDL_SetWindowSize(window, 640 * std::max(scale, 1), 480 * std::max(scale, 1));
-        SDL_ShowWindow(window);
-        return;
-    }
-    int top = 0, left = 0, bottom = 0, right = 0;
-    if (!SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right) || top == 0) {
-        top = 32; // typical title bar when the borders are not known yet
-        left = right = bottom = 8;
-    }
-    const int maxW = area.w - left - right, maxH = area.h - top - bottom;
-    const int fit = std::max(1, std::min(maxW / 640, maxH / 480));
-    int w = 0, h = 0;
-    if (scale > 0 || fit >= 2) {
-        const int s = scale > 0 ? std::min(scale, fit) : fit;
-        w = 640 * s;
-        h = 480 * s;
-    } else {
-        h = std::max(240, std::min(maxH, maxW * 3 / 4));
-        w = h * 4 / 3;
-    }
-    SDL_SetWindowSize(window, w, h);
-    SDL_SetWindowPosition(window, area.x + left + std::max(0, (maxW - w) / 2), area.y + top + std::max(0, (maxH - h) / 2));
-    SDL_ShowWindow(window);
-}
-
 // `config` is null in the scripted test mode (settings are neither read nor
 // stored then).
 // `mcpPort` > 0 starts the debug server on that port.
@@ -234,11 +204,16 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         int mcpPort, std::deque<Step> script, const fs::path& shot) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
-    if (!SDL_CreateWindowAndRenderer("OpenDay", 640, 480, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN, &window, &renderer)) {
+    // The setup window of the first start goes on as the game's.
+    if (app::setup::SetupUi::release(window, renderer)) {
+        if (scale > 0) app::setup::placeWindow(window, scale);
+    } else if (SDL_CreateWindowAndRenderer("OpenDay", 640, 480, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN, &window, &renderer)) {
+        app::setWindowIcon(window);
+        app::setup::placeWindow(window, scale);
+    } else {
         std::fprintf(stderr, "SDL_CreateWindowAndRenderer failed: %s\n", SDL_GetError());
         return 1;
     }
-    placeWindow(window, scale);
     SDL_SetRenderVSync(renderer, 1);
     {
         platform::AudioPlayer audio;
@@ -566,6 +541,11 @@ int main(int argc, char** argv) {
     int rc = 0;
     try {
         app::setup::Config config = app::setup::Config::load();
+        {
+            app::Settings settings;
+            loadSettings(settings, config);
+            app::setup::SetupUi::setSharpText(settings.sharpText);
+        }
         std::string error;
         if (!installFrom.empty()) {
             gameDirArg = app::setup::installGameFiles(installFrom, interactive, error);
@@ -575,7 +555,7 @@ int main(int argc, char** argv) {
         bool defaultData = false;
         const fs::path dataDir = app::setup::dataDir(dataDirArg, defaultData);
         if (gameDir.empty()) {
-            app::setup::reportError(error, interactive);
+            if (!error.empty()) app::setup::reportError(error, interactive); // empty: the user quit
             rc = 2;
         } else if (!app::setup::prepareData(gameDir, dataDir, defaultData, convert, interactive, error)) {
             app::setup::reportError(error, interactive);
@@ -607,6 +587,7 @@ int main(int argc, char** argv) {
         app::setup::reportError(e.what(), interactive);
         rc = 1;
     }
+    app::setup::SetupUi::close();
     SDL_Quit();
     return rc;
 }

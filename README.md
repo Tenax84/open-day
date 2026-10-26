@@ -54,11 +54,13 @@ OpenDay needs the game files of your own copy. Any of these works:
   image...* in the window OpenDay shows when it finds no game files, or
   start it once with `--install-from <file>`. This works the same on
   Windows, macOS and Linux.
-- **Download from GOG...** in the same window opens your GOG library in the
-  browser and watches your downloads folder. Download the offline backup
-  installer of the game there (log in to GOG in the browser; OpenDay never
-  sees your account) and OpenDay copies the game files out of it as soon as
-  the download, including any `.bin` files, is complete.
+- **Download from GOG...** in the same window: sign in to GOG on GOG's own
+  page (on Windows in a panel inside the window, elsewhere in your web
+  browser, copying the address of the empty page GOG ends on), and OpenDay
+  downloads the Windows installer of your copy into your downloads folder,
+  resuming a broken-off download, and copies the game files out of it. The
+  sign-in is kept in memory for this one download; OpenDay never sees your
+  password. See [docs/gog-download.md](docs/gog-download.md).
 - **An installed game folder**, the one that contains `GLOBALS`, `IMGS`,
   `INTERF`, `SCENS`, `ANMSUNIT` and so on. On Windows, OpenDay finds the
   usual GOG install locations by itself. A copy of the folder (or one

@@ -1,5 +1,8 @@
 #include "platform/http.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -14,6 +17,19 @@
 
 namespace openday::platform {
 
+namespace {
+
+// "bytes 100-199/1000" (or "bytes 100-199/*").
+void parseContentRange(const std::string& value, HttpHead& head) {
+    unsigned long long first = 0, last = 0;
+    char total[32] = {};
+    if (std::sscanf(value.c_str(), " bytes %llu-%llu/%31s", &first, &last, total) < 3) return;
+    head.rangeFirst = first;
+    if (total[0] != '*') head.rangeTotal = std::strtoull(total, nullptr, 10);
+}
+
+} // namespace
+
 #ifdef _WIN32
 
 namespace {
@@ -24,6 +40,15 @@ std::wstring wide(const std::string& s) {
     std::wstring w(static_cast<std::size_t>(n), L'\0');
     MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()), w.data(), n);
     return w;
+}
+
+std::string narrow(const wchar_t* w) {
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+    if (n <= 1) return {};
+    std::string s(static_cast<std::size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
+    s.resize(static_cast<std::size_t>(n - 1));
+    return s;
 }
 
 std::string lastError(const char* what) {
@@ -108,9 +133,29 @@ HttpResponse httpGet(const HttpRequest& request) {
     std::uint64_t total = 0;
     wchar_t length[32] = {};
     size = sizeof(length);
-    if (WinHttpQueryHeaders(req.h, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, length, &size,
-                            WINHTTP_NO_HEADER_INDEX))
-        total = std::wcstoull(length, nullptr, 10);
+    const bool hasLength = WinHttpQueryHeaders(req.h, WINHTTP_QUERY_CONTENT_LENGTH, WINHTTP_HEADER_NAME_BY_INDEX, length,
+                                               &size, WINHTTP_NO_HEADER_INDEX);
+    if (hasLength) total = std::wcstoull(length, nullptr, 10);
+    if (request.onHead) {
+        HttpHead head;
+        head.status = res.status;
+        if (hasLength) head.contentLength = total;
+        wchar_t range[128] = {};
+        size = sizeof(range);
+        if (WinHttpQueryHeaders(req.h, WINHTTP_QUERY_CUSTOM, L"Content-Range", range, &size, WINHTTP_NO_HEADER_INDEX))
+            parseContentRange(narrow(range), head);
+        DWORD urlSize = 0;
+        WinHttpQueryOption(req.h, WINHTTP_OPTION_URL, nullptr, &urlSize);
+        if (urlSize > 0) {
+            std::wstring finalUrl(urlSize / sizeof(wchar_t), L'\0');
+            if (WinHttpQueryOption(req.h, WINHTTP_OPTION_URL, finalUrl.data(), &urlSize))
+                head.finalUrl = narrow(finalUrl.c_str());
+        }
+        if (!request.onHead(head)) {
+            res.error = "stopped";
+            return res;
+        }
+    }
 
     std::vector<std::uint8_t> buffer(64 * 1024);
     std::uint64_t received = 0;
@@ -150,8 +195,9 @@ struct CurlSlist;
 constexpr int kOptWriteData = 10001, kOptUrl = 10002, kOptUserAgent = 10018, kOptHttpHeader = 10023,
               kOptWriteFunction = 20011, kOptXferInfoData = 10057, kOptXferInfoFunction = 20219, kOptNoProgress = 43,
               kOptFollowLocation = 52, kOptMaxRedirs = 68, kOptConnectTimeout = 78, kOptLowSpeedLimit = 19,
-              kOptLowSpeedTime = 20, kOptProtocols = 181, kOptRedirProtocols = 182, kOptErrorBuffer = 10010;
-constexpr int kInfoResponseCode = 0x200000 + 2;
+              kOptLowSpeedTime = 20, kOptProtocols = 181, kOptRedirProtocols = 182, kOptErrorBuffer = 10010,
+              kOptHeaderFunction = 20079, kOptHeaderData = 10029;
+constexpr int kInfoResponseCode = 0x200000 + 2, kInfoEffectiveUrl = 0x100000 + 1;
 constexpr long kProtoHttps = 1L << 1;
 constexpr long kGlobalDefault = 3;
 constexpr std::size_t kErrorSize = 256;
@@ -198,12 +244,51 @@ const Curl& curl() {
 
 struct Transfer {
     const HttpRequest* request;
+    CurlHandle* handle = nullptr;
     bool cancelled = false;
+    bool stopped = false;
+    bool headDone = false;
+    HttpHead head; // of the latest response; a redirect starts it again
 };
+
+std::size_t onHeader(char* data, std::size_t size, std::size_t count, void* user) {
+    auto* t = static_cast<Transfer*>(user);
+    const std::size_t n = size * count;
+    std::string line(data, n);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) line.pop_back();
+    const auto colon = line.find(':');
+    if (line.rfind("HTTP/", 0) == 0) {
+        t->head = HttpHead{};
+    } else if (colon != std::string::npos) {
+        std::string name = line.substr(0, colon);
+        for (char& c : name)
+            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+        const std::string value = line.substr(colon + 1);
+        if (name == "content-length") t->head.contentLength = std::strtoull(value.c_str(), nullptr, 10);
+        else if (name == "content-range") parseContentRange(value, t->head);
+    }
+    return n;
+}
+
+// Tells the caller about the final response's head, once.
+bool reportHead(Transfer& t) {
+    if (t.headDone || !t.request->onHead) return true;
+    t.headDone = true;
+    const Curl& c = curl();
+    long status = 0;
+    c.easyGetinfo(t.handle, kInfoResponseCode, &status);
+    t.head.status = static_cast<int>(status);
+    const char* url = nullptr;
+    if (c.easyGetinfo(t.handle, kInfoEffectiveUrl, &url) == 0 && url) t.head.finalUrl = url;
+    if (t.request->onHead(t.head)) return true;
+    t.stopped = true;
+    return false;
+}
 
 std::size_t onWrite(char* data, std::size_t size, std::size_t count, void* user) {
     auto* t = static_cast<Transfer*>(user);
     const std::size_t n = size * count;
+    if (!reportHead(*t)) return 0;
     if (t->request->onData && !t->request->onData(reinterpret_cast<const std::uint8_t*>(data), n)) {
         t->cancelled = true;
         return 0;
@@ -241,7 +326,7 @@ HttpResponse httpGet(const HttpRequest& request) {
     }
     CurlSlist* headers = nullptr;
     for (const std::string& line : request.headers) headers = c.slistAppend(headers, line.c_str());
-    Transfer t{&request};
+    Transfer t{&request, h};
     char errorText[kErrorSize] = {};
     using WriteFn = std::size_t (*)(char*, std::size_t, std::size_t, void*);
     using ProgressFn = int (*)(void*, long long, long long, long long, long long);
@@ -261,11 +346,16 @@ HttpResponse httpGet(const HttpRequest& request) {
     c.easySetopt(h, kOptXferInfoFunction, static_cast<ProgressFn>(onProgress));
     c.easySetopt(h, kOptXferInfoData, &t);
     c.easySetopt(h, kOptNoProgress, 0L);
-    const int code = c.easyPerform(h);
+    using HeaderFn = std::size_t (*)(char*, std::size_t, std::size_t, void*);
+    c.easySetopt(h, kOptHeaderFunction, static_cast<HeaderFn>(onHeader));
+    c.easySetopt(h, kOptHeaderData, &t);
+    int code = c.easyPerform(h);
+    if (code == 0 && !reportHead(t)) code = -1; // an empty body
     long status = 0;
     c.easyGetinfo(h, kInfoResponseCode, &status);
     res.status = static_cast<int>(status);
     if (code == 0) res.ok = true;
+    else if (t.stopped) res.error = "stopped";
     else if (t.cancelled) res.error = "cancelled";
     else res.error = errorText[0] ? errorText : c.easyStrerror(code);
     c.easyCleanup(h);

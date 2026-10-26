@@ -608,6 +608,55 @@ computer; no enlarged art ships with OpenDay.
 - Screenshots of the debug server and of the test mode show the original
   art. Switching the option takes effect with the next frame.
 
+### Setup window *(OpenDay addition)*
+
+What OpenDay shows before the game runs, when it finds no game files or has
+to copy or convert them (`app/setup_ui.*`, `app/setup.cpp`). The game's art
+is not there yet, so the look of its menus is drawn by OpenDay itself, with
+its own palette: one 640×480 screen in the program window, scaled and
+centred like the game screens (sharp bilinear; the text drawn smooth when
+*Sharp text* is on). The pages change in that window, messages open as
+dialogs over it, and once the data is ready the same window goes on as the
+game's (the main menu appears in it).
+
+- **Look:** black screen, the line "OpenDay <version> - not affiliated with
+  the original publisher" at (4, 462) in grey as on the main menu. Panels:
+  a 1 px near-black line, a 2 px raised edge (light gold top and left, dark
+  brown bottom and right), filled with a camouflage of green, olive, brown
+  and khaki blotches with a fine grain (made from value noise, fixed seed).
+  A title strip 24 px high, 7 px inside the edge: sunk, with a small raised
+  bar at each end and the title in bold capitals, 16 px, 2 px letter
+  spacing, gold with a dark shadow. Texts stand in sunk black wells.
+  Buttons: olive face, raised 1 px edge, bold capitals 13 px with 1 px
+  spacing; lighter face and gold letters under the pointer, sunk edge and
+  the caption 1 px lower while held, the action on release over the same
+  button.
+- **Dialogs:** a panel 440 px wide in the middle of the screen, the title
+  in its strip, the message in a well (long paths broken after a `\` or
+  `/`), the buttons (120×24) at the bottom right; the screen below is
+  shaded (every other pixel black, as in the game). Enter presses the first
+  button, Escape (or closing the window) the last.
+- **First page** ("OPENDAY", panel 440×408 at (100, 34)): a well with the
+  explanation, the buttons *Game folder...*, *Installer or CD image...*,
+  *Download from GOG...* and, set apart, *Quit* (256×28, centred), and a
+  well below them telling what the button under the pointer does. The
+  system's folder or file dialog opens over the window (shaded behind it).
+  A folder without the game, or an installer that cannot be used, is told
+  in a dialog and the page stays. Escape or closing the window quits
+  without a further message.
+- **Download from GOG** (same panel, [gog-download.md](../gog-download.md)):
+  the sign-in panel opens over the first page, which stays unchanged under
+  it (not shaded; its buttons take no pointer); in the web-browser mode the
+  page explains the steps and has *Paste address*, *Open GOG again*, *GOG
+  store page* and *Cancel*; while downloading a well with the phase and the
+  megabytes, a bar and *Cancel*. A failure is a dialog with *Try again* and
+  *Close*.
+- **Copying / converting** (panel 440×164 at (100, 158), "COPYING THE GAME
+  FILES" / "PREPARING THE GAME DATA"): a well with what happens and the
+  current file, and a bar. Closing the window does not stop the work.
+- An error before the game starts is a dialog in this window (opened for
+  it when needed); a message box only when no window can be made.
+
 ### Save and load dialogs (`CInterfSave` / `CInterfLoad`)
 
 Both use the same geometry (details of the slot folders in

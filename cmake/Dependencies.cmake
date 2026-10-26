@@ -63,3 +63,20 @@ FetchContent_Declare(liberation_fonts
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(liberation_fonts)
+
+# WebView2 SDK (BSD-3-Clause, Microsoft): the GOG sign-in panel on Windows
+# (docs/gog-download.md). Only its header and static loader are used; the
+# browser itself is the WebView2 runtime of Windows. The NuGet package is a
+# zip file. OPENDAY_WEBVIEW2_DIR may name an unpacked package instead.
+set(OPENDAY_WEBVIEW2_DIR "" CACHE PATH "An unpacked Microsoft.Web.WebView2 NuGet package (else it is fetched)")
+option(OPENDAY_WEBVIEW2 "Build the GOG sign-in panel with WebView2 (Windows, MSVC)" ON)
+if(OPENDAY_BUILD_VIEWER AND WIN32 AND MSVC AND OPENDAY_WEBVIEW2 AND NOT OPENDAY_WEBVIEW2_DIR)
+    FetchContent_Declare(webview2
+        URL https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.4314.35
+        URL_HASH SHA256=90778deb1b77e36292828b4b5833c9255c27533f40e0ddd55891ae718944edc4
+        DOWNLOAD_NAME webview2-1.0.4314.35.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(webview2)
+    set(OPENDAY_WEBVIEW2_DIR ${webview2_SOURCE_DIR})
+endif()

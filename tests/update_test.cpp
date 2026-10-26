@@ -1,11 +1,13 @@
 // Updater building blocks on synthetic data: SHA-256, the JSON reader, the
-// release information, version comparison, and gzip / tar reading (archives
+// release information, version comparison, the GOG download's addresses
+// and answers, and gzip / tar reading (archives
 // made by this test with stored DEFLATE blocks).
 
 #include "formats/inflate.hpp"
 #include "formats/json.hpp"
 #include "formats/sha256.hpp"
 #include "formats/tar.hpp"
+#include "update/gog.hpp"
 #include "update/release.hpp"
 
 #include <algorithm>
@@ -251,6 +253,58 @@ void testTar() {
     CHECK(throws([&] { formats::gunzip(gzipStored(tar, false), 100); })); // output limit
 }
 
+
+void testGog() {
+    namespace gog = update::gog;
+    const std::string code(40, 'a');
+    CHECK(gog::signInAddress().starts_with("https://auth.gog.com/auth?client_id="));
+    CHECK(gog::signInAddress().find("redirect_uri=https%3A%2F%2Fembed.gog.com%2Fon_login_success%3Forigin%3Dclient") !=
+          std::string::npos);
+    // The whole landing address, the code alone, and text without a code.
+    CHECK(gog::loginCode(std::string(gog::landingAddress()) + "&code=" + code) == code);
+    CHECK(gog::loginCode("  https://embed.gog.com/on_login_success?origin=client&code=" + code + "-_x#frag\r\n") ==
+          code + "-_x");
+    CHECK(gog::loginCode(code) == code);
+    CHECK(!gog::loginCode("https://embed.gog.com/on_login_success?origin=client"));
+    CHECK(!gog::loginCode("short"));
+    CHECK(!gog::loginCode("https://example.com/?code=" + code + "%20"));
+    CHECK(!gog::loginCode("hello world, this is not a code at all"));
+    CHECK(gog::tokenAddress("a b").find("&code=a%20b&") != std::string::npos);
+    CHECK(gog::accessToken(R"({"access_token":"tok","expires_in":3600})") == "tok");
+    CHECK(gog::accessToken(R"({"error":"invalid_grant"})").empty());
+    CHECK(gog::accessToken("not json").empty());
+
+    const std::string product = R"({"id":1119459074,"downloads":{"installers":[
+        {"os":"mac","language":"en","files":[{"downlink":"https://api.gog.com/m","size":5}]},
+        {"os":"windows","language":"fr","files":[{"downlink":"https://api.gog.com/fr","size":7}]},
+        {"os":"windows","language":"en","files":[{"downlink":"https://api.gog.com/en0","size":423624704},
+                                                 {"downlink":"https://api.gog.com/en1","size":12}]}]}})";
+    const auto files = gog::windowsInstaller(product);
+    CHECK(files.size() == 2 && files[0].downlink == "https://api.gog.com/en0" && files[0].size == 423624704 &&
+          files[1].size == 12);
+    const auto french = gog::windowsInstaller(R"({"downloads":{"installers":[
+        {"os":"windows","language":"fr","files":[{"downlink":"https://api.gog.com/fr","size":7}]}]}})");
+    CHECK(french.size() == 1 && french[0].downlink == "https://api.gog.com/fr");
+    CHECK(gog::windowsInstaller(R"({"downloads":{"installers":[
+        {"os":"windows","language":"en","files":[{"downlink":"https://evil.example/x","size":7}]}]}})").empty());
+    CHECK(gog::windowsInstaller("{}").empty());
+    CHECK(gog::secureLink(R"({"downlink":"https://cdn.gog.com/a/setup.exe?t=1"})") == "https://cdn.gog.com/a/setup.exe?t=1");
+    CHECK(gog::secureLink(R"({"downlink":"http://cdn.gog.com/a"})").empty());
+
+    CHECK(gog::fileNameOf("https://cdn.gog.com/x/setup_fallen_haven_1.0_%2820%29.exe?token=1") ==
+          "setup_fallen_haven_1.0_(20).exe");
+    CHECK(gog::fileNameOf("https://cdn.gog.com/x/..%2F..%2Fevil").empty());
+    CHECK(gog::fileNameOf("https://cdn.gog.com/x/.hidden").empty());
+    CHECK(gog::fileNameOf("https://cdn.gog.com/x/").empty());
+    CHECK(gog::downloadHost("https://gog-cdn-fastly.gog.com/a"));
+    CHECK(gog::downloadHost("https://cdn.GOGCDN.net:443/a"));
+    CHECK(gog::downloadHost("https://gog.com/a"));
+    CHECK(!gog::downloadHost("https://evilgog.com/a"));
+    CHECK(!gog::downloadHost("https://gog.com.evil.example/a"));
+    CHECK(!gog::downloadHost("http://cdn.gog.com/a"));
+    CHECK(!gog::downloadHost(""));
+}
+
 } // namespace
 
 int main() {
@@ -261,6 +315,7 @@ int main() {
     testVersions();
     testSums();
     testTar();
+    testGog();
     if (failures) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);
         return 1;

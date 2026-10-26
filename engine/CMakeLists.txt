@@ -24,7 +24,7 @@ target_include_directories(openday_formats PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(openday_formats PRIVATE openday_warnings)
 
 # Release information of the updater (no network code; testable).
-add_library(openday_update update/release.cpp)
+add_library(openday_update update/gog.cpp update/release.cpp)
 target_include_directories(openday_update PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(openday_update PUBLIC openday_formats PRIVATE openday_warnings)
 
@@ -79,9 +79,28 @@ target_link_libraries(openday_ui PUBLIC openday_render openday_formats PRIVATE o
 
 # Windowing-system parts (SDL3), only with the viewer / game executables.
 if(OPENDAY_BUILD_VIEWER)
-    add_library(openday_platform platform/audio.cpp platform/http.cpp)
+    # The GOG sign-in panel: WebView2 on Windows when the build has its SDK
+    # (cmake/Dependencies.cmake); elsewhere a panel that never opens.
+    set(webview2_arch x64)
+    if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+        set(webview2_arch x86)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|arm64|aarch64" OR CMAKE_GENERATOR_PLATFORM MATCHES "ARM64")
+        set(webview2_arch arm64)
+    endif()
+    set(webview2_loader "${OPENDAY_WEBVIEW2_DIR}/build/native/${webview2_arch}/WebView2LoaderStatic.lib")
+    if(WIN32 AND MSVC AND OPENDAY_WEBVIEW2 AND OPENDAY_WEBVIEW2_DIR AND EXISTS "${webview2_loader}")
+        set(web_sign_in_source platform/web_sign_in_win.cpp)
+        message(STATUS "GOG sign-in panel: WebView2 from ${OPENDAY_WEBVIEW2_DIR}")
+    else()
+        set(web_sign_in_source platform/web_sign_in.cpp)
+    endif()
+    add_library(openday_platform platform/audio.cpp platform/http.cpp ${web_sign_in_source})
     target_include_directories(openday_platform PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(openday_platform PUBLIC openday_formats SDL3::SDL3 PRIVATE openday_stb openday_warnings)
+    if(web_sign_in_source STREQUAL "platform/web_sign_in_win.cpp")
+        target_include_directories(openday_platform SYSTEM PRIVATE "${OPENDAY_WEBVIEW2_DIR}/build/native/include")
+        target_link_libraries(openday_platform PRIVATE "${webview2_loader}" version ole32 shell32 user32 gdi32 advapi32)
+    endif()
     # HTTPS: WinHTTP on Windows; elsewhere libcurl, loaded at run time.
     if(WIN32)
         target_link_libraries(openday_platform PRIVATE winhttp)

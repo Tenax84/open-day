@@ -49,6 +49,25 @@ struct Plan {
     std::vector<std::size_t> origin; // index into the Inno files or the ISO entries, per info.files
 };
 
+bool isHex(char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+
+// The game-relative path an installer entry is installed to, or "" for
+// setup helpers. Normally "{app}\...". Older GOG installers stage the game
+// files as "{tmp}/xx/yy\..." (two hex pairs) and move them into place with
+// their own script; "__redist\..." there is runtime redistributables and
+// "__support/app\..." goes into the game folder.
+std::string gameFileOf(const std::string& destination) {
+    if (startsWithIgnoreCase(destination, "{app}\\")) return safeRelativePath(destination.substr(6));
+    const std::string& d = destination;
+    if (!startsWithIgnoreCase(d, "{tmp}/") || d.size() < 13 || !isHex(d[6]) || !isHex(d[7]) || d[8] != '/' ||
+        !isHex(d[9]) || !isHex(d[10]) || d[11] != '\\')
+        return {};
+    std::string rest = d.substr(12);
+    if (startsWithIgnoreCase(rest, "__support/app\\")) rest = rest.substr(14);
+    else if (startsWithIgnoreCase(rest, "__")) return {};
+    return safeRelativePath(rest);
+}
+
 Plan planInstaller(const formats::InnoSetup& setup) {
     Plan plan;
     plan.info.kind = SourceKind::Installer;
@@ -57,8 +76,7 @@ Plan planInstaller(const formats::InnoSetup& setup) {
     std::map<std::string, std::size_t> seen; // a later entry for the same file replaces an earlier one
     for (std::size_t i = 0; i < setup.files().size(); ++i) {
         const formats::InnoFile& f = setup.files()[i];
-        if (!startsWithIgnoreCase(f.destination, "{app}\\")) continue;
-        const std::string rel = safeRelativePath(f.destination.substr(6));
+        const std::string rel = gameFileOf(f.destination);
         if (rel.empty()) continue;
         if (const auto it = seen.find(lower(rel)); it != seen.end()) {
             plan.info.files[it->second] = {rel, f.size};

@@ -188,6 +188,15 @@ Destinations carry Inno constants: `{app}\IMGS\TERRAINS.DBI` is installed
 below the chosen folder; `{tmp}\…` files are setup helpers. The game files
 are the `{app}` ones.
 
+Older GOG installers (for example the Inno 5.5.7 one of this game) stage
+the game files instead as `{tmp}/xx/yy\GLOBALS\GLOBAL.MDB`, where `xx/yy`
+are two pairs of hex digits, and their own script moves them into the game
+folder after unpacking. The part after the two pairs is the path in the game
+folder, with two exceptions: `__redist\…` are runtime redistributables
+(Visual C++, DirectX), not installed there, and `__support/app\…` goes into
+the game folder without that prefix (`EXE\LIBDAY.INI`). The staged files are
+byte-identical to an installed copy.
+
 ## 4. Block 2: file locations
 
 One entry per stored file:

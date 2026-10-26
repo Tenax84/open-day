@@ -1,0 +1,3 @@
+// The program icon: Explorer, the Start menu and the window (SDL takes the
+// exe's first icon for its window class).
+1 ICON "../assets/icon/openday.ico"

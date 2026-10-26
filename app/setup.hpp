@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+struct SDL_Window;
+
 namespace openday::app::setup {
 
 namespace fs = std::filesystem;
@@ -28,6 +30,7 @@ public:
     int getInt(const std::string& key, int fallback) const;
     void set(const std::string& key, const std::string& value) { values_[key] = value; }
     void setInt(const std::string& key, int value) { values_[key] = std::to_string(value); }
+    void erase(const std::string& key) { values_.erase(key); }
 
 private:
     std::map<std::string, std::string> values_;
@@ -48,10 +51,15 @@ fs::path installGameFiles(const fs::path& source, bool interactive, std::string&
 std::vector<fs::path> defaultGameDirs();
 
 // The game folder: `explicitDir` (--game-dir) if given, then
-// $OPENDAY_GAME_DIR, the remembered folder and the default locations.
-// With `interactive`, an SDL message box explains what is missing and lets
-// the user choose the folder. Returns empty if no valid folder was found;
-// `error` then says why. A folder given or chosen by the user is remembered.
+// $OPENDAY_GAME_DIR, the remembered folder and the default locations. With
+// first_run=1 in the configuration (reset.bat, for trying the first start
+// again) the remembered folder and the default locations are skipped when
+// interactive, until a folder is chosen.
+// With `interactive`, the setup window (setup_ui.hpp) explains what is
+// missing and lets the user choose the folder, an installer or CD image, or
+// the download from GOG. Returns empty if no valid folder was found; `error`
+// then says why, and is empty when the user quit. A folder given or chosen
+// by the user is remembered.
 fs::path findGameDir(const fs::path& explicitDir, Config& config, bool interactive, std::string& error);
 
 // The folder of the converted databases: `explicitDir` (--data), then
@@ -61,13 +69,20 @@ fs::path dataDir(const fs::path& explicitDir, bool& isDefault);
 // Converts the game databases into dataDir when that is needed (missing or
 // outdated conversion, or `force`). A data folder made by
 // tools/mdb/mdb2sqlite.py (no stamp file) is used as it is unless `force` or
-// it is the default folder. With `interactive` a small window shows the
+// it is the default folder. With `interactive` the setup window shows the
 // progress. Returns false (with `error`) if the conversion failed.
 bool prepareData(const fs::path& gameDir, const fs::path& dataDir, bool isDefault, bool force, bool interactive,
                  std::string& error);
 
-// Shows an error to the user (message box when interactive) and on stderr.
+// Shows an error to the user (when interactive: a dialog in the setup window,
+// opened for it if need be, else a message box) and on stderr.
 void reportError(const std::string& message, bool interactive);
+
+// Sizes the (hidden) window so that it fits the usable area of its display,
+// title bar and taskbar included, and shows it centred there. scale > 0 asks
+// for that multiple of 640 x 480 (reduced when it does not fit); 0 picks the
+// largest whole multiple that fits, or the largest 4:3 size below 2x.
+void placeWindow(SDL_Window* window, int scale);
 
 // Windows: the program has no console window of its own (GUI subsystem); when
 // started from a terminal, stdout and stderr go to that terminal. No-op

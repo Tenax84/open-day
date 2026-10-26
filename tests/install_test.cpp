@@ -475,6 +475,22 @@ void testInno(const fs::path& dir) {
     const fs::path notGame = dir / "setup_other.exe";
     writeFile(notGame, buildInno({{"{app}\\readme.txt", text("x"), "", ""}}, "GOG.com"));
     CHECK(throws([&] { data::inspectSource(notGame); }));
+
+    // An older GOG installer staging the game files below {tmp}/xx/yy\.
+    const fs::path staged = dir / "setup_staged.exe";
+    writeFile(staged, buildInno({{"{tmp}/e4/5d\\GLOBALS\\GLOBAL.MDB", mdb, "", ""},
+                                 {"{tmp}/78/24\\INTERF\\PAL.BMP", pal, "", ""},
+                                 {"{tmp}/4d/99\\__redist\\MSVC2013\\vcredist_x86.exe", text("redist"), "", ""},
+                                 {"{tmp}/34/f7\\__support/app\\EXE\\LIBDAY.INI", text("[ini]"), "", ""},
+                                 {"{tmp}\\background.jpg", text("helper"), "", ""}},
+                                "GOG.com"));
+    const fs::path stagedGame = dir / "game-staged";
+    data::installFromSource(staged, stagedGame);
+    CHECK(readFile(stagedGame / "GLOBALS" / "GLOBAL.MDB") == mdb);
+    CHECK(readFile(stagedGame / "INTERF" / "PAL.BMP") == pal);
+    CHECK(readFile(stagedGame / "EXE" / "LIBDAY.INI") == text("[ini]"));
+    CHECK(!fs::exists(stagedGame / "__redist") && !fs::exists(stagedGame / "MSVC2013") &&
+          !fs::exists(stagedGame / "background.jpg"));
 }
 
 } // namespace
