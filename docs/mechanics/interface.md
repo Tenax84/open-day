@@ -469,6 +469,13 @@ is scaled to fit the window (letter-boxed, as before). With the option on:
 - **On resizing:** the view keeps its centre (map screens) and the controls
   are placed again; a drag in progress ends. Switching the option off or on
   takes effect at once.
+- **While the border is dragged:** the picture follows the window at once,
+  not only when the drag ends. Windows and macOS hold the program in the
+  system's own resize loop for the whole drag; the engine draws (and runs)
+  a frame from there each time the system reports the window to be redrawn
+  during a live resize (SDL: `SDL_EVENT_WINDOW_EXPOSED` with `data1 = 1`,
+  caught by an event watch). Input that arrives during the drag is mapped
+  with the window's size at that moment.
 
 ### Save and load dialogs (`CInterfSave` / `CInterfLoad`)
 

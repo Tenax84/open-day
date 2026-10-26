@@ -249,7 +249,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         render::IndexedSurface surface(640, 480);
         SDL_Texture* texture = nullptr;
         int texW = 0, texH = 0;
-        Uint64 last = SDL_GetTicks();
+        Uint64 last = SDL_GetTicks(), scriptLast = last;
         int waitMs = 0;
         bool scripted = !script.empty() || !shot.empty();
         // The scale of a w x h picture in the window: to fit (a resizable
@@ -257,26 +257,100 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         auto pictureScale = [](int outW, int outH, int w, int h) {
             return std::min(static_cast<float>(outW) / static_cast<float>(w), static_cast<float>(outH) / static_cast<float>(h));
         };
+        // Window pixels -> logical screen pixels (letter-boxed). Worked out at
+        // each event: the window may have changed size since the last frame.
+        auto toLogical = [&](float x, float y, int& lx, int& ly) {
+            int outW = 0, outH = 0;
+            SDL_GetRenderOutputSize(renderer, &outW, &outH);
+            app.layout(outW, outH);
+            const int w = app.frameWidth(), h = app.frameHeight();
+            const float k = pictureScale(outW, outH, w, h);
+            const float ox = (static_cast<float>(outW) - static_cast<float>(w) * k) / 2;
+            const float oy = (static_cast<float>(outH) - static_cast<float>(h) * k) / 2;
+            float pixelRatio = SDL_GetWindowPixelDensity(window);
+            if (pixelRatio <= 0) pixelRatio = 1;
+            lx = static_cast<int>((x * pixelRatio - ox) / k);
+            ly = static_cast<int>((y * pixelRatio - oy) / k);
+        };
+
+        // One frame: advance the game by the time elapsed, draw, present.
+        // Called by the main loop, and also while the window border is being
+        // dragged: Windows and macOS run a modal loop then, and the main loop
+        // stands still until the drag ends.
+        auto drawFrame = [&]() {
+            const Uint64 now = SDL_GetTicks();
+            const int elapsed = static_cast<int>(std::min<Uint64>(now - last, 250));
+            last = now;
+            // The debug server's game speed (set_speed).
+            const int gameMs = tools ? static_cast<int>(std::lround(elapsed * tools->speed())) : elapsed;
+            app.update(gameMs);
+            app.applyChanges();
+            if (app.quitting()) return;
+            audio.update();
+
+            app::Screen* screen = app.top();
+            int outW = 0, outH = 0;
+            SDL_GetRenderOutputSize(renderer, &outW, &outH);
+            app.layout(outW, outH);
+            if (surface.width() != app.frameWidth() || surface.height() != app.frameHeight())
+                surface.resize(app.frameWidth(), app.frameHeight());
+            app.draw(surface);
+            if (surface.width() != texW || surface.height() != texH) {
+                SDL_DestroyTexture(texture);
+                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, surface.width(),
+                                            surface.height());
+                SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+                texW = surface.width();
+                texH = surface.height();
+            }
+            const formats::Palette* own = screen->palette();
+            const formats::Palette pal =
+                own ? *own : data.cycle.applyAt(data.palette, screen->paletteCycling() ? now : 0);
+            void* pixels = nullptr;
+            int pitch = 0;
+            if (SDL_LockTexture(texture, nullptr, &pixels, &pitch)) {
+                const std::vector<std::uint8_t> rgba = surface.toRgba(pal);
+                for (int y = 0; y < texH; ++y)
+                    std::copy_n(rgba.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(texW) * 4,
+                                static_cast<std::size_t>(texW) * 4, static_cast<std::uint8_t*>(pixels) + y * pitch);
+                SDL_UnlockTexture(texture);
+            }
+            if (tools) {
+                tools->frame(*mcp, surface, pal, gameMs);
+                if (app.quitting()) return;
+            }
+            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+            SDL_RenderClear(renderer);
+            SDL_GetRenderOutputSize(renderer, &outW, &outH);
+            const float kk = pictureScale(outW, outH, texW, texH);
+            const SDL_FRect dst{(static_cast<float>(outW) - static_cast<float>(texW) * kk) / 2,
+                                (static_cast<float>(outH) - static_cast<float>(texH) * kk) / 2, static_cast<float>(texW) * kk,
+                                static_cast<float>(texH) * kk};
+            SDL_RenderTexture(renderer, texture, nullptr, &dst);
+            SDL_RenderPresent(renderer);
+        };
+        bool inFrame = false;
+        auto frame = [&]() {
+            if (inFrame || app.quitting()) return;
+            inFrame = true;
+            drawFrame();
+            inFrame = false;
+        };
+
+        // During a live resize SDL sends an expose event with data1 = 1 from
+        // inside the modal loop; the watch draws a frame in the new size there.
+        auto liveResize = [](void* userdata, SDL_Event* ev) -> bool {
+            if (ev->type == SDL_EVENT_WINDOW_EXPOSED && ev->window.data1 == 1) (*static_cast<decltype(frame)*>(userdata))();
+            return true;
+        };
+        SDL_AddEventWatch(liveResize, &frame);
+
         while (!app.quitting()) {
             if (app.requestedWindowW > 0 && app.requestedWindowH > 0) {
                 SDL_SetWindowSize(window, app.requestedWindowW, app.requestedWindowH);
                 SDL_SyncWindow(window);
                 app.requestedWindowW = app.requestedWindowH = 0;
             }
-            int outW = 0, outH = 0;
-            SDL_GetRenderOutputSize(renderer, &outW, &outH);
-            app.layout(outW, outH);
-            const int w = app.frameWidth(), h = app.frameHeight();
-            // Window pixels -> logical screen pixels (letter-boxed).
-            const float k = pictureScale(outW, outH, w, h);
-            const float ox = (static_cast<float>(outW) - static_cast<float>(w) * k) / 2;
-            const float oy = (static_cast<float>(outH) - static_cast<float>(h) * k) / 2;
-            float pixelRatio = SDL_GetWindowPixelDensity(window);
-            if (pixelRatio <= 0) pixelRatio = 1;
-            auto toLogical = [&](float x, float y, int& lx, int& ly) {
-                lx = static_cast<int>((x * pixelRatio - ox) / k);
-                ly = static_cast<int>((y * pixelRatio - oy) / k);
-            };
 
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) {
@@ -319,8 +393,8 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             if (app.quitting()) break;
 
             const Uint64 now = SDL_GetTicks();
-            const int elapsed = static_cast<int>(std::min<Uint64>(now - last, 250));
-            last = now;
+            const int elapsed = static_cast<int>(std::min<Uint64>(now - scriptLast, 250));
+            scriptLast = now;
             // Scripted input: one step per frame, waits in milliseconds.
             if (scripted) {
                 if (waitMs > 0) {
@@ -369,53 +443,9 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     break;
                 }
             }
-            // The debug server's game speed (set_speed).
-            const int gameMs = tools ? static_cast<int>(std::lround(elapsed * tools->speed())) : elapsed;
-            app.update(gameMs);
-            app.applyChanges();
-            if (app.quitting()) break;
-            audio.update();
-
-            app::Screen* screen = app.top();
-            SDL_GetRenderOutputSize(renderer, &outW, &outH);
-            app.layout(outW, outH);
-            if (surface.width() != app.frameWidth() || surface.height() != app.frameHeight())
-                surface.resize(app.frameWidth(), app.frameHeight());
-            app.draw(surface);
-            if (surface.width() != texW || surface.height() != texH) {
-                SDL_DestroyTexture(texture);
-                texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, surface.width(),
-                                            surface.height());
-                SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-                texW = surface.width();
-                texH = surface.height();
-            }
-            const formats::Palette* own = screen->palette();
-            const formats::Palette pal =
-                own ? *own : data.cycle.applyAt(data.palette, screen->paletteCycling() ? now : 0);
-            void* pixels = nullptr;
-            int pitch = 0;
-            if (SDL_LockTexture(texture, nullptr, &pixels, &pitch)) {
-                const std::vector<std::uint8_t> rgba = surface.toRgba(pal);
-                for (int y = 0; y < texH; ++y)
-                    std::copy_n(rgba.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(texW) * 4,
-                                static_cast<std::size_t>(texW) * 4, static_cast<std::uint8_t*>(pixels) + y * pitch);
-                SDL_UnlockTexture(texture);
-            }
-            if (tools) {
-                tools->frame(*mcp, surface, pal, gameMs);
-                if (app.quitting()) break;
-            }
-            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-            SDL_RenderClear(renderer);
-            SDL_GetRenderOutputSize(renderer, &outW, &outH);
-            const float kk = pictureScale(outW, outH, texW, texH);
-            const SDL_FRect dst{(static_cast<float>(outW) - static_cast<float>(texW) * kk) / 2,
-                                (static_cast<float>(outH) - static_cast<float>(texH) * kk) / 2, static_cast<float>(texW) * kk,
-                                static_cast<float>(texH) * kk};
-            SDL_RenderTexture(renderer, texture, nullptr, &dst);
-            SDL_RenderPresent(renderer);
+            frame();
         }
+        SDL_RemoveEventWatch(liveResize, &frame);
         SDL_DestroyTexture(texture);
         if (config) {
             storeSettings(app.settings(), *config, mute);
