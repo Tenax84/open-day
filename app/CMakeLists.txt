@@ -14,6 +14,7 @@ add_executable(openday
     gog_download.cpp
     hd_interface.cpp
     hd_pack.cpp
+    hd_pack_auto.cpp
     main.cpp
     map_screen.cpp
     mcp_server.cpp

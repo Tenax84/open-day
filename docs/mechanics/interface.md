@@ -421,9 +421,22 @@ same panel (648):
 | Keep the view when selecting | Camera | `keep_view_on_select` | on | tactical-interface.md 3.2 (click on an own unit) |
 | Exact minimap | Camera | `exact_minimap` | on | tactical-interface.md 2.6 (click and viewport frame) |
 | Drag on the minimap | Camera | `minimap_drag` | on | tactical-interface.md 2.6 (dragging with the left button) |
+| Full screen | Display | `fullscreen` | off | the window covers the screen (below); F11 switches it anywhere in the game |
 | Resizable window | Display | `resizable_window` | on | the map screens are laid out for the window's size (below) |
 | Sharp text | Display | `sharp_text` | on | the text is drawn anti-aliased at the window's resolution (below) |
-| HD interface | Display | `hd_interface` | off | the interface art is drawn again from high-resolution versions (below) |
+| HD interface | Display | `hd_interface` | on | the interface art is drawn again from high-resolution versions (below) |
+
+#### Full screen
+
+The window covers the whole screen in the desktop's own mode (borderless,
+no change of the display mode); the picture is laid out and scaled for it
+exactly as for a window of that size. **F11** switches between full screen
+and the window anywhere in the game (the key is not passed to the screens),
+and so does the *Full screen* row of the OpenDay options. Switching by the
+system's own controls (the green button on macOS) also updates the setting.
+The state is kept in `openday.cfg` and applied at the next start; the
+window's size and place before full screen are restored when leaving it.
+Not in the scripted test mode.
 
 #### Resizable window
 
@@ -603,6 +616,33 @@ computer; no enlarged art ships with OpenDay.
      are enlarged once more in 32-pixel tiles (`-t 32`);
   4. the usable results replace the pictures of the same name in the pack
      folder; the rest are left to xBRZ. The work folder is removed.
+
+  The models are taken from the `models` folder next to the program
+  (`-m`), whatever the working folder. On Windows the program runs without
+  a console window and at below-normal priority (idle priority starves it
+  while the game runs: the GPU work is fed by its CPU threads).
+- **Automatic pack:** when the game starts (not in the test mode) with
+  the option on and `hd_pack` missing from `openday.cfg`, the pack is made
+  in the background while the game runs, xBRZ showing until then:
+  1. a pack folder already holding PNG files counts as made (`hd_pack=1`);
+  2. the upscaler is looked for as above; if there is none, Real-ESRGAN
+     v0.2.5.0's portable build for the platform is downloaded from that
+     project's GitHub release (`realesrgan-ncnn-vulkan-20220424-windows|macos|ubuntu.zip`,
+     BSD-3-Clause; size and SHA-256 pinned in `app/hd_pack_auto.cpp`), and
+     only the program, `vcomp140.dll` and the `realesr-animevideov3` model
+     files are unpacked into `<per-user dir>/realesrgan.partial`, made
+     executable outside Windows, and renamed to `realesrgan`. Fetched by the
+     engine's own HTTP client, the macOS program carries no quarantine mark.
+     The macOS build holds x86_64 and arm64 code; for Linux there is an
+     x86_64 build only (elsewhere nothing is downloaded);
+  3. the pack is made as in *Making a pack* with `realesr-animevideov3`;
+  4. on success the pack's pictures replace the enlarged ones at once (the
+     versions are forgotten and the folder looked at again), `hd_pack=1` and
+     the program (`upscaler`) are stored; if the upscaler made nothing
+     usable (no Vulkan device, say) `hd_pack=2`, and it is not tried again.
+     A failed download, or closing the game first (the upscaler is stopped,
+     the work folder removed), stores nothing: the next start tries again.
+     Deleting `hd_pack` from `openday.cfg` makes the pack again.
 - **Memory:** enlarged versions are kept up to 64 M texels (256 MB); above
   that, the ones used longest ago and not in the current frame are dropped.
 - Screenshots of the debug server and of the test mode show the original

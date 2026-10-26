@@ -41,6 +41,10 @@ public:
     // art.
     void draw(const render::ImageLayer& layer, const formats::Palette& palette, const SDL_FRect& picture, float scale);
 
+    // Forgets every version, so that the pack folder is looked at again (a
+    // pack was made while the game ran).
+    void reload();
+
 private:
     struct Entry {
         SDL_Texture* texture = nullptr;

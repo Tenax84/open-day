@@ -63,6 +63,7 @@
 #include "app/debug_tools.hpp"
 #include "app/hd_interface.hpp"
 #include "app/hd_pack.hpp"
+#include "app/hd_pack_auto.hpp"
 #include "app/mcp_server.hpp"
 #include "app/screens.hpp"
 #include "app/setup.hpp"
@@ -100,6 +101,7 @@ void loadSettings(app::Settings& s, const app::setup::Config& c) {
     s.keepViewOnSelect = c.getInt("keep_view_on_select", s.keepViewOnSelect) != 0;
     s.exactMinimap = c.getInt("exact_minimap", s.exactMinimap) != 0;
     s.minimapDrag = c.getInt("minimap_drag", s.minimapDrag) != 0;
+    s.fullscreen = c.getInt("fullscreen", s.fullscreen) != 0;
     s.resizableWindow = c.getInt("resizable_window", s.resizableWindow) != 0;
     s.sharpText = c.getInt("sharp_text", s.sharpText) != 0;
     s.hdInterface = c.getInt("hd_interface", s.hdInterface) != 0;
@@ -123,6 +125,7 @@ void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
     c.setInt("keep_view_on_select", s.keepViewOnSelect);
     c.setInt("exact_minimap", s.exactMinimap);
     c.setInt("minimap_drag", s.minimapDrag);
+    c.setInt("fullscreen", s.fullscreen);
     c.setInt("resizable_window", s.resizableWindow);
     c.setInt("sharp_text", s.sharpText);
     c.setInt("hd_interface", s.hdInterface);
@@ -254,6 +257,17 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         render::ImageLayer imageLayer;
         imageLayer.setKeys([&app](const formats::DbiSprite& sp) { return app.hdKey(sp); });
         app::HdInterface hdInterface(renderer, app::setup::userDir() / "hd-interface");
+        // Automatic pack: made once, in the background, while the HD
+        // interface is on (openday.cfg hd_pack: 1 = made or found, 2 = the
+        // upscaler failed; missing = not yet, tried again at the next start).
+        std::unique_ptr<app::HdPackMaker> packMaker;
+        if (config && app.settings().hdInterface && config->getInt("hd_pack", 0) == 0) {
+            if (app::hdPackPresent(app::setup::userDir() / "hd-interface")) {
+                config->setInt("hd_pack", 1);
+            } else {
+                packMaker = std::make_unique<app::HdPackMaker>(data, app::setup::userDir(), config->get("upscaler"));
+            }
+        }
         SDL_Texture* texture = nullptr;
         int texW = 0, texH = 0;
         Uint64 last = SDL_GetTicks(), scriptLast = last;
@@ -291,6 +305,22 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             // The debug server's game speed (set_speed).
             const int gameMs = tools ? static_cast<int>(std::lround(elapsed * tools->speed())) : elapsed;
             app.update(gameMs);
+            if (packMaker && packMaker->outcome() != app::HdPackMaker::Outcome::Running) {
+                switch (packMaker->outcome()) {
+                case app::HdPackMaker::Outcome::Made:
+                    config->setInt("hd_pack", 1);
+                    hdInterface.reload();
+                    break;
+                case app::HdPackMaker::Outcome::UpscalerFailed: config->setInt("hd_pack", 2); break;
+                default: break;
+                }
+                if (!packMaker->upscaler().empty()) {
+                    const std::u8string u = packMaker->upscaler().u8string();
+                    config->set("upscaler", std::string(u.begin(), u.end()));
+                }
+                config->save();
+                packMaker.reset();
+            }
             app.applyChanges();
             if (app.quitting()) return;
             audio.update();
@@ -375,7 +405,18 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         };
         SDL_AddEventWatch(liveResize, &frame);
 
+        // Full screen (the desktop's mode, borderless): follows the setting,
+        // which F11, the OpenDay options and the system's own controls (the
+        // macOS green button) change. Not in the test mode.
+        bool shownFullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        if (!config) app.settings().fullscreen = shownFullscreen;
+
         while (!app.quitting()) {
+            if (app.settings().fullscreen != shownFullscreen) {
+                shownFullscreen = app.settings().fullscreen;
+                SDL_SetWindowFullscreenMode(window, nullptr);
+                SDL_SetWindowFullscreen(window, shownFullscreen);
+            }
             if (app.requestedWindowW > 0 && app.requestedWindowH > 0) {
                 SDL_SetWindowSize(window, app.requestedWindowW, app.requestedWindowH);
                 SDL_SyncWindow(window);
@@ -409,7 +450,18 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     e.key = ev.wheel.y > 0 ? 1 : -1;
                     break;
                 }
+                case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+                case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+                    shownFullscreen = ev.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN;
+                    if (config) app.settings().fullscreen = shownFullscreen;
+                    send = false;
+                    break;
                 case SDL_EVENT_KEY_DOWN:
+                    if (ev.key.key == SDLK_F11) {
+                        if (config && !ev.key.repeat) app.settings().fullscreen = !app.settings().fullscreen;
+                        send = false;
+                        break;
+                    }
                     e.type = ui::InputEvent::Type::KeyDown;
                     e.key = translateKey(ev.key.key);
                     send = e.key != 0;

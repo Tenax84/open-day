@@ -42,11 +42,14 @@ HdInterface::Picture enlarge(std::vector<std::uint32_t> rgb, int w, int h, int f
 HdInterface::HdInterface(SDL_Renderer* renderer, std::filesystem::path packDir)
     : renderer_(renderer), packDir_(std::move(packDir)) {}
 
-HdInterface::~HdInterface() {
+HdInterface::~HdInterface() { reload(); }
+
+void HdInterface::reload() {
     for (auto& [key, e] : entries_) {
         if (e.job.valid()) e.job.wait();
         if (e.texture) SDL_DestroyTexture(e.texture);
     }
+    entries_.clear();
 }
 
 std::filesystem::path HdInterface::packFile(const std::filesystem::path& packDir, int key) {

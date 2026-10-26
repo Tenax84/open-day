@@ -111,9 +111,10 @@ struct Settings {
     bool keepViewOnSelect = true; // a click on a unit does not centre the view on it
     bool exactMinimap = true;     // minimap click and frame centred on the exact point
     bool minimapDrag = true;      // dragging on the minimap moves the view
+    bool fullscreen = false;      // the window covers the screen (F11 switches)
     bool resizableWindow = true;  // the map screens grow with the window
     bool sharpText = true;        // text drawn anew at the window's resolution
-    bool hdInterface = false;     // the interface art drawn again in high resolution
+    bool hdInterface = true;      // the interface art drawn again in high resolution
     bool checkUpdates = true;   // ask GitHub for a newer release on start
     std::string updateDeclined; // a release the user said "No" to (not offered again)
 };

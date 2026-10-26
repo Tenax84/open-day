@@ -41,6 +41,7 @@ constexpr Option kOptions[] = {
     {Section::Camera, &Settings::keepViewOnSelect, "Keep the view when selecting", "Clicking a unit does not move the map to it."},
     {Section::Camera, &Settings::exactMinimap, "Exact minimap", "A click centres the view on the exact point."},
     {Section::Camera, &Settings::minimapDrag, "Drag on the minimap", "The view follows the held left button."},
+    {Section::Display, &Settings::fullscreen, "Full screen", "The game covers the whole screen (F11 switches)."},
     {Section::Display, &Settings::resizableWindow, "Resizable window", "The map screens grow with the window."},
     {Section::Display, &Settings::sharpText, "Sharp text", "Text is drawn smooth at the window's resolution."},
     {Section::Display, &Settings::hdInterface, "HD interface", "Buttons and panels redrawn smooth (xBRZ or your own pack)."},

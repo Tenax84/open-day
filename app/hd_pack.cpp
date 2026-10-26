@@ -3,9 +3,18 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 #include "app/hd_interface.hpp"
 #include "app/setup.hpp"
@@ -42,11 +51,38 @@ fs::path programIn(const fs::path& p) {
     return isFile(p) ? p : fs::path();
 }
 
-// Runs the upscaler on every PNG of `in`, writing PNGs of the same names into
-// `out`. `tile` 0 = the program's choice. Its own output is not shown.
-bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::path& in, const fs::path& out, int tile) {
-    const std::vector<std::string> args = {utf8(upscaler), "-i", utf8(in), "-o", utf8(out), "-n", model, "-s", "4",
-                                           "-t", std::to_string(tile), "-f", "png"};
+bool cancelled(const std::atomic<bool>* cancel) { return cancel && cancel->load(); }
+
+#ifdef _WIN32
+// Windows: started directly, so that it gets no console window when the
+// game was not started from one (SDL's processes get one unless they run
+// in the background, and then their exit code is lost).
+int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel) {
+    std::wstring line;
+    for (const std::string& a : args) {
+        const fs::path p(std::u8string(reinterpret_cast<const char8_t*>(a.c_str())));
+        if (!line.empty()) line += L' ';
+        line += L'"' + p.wstring() + L'"'; // no argument holds a quote or ends with a backslash
+    }
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS, nullptr,
+                        nullptr, &si, &pi)) {
+        std::fprintf(stderr, "cannot start %s: error %lu\n", args[0].c_str(), GetLastError());
+        return -1;
+    }
+    CloseHandle(pi.hThread);
+    while (WaitForSingleObject(pi.hProcess, 100) == WAIT_TIMEOUT) {
+        if (cancelled(cancel)) TerminateProcess(pi.hProcess, 1);
+    }
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return cancelled(cancel) ? -1 : static_cast<int>(code);
+}
+#else
+int runProgram(const std::vector<std::string>& args, const std::atomic<bool>* cancel) {
     std::vector<const char*> argv;
     for (const std::string& a : args) argv.push_back(a.c_str());
     argv.push_back(nullptr);
@@ -58,12 +94,36 @@ bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::p
     SDL_DestroyProperties(props);
     if (!p) {
         std::fprintf(stderr, "cannot start %s: %s\n", args[0].c_str(), SDL_GetError());
-        return false;
+        return -1;
     }
     int code = -1;
-    SDL_WaitProcess(p, true, &code);
+    while (!SDL_WaitProcess(p, false, &code)) {
+        if (cancelled(cancel)) {
+            SDL_KillProcess(p, true);
+            SDL_WaitProcess(p, true, &code);
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     SDL_DestroyProcess(p);
-    if (code != 0) std::fprintf(stderr, "the upscaler ended with code %d\n", code);
+    return cancelled(cancel) ? -1 : code;
+}
+#endif
+
+// Runs the upscaler on every PNG of `in`, writing PNGs of the same names into
+// `out`. `tile` 0 = the program's choice. Its own output is not shown. The
+// models are taken from the program's own folder.
+bool runUpscaler(const fs::path& upscaler, const std::string& model, const fs::path& in, const fs::path& out, int tile,
+                 const std::atomic<bool>* cancel) {
+    std::vector<std::string> args = {utf8(upscaler), "-i", utf8(in), "-o", utf8(out), "-n", model, "-s", "4",
+                                     "-t", std::to_string(tile), "-f", "png"};
+    std::error_code ec;
+    if (const fs::path models = upscaler.parent_path() / "models"; fs::is_directory(models, ec)) {
+        args.push_back("-m");
+        args.push_back(utf8(models));
+    }
+    const int code = runProgram(args, cancel);
+    if (code != 0 && !cancelled(cancel)) std::fprintf(stderr, "the upscaler ended with code %d\n", code);
     return code == 0;
 }
 
@@ -121,7 +181,7 @@ fs::path findUpscaler(const fs::path& given, const std::string& remembered) {
 }
 
 int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string& model, const fs::path& packDir,
-               const fs::path& workDir) {
+               const fs::path& workDir, const std::atomic<bool>* cancel) {
     std::error_code ec;
     fs::remove_all(workDir, ec);
     const fs::path in = workDir / "in", out = workDir / "out";
@@ -138,7 +198,7 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
         std::printf("upscaling %zu pictures (%s) with %s...\n", names.size(), sub, model.c_str());
         std::fflush(stdout);
         fs::create_directories(out / sub, ec);
-        if (!runUpscaler(upscaler, model, in / sub, out / sub, 0)) {
+        if (!runUpscaler(upscaler, model, in / sub, out / sub, 0, cancel)) {
             fs::remove_all(workDir, ec);
             return 1;
         }
@@ -146,7 +206,7 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
         std::vector<fs::path> retry;
         for (const fs::path& n : names)
             if (!usable(in / sub / n, out / sub / n)) retry.push_back(n);
-        if (!retry.empty()) {
+        if (!retry.empty() && !cancelled(cancel)) {
             std::printf("trying %zu pictures again in small tiles...\n", retry.size());
             std::fflush(stdout);
             const fs::path again = workDir / "again" / sub;
@@ -155,7 +215,11 @@ int makeHdPack(const GameData& data, const fs::path& upscaler, const std::string
                 fs::remove(out / sub / n, ec);
                 fs::copy_file(in / sub / n, again / n, ec);
             }
-            runUpscaler(upscaler, model, again, out / sub, 32);
+            runUpscaler(upscaler, model, again, out / sub, 32, cancel);
+        }
+        if (cancelled(cancel)) {
+            fs::remove_all(workDir, ec);
+            return 1;
         }
         fs::create_directories(packDir / sub, ec);
         for (const fs::path& n : names) {

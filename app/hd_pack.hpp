@@ -4,6 +4,7 @@
 // user.
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <string>
 
@@ -23,8 +24,10 @@ std::filesystem::path findUpscaler(const std::filesystem::path& given, const std
 // Exports the art into `workDir`, enlarges it 4× with `upscaler` and `model`,
 // and moves the results into `packDir` (pictures there are replaced). An
 // element the upscaler fails on is tried once more in small tiles, then left
-// to xBRZ. Returns 0 on success; prints its progress.
+// to xBRZ. Returns 0 on success; prints its progress. Setting `*cancel`
+// stops the upscaler and returns 1 (pictures already moved stay).
 int makeHdPack(const GameData& data, const std::filesystem::path& upscaler, const std::string& model,
-               const std::filesystem::path& packDir, const std::filesystem::path& workDir);
+               const std::filesystem::path& packDir, const std::filesystem::path& workDir,
+               const std::atomic<bool>* cancel = nullptr);
 
 } // namespace openday::app
