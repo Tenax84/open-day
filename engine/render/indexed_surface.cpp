@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "render/image_layer.hpp"
+
 namespace openday::render {
 
 IndexedSurface::IndexedSurface(int width, int height, std::uint8_t fill) { resize(width, height, fill); }
@@ -15,6 +17,8 @@ void IndexedSurface::resize(int width, int height, std::uint8_t fill) {
 void IndexedSurface::fill(std::uint8_t index) { std::fill(pixels_.begin(), pixels_.end(), index); }
 
 void IndexedSurface::blit(const formats::DbiSprite& sprite, int x, int y) {
+    if (ImageLayer* layer = ImageLayer::active())
+        layer->record(*this, sprite, {0, 0, sprite.width, sprite.height}, x, y, {0, 0, width_, height_});
     const int x0 = std::max(0, -x), x1 = std::min(sprite.width, width_ - x);
     const int y0 = std::max(0, -y), y1 = std::min(sprite.height, height_ - y);
     for (int sy = y0; sy < y1; ++sy) {
@@ -34,6 +38,9 @@ void IndexedSurface::blit(const formats::DbiSprite& sprite, int x, int y, int mo
         blit(sprite, x, y);
         return;
     }
+    if (mode == 0)
+        if (ImageLayer* layer = ImageLayer::active())
+            layer->record(*this, sprite, {0, 0, sprite.width, sprite.height}, x, y, {cx, cy, cw, ch});
     // The checkerboard color of the odd pixels; -1 = leave them out.
     int odd = -1;
     switch (mode) {

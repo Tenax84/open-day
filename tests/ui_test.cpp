@@ -1,11 +1,12 @@
 // User-interface foundations on synthetic data: font metrics and wrapping,
-// sharp text, message formatting, PE string tables and bitmaps, the interface atlas,
+// sharp text, HD interface art, message formatting, PE string tables and bitmaps, the interface atlas,
 // buttons.
 
 #include "formats/binary.hpp"
 #include "formats/pe_resources.hpp"
 #include "formats/smk.hpp"
 #include "render/font.hpp"
+#include "render/image_layer.hpp"
 #include "render/text_layer.hpp"
 #include "ui/atlas.hpp"
 #include "ui/widgets.hpp"
@@ -130,6 +131,57 @@ void testTextLayer() {
     CHECK(g.width > 0 && large.glyph(U'A').advance > 1.9f * small.glyph(U'A').advance);
     CHECK(std::any_of(g.coverage.begin(), g.coverage.end(), [](std::uint8_t c) { return c > 0 && c < 255; }));
     CHECK(large.baseline() > small.baseline());
+}
+
+// HD interface: recorded pictures (blits and tiles of tracked sprites) and
+// where they are still visible.
+void testImageLayer() {
+    formats::DbiSprite art;
+    art.width = 6;
+    art.height = 4;
+    art.pixels.resize(24);
+    for (std::size_t i = 0; i < art.pixels.size(); ++i) art.pixels[i] = static_cast<std::uint8_t>(10 + i);
+    art.opaque.assign(24, 1);
+    formats::DbiSprite other = art;
+
+    render::IndexedSurface frame(40, 20, 0);
+    render::ImageLayer layer;
+    layer.setKeys([&](const formats::DbiSprite& sp) { return &sp == &art ? 7 : -1; });
+    layer.attach(frame, 0, 0);
+    render::ImageLayer::setActive(&layer);
+    frame.blit(art, 2, 3);
+    frame.blit(other, 20, 3); // not tracked
+    frame.blit(art, 37, 18);  // clipped by the surface
+    render::IndexedSurface dialog(10, 10, 0);
+    layer.attach(dialog, 25, 8);
+    dialog.blit(art, 1, 1);
+    layer.detach(dialog);
+    // Tiles: 13 wide out of 6-wide pieces (the last one cut).
+    ui::drawTiled(frame, art, {0, 0, 6, 2}, {0, 15, 13, 2});
+    render::ImageLayer::setActive(nullptr);
+    for (int y = 0; y < 10; ++y) std::copy_n(dialog.row(y), 10, frame.row(8 + y) + 25);
+    // Something drawn later over a corner of the first picture.
+    frame.row(3)[2] = 99;
+    frame.row(4)[2] = 99;
+
+    layer.resolve(frame);
+    const auto& items = layer.items();
+    CHECK(items.size() == 6);
+    if (items.size() != 6) return;
+    CHECK(items[0].key == 7 && items[0].x == 2 && items[0].y == 3 && items[0].source.w == 6 && items[0].source.h == 4);
+    CHECK(!items[0].allVisible);
+    int area = 0;
+    for (const auto& r : items[0].visible) {
+        area += r.w * r.h;
+        CHECK(!(r.x <= 2 && r.x + r.w > 2 && r.y <= 4 && r.y + r.h > 3));
+    }
+    CHECK(area == 24 - 2);
+    // Rows with the same runs make one rectangle.
+    CHECK(items[0].visible.size() == 2);
+    CHECK(items[1].x == 37 && items[1].y == 18 && items[1].source.w == 3 && items[1].source.h == 2 && items[1].allVisible);
+    CHECK(items[2].x == 26 && items[2].y == 9 && items[2].allVisible && items[2].visible.size() == 1);
+    CHECK(items[3].x == 0 && items[3].y == 15 && items[3].source.h == 2 && items[3].allVisible);
+    CHECK(items[5].x == 12 && items[5].source.x == 0 && items[5].source.w == 1);
 }
 
 void testFormat() {
@@ -311,6 +363,7 @@ void testButton() {
 int main() {
     testFont();
     testTextLayer();
+    testImageLayer();
     testFormat();
     testStrings();
     testBitmaps();

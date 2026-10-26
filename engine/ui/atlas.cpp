@@ -34,6 +34,7 @@ InterfaceAtlas InterfaceAtlas::fromBytes(std::vector<std::uint8_t> smk, const st
                         s.pixels.begin() + static_cast<std::ptrdiff_t>(y) * s.width);
         atlas.elements_[e.frame] = std::move(s);
     }
+    for (const auto& [frame, sprite] : atlas.elements_) atlas.frames_[&sprite] = frame;
     return atlas;
 }
 
@@ -42,6 +43,11 @@ InterfaceAtlas InterfaceAtlas::load(const std::filesystem::path& smk, const std:
     if (!f) throw std::runtime_error("cannot open " + smk.string());
     std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     return fromBytes(std::move(bytes), wanted);
+}
+
+int InterfaceAtlas::frameOf(const formats::DbiSprite& sprite) const {
+    const auto it = frames_.find(&sprite);
+    return it == frames_.end() ? -1 : it->second;
 }
 
 const formats::DbiSprite* InterfaceAtlas::get(int frame) const {

@@ -2,6 +2,7 @@
 //
 //   openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]
 //           [--cheats] [--no-update-check] [--mcp] [--mcp-port N] [--script STEPS --shot OUT.png]
+//           [--export-interface [DIR]] [--make-hd-interface [UPSCALER]] [--upscale-model NAME]
 //
 // --game-dir  the game installation. Default: $OPENDAY_GAME_DIR, then the
 //             folder remembered in the per-user configuration, then the usual
@@ -32,6 +33,19 @@
 //             right), wait:MS. With --shot the screen is saved to a PNG after
 //             the last step and the program ends.
 //
+// --export-interface
+//             writes the interface art as PNG files into DIR (default:
+//             <per-user dir>/interface-export), the starting point of an
+//             HD interface pack (docs/mechanics/interface.md, "HD interface")
+// --make-hd-interface
+//             makes the HD interface pack (<per-user dir>/hd-interface) with
+//             Real-ESRGAN: UPSCALER is realesrgan-ncnn-vulkan or its folder
+//             (default: the one used last, then the PATH, then
+//             <per-user dir>/realesrgan)
+// --upscale-model
+//             the Real-ESRGAN model (default realesr-animevideov3; also
+//             realesrgan-x4plus-anime, realesrgan-x4plus)
+//
 // The per-user directory (app/setup.hpp) holds the converted data, the saves
 // and openday.cfg (game folder and options).
 
@@ -47,11 +61,14 @@
 
 #include "app/app.hpp"
 #include "app/debug_tools.hpp"
+#include "app/hd_interface.hpp"
+#include "app/hd_pack.hpp"
 #include "app/mcp_server.hpp"
 #include "app/screens.hpp"
 #include "app/setup.hpp"
 #include "app/sharp_text.hpp"
 #include "formats/png_writer.hpp"
+#include "render/image_layer.hpp"
 #include "render/text_layer.hpp"
 
 #include <deque>
@@ -83,6 +100,7 @@ void loadSettings(app::Settings& s, const app::setup::Config& c) {
     s.minimapDrag = c.getInt("minimap_drag", s.minimapDrag) != 0;
     s.resizableWindow = c.getInt("resizable_window", s.resizableWindow) != 0;
     s.sharpText = c.getInt("sharp_text", s.sharpText) != 0;
+    s.hdInterface = c.getInt("hd_interface", s.hdInterface) != 0;
     s.checkUpdates = c.getInt("check_updates", s.checkUpdates) != 0;
     s.updateDeclined = c.get("update_declined");
 }
@@ -105,6 +123,7 @@ void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
     c.setInt("minimap_drag", s.minimapDrag);
     c.setInt("resizable_window", s.resizableWindow);
     c.setInt("sharp_text", s.sharpText);
+    c.setInt("hd_interface", s.hdInterface);
     c.setInt("check_updates", s.checkUpdates);
     c.set("update_declined", s.updateDeclined);
 }
@@ -255,6 +274,11 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         render::TextLayer textLayer;
         render::IndexedSurface shown;
         app::SharpText sharpText(renderer);
+        // HD interface: the interface art of the frame, drawn again from
+        // high-resolution versions.
+        render::ImageLayer imageLayer;
+        imageLayer.setKeys([&app](const formats::DbiSprite& sp) { return app.hdKey(sp); });
+        app::HdInterface hdInterface(renderer, app::setup::userDir() / "hd-interface");
         SDL_Texture* texture = nullptr;
         int texW = 0, texH = 0;
         Uint64 last = SDL_GetTicks(), scriptLast = last;
@@ -302,23 +326,33 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             app.layout(outW, outH);
             if (surface.width() != app.frameWidth() || surface.height() != app.frameHeight())
                 surface.resize(app.frameWidth(), app.frameHeight());
-            const bool sharp = app.settings().sharpText;
+            const bool sharp = app.settings().sharpText, hd = app.settings().hdInterface;
             textLayer.clear();
             if (sharp) {
                 textLayer.attach(surface, 0, 0);
                 render::TextLayer::setActive(&textLayer);
             }
+            imageLayer.clear();
+            if (hd) {
+                imageLayer.attach(surface, 0, 0);
+                render::ImageLayer::setActive(&imageLayer);
+            }
             app.draw(surface);
             render::TextLayer::setActive(nullptr);
+            render::ImageLayer::setActive(nullptr);
             if (sharp) {
                 shown = surface;
                 textLayer.resolve(shown);
             }
+            // Under the sharp text the art counts as visible.
+            if (hd) imageLayer.resolve(sharp ? shown : surface);
             if (surface.width() != texW || surface.height() != texH) {
                 SDL_DestroyTexture(texture);
                 texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, surface.width(),
                                             surface.height());
-                SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+                // Scaling: whole pixels inside, a blend one window pixel wide
+                // at their edges ("sharp bilinear").
+                SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_PIXELART);
                 texW = surface.width();
                 texH = surface.height();
             }
@@ -346,6 +380,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                                 (static_cast<float>(outH) - static_cast<float>(texH) * kk) / 2, static_cast<float>(texW) * kk,
                                 static_cast<float>(texH) * kk};
             SDL_RenderTexture(renderer, texture, nullptr, &dst);
+            if (hd) hdInterface.draw(imageLayer, own ? *own : data.palette, dst, kk);
             if (sharp) sharpText.draw(textLayer, pal, dst, kk);
             SDL_RenderPresent(renderer);
         };
@@ -486,7 +521,10 @@ int main(int argc, char** argv) {
     bool intro = true, mute = false, cheats = false, convert = false, updateCheck = true;
     int mcpPort = 0; // 0 = no debug server
     std::string script;
-    fs::path shot;
+    fs::path shot, exportDir;
+    bool exportArt = false, makePack = false;
+    fs::path upscalerArg;
+    std::string upscaleModel = "realesr-animevideov3";
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--no-intro") intro = false;
@@ -502,10 +540,20 @@ int main(int argc, char** argv) {
         else if (a == "--scale" && i + 1 < argc) scale = std::clamp(std::atoi(argv[++i]), 1, 4);
         else if (a == "--script" && i + 1 < argc) script = argv[++i];
         else if (a == "--shot" && i + 1 < argc) shot = argPath(argv[++i]);
+        else if (a == "--export-interface") {
+            exportArt = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') exportDir = argPath(argv[++i]);
+        }
+        else if (a == "--make-hd-interface") {
+            makePack = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') upscalerArg = argPath(argv[++i]);
+        }
+        else if (a == "--upscale-model" && i + 1 < argc) upscaleModel = argv[++i];
         else if (a.rfind("-psn_", 0) == 0) continue; // process serial number from older macOS Finder launches
         else {
             std::fprintf(stderr, "usage: openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]\n"
-                                 "               [--cheats] [--no-update-check] [--mcp] [--mcp-port N] [--script STEPS --shot OUT.png]\n");
+                                 "               [--cheats] [--no-update-check] [--mcp] [--mcp-port N] [--script STEPS --shot OUT.png]\n"
+                                 "               [--export-interface [DIR]] [--make-hd-interface [UPSCALER]] [--upscale-model NAME]\n");
             return 2;
         }
     }
@@ -535,7 +583,25 @@ int main(int argc, char** argv) {
         } else {
             if (interactive) config.save(); // remembers the game folder
             app::GameData data = app::GameData::load(gameDir, dataDir);
-            rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, updateCheck, mcpPort, parseScript(script), shot);
+            if (exportArt) {
+                const fs::path dir = exportDir.empty() ? app::setup::userDir() / "interface-export" : exportDir;
+                const int count = app::exportInterface(data, dir);
+                std::printf("%d pictures written to %s\n", count, dir.string().c_str());
+                rc = count > 0 ? 0 : 1;
+            } else if (makePack) {
+                const fs::path upscaler = app::findUpscaler(upscalerArg, config.get("upscaler"));
+                if (upscaler.empty()) {
+                    std::fprintf(stderr, "realesrgan-ncnn-vulkan not found: give its path after --make-hd-interface\n");
+                    rc = 2;
+                } else {
+                    const std::u8string u = upscaler.u8string();
+                    config.set("upscaler", std::string(u.begin(), u.end()));
+                    config.save();
+                    rc = app::makeHdPack(data, upscaler, upscaleModel, app::setup::userDir() / "hd-interface",
+                                         app::setup::userDir() / "hd-interface.work");
+                }
+            }
+            else rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, updateCheck, mcpPort, parseScript(script), shot);
         }
     } catch (const std::exception& e) {
         app::setup::reportError(e.what(), interactive);

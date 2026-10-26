@@ -11,6 +11,8 @@ them into the programs:
 | [SQLite](https://sqlite.org) | reading the converted game databases | public domain |
 | [stb_truetype](https://github.com/nothings/stb) | rasterizing the interface font | public domain / MIT |
 | [stb_vorbis](https://github.com/nothings/stb) | decoding the Ogg Vorbis music | public domain / MIT |
+| [stb_image](https://github.com/nothings/stb) | reading the PNG files of an HD interface pack | public domain / MIT |
+| [xBRZ](https://sourceforge.net/projects/xbrz/) 1.9 | enlarging the interface art (HD interface) | GPL-3.0 |
 | [Liberation Sans](https://github.com/liberationfonts/liberation-fonts) 2.1.5 | interface font, embedded in the program | SIL Open Font License 1.1 |
 
 The Liberation fonts are distributed under the SIL Open Font License 1.1;

@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 #include "formats/dbi.hpp"
@@ -30,9 +31,13 @@ public:
     // without a color key), or nullptr if it was not requested.
     const formats::DbiSprite* get(int frame) const;
     bool empty() const { return elements_.empty(); }
+    // The frame of an element of this atlas, or -1.
+    int frameOf(const formats::DbiSprite& sprite) const;
+    const std::map<int, formats::DbiSprite>& elements() const { return elements_; }
 
 private:
     std::map<int, formats::DbiSprite> elements_;
+    std::unordered_map<const formats::DbiSprite*, int> frames_;
 };
 
 } // namespace openday::ui

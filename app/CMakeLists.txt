@@ -10,6 +10,8 @@ add_executable(openday
     debug_tools.cpp
     encyclopedia_screen.cpp
     game.cpp
+    hd_interface.cpp
+    hd_pack.cpp
     main.cpp
     map_screen.cpp
     mcp_server.cpp
@@ -22,7 +24,7 @@ add_executable(openday
 )
 target_include_directories(openday PRIVATE ${PROJECT_SOURCE_DIR})
 target_compile_definitions(openday PRIVATE OPENDAY_VERSION="${PROJECT_VERSION}")
-target_link_libraries(openday PRIVATE openday_game openday_ui openday_platform openday_update SDL3::SDL3 openday_warnings)
+target_link_libraries(openday PRIVATE openday_game openday_ui openday_platform openday_update openday_stb openday_xbrz SDL3::SDL3 openday_warnings)
 if(WIN32)
     target_link_libraries(openday PRIVATE ws2_32) # the debug server (mcp_server.cpp)
     # GUI subsystem: no console window when started from the Start menu or

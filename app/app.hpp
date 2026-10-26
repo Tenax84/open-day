@@ -113,6 +113,7 @@ struct Settings {
     bool minimapDrag = true;      // dragging on the minimap moves the view
     bool resizableWindow = true;  // the map screens grow with the window
     bool sharpText = true;        // text drawn anew at the window's resolution
+    bool hdInterface = false;     // the interface art drawn again in high resolution
     bool checkUpdates = true;   // ask GitHub for a newer release on start
     std::string updateDeclined; // a release the user said "No" to (not offered again)
 };
@@ -128,6 +129,9 @@ public:
     Settings& settings() { return settings_; }
     // Drawing resources for a game resolution (0 = 640x480, 1 = 1024x768).
     const ui::UiContext& ui(int resolution);
+    // HD interface: the key of an interface atlas element (frame, plus
+    // 100000 in the 1024 x 768 atlas), or -1 for other pictures.
+    int hdKey(const formats::DbiSprite& sprite) const;
 
     // Screen changes take effect after the current event or frame.
     void push(std::unique_ptr<Screen> screen);

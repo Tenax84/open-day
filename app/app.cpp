@@ -10,6 +10,7 @@
 #include "formats/game_path.hpp"
 #include "formats/pe_resources.hpp"
 #include "info/encyclopedia.hpp"
+#include "render/image_layer.hpp"
 #include "render/text_layer.hpp"
 
 namespace openday::app {
@@ -124,6 +125,12 @@ const ui::UiContext& App::ui(int resolution) {
     return uiLarge_;
 }
 
+int App::hdKey(const formats::DbiSprite& sprite) const {
+    if (const int frame = atlas_.frameOf(sprite); frame >= 0) return frame;
+    if (const int frame = atlasLarge_.frameOf(sprite); frame >= 0) return 100000 + frame;
+    return -1;
+}
+
 void App::applyChanges() {
     std::vector<Change> changes;
     changes.swap(pending_);
@@ -232,11 +239,15 @@ void App::draw(render::IndexedSurface& target) {
             for (int y = std::max(0, -oy); y < std::min(h, target.height() - oy); ++y) copy(y);
         };
         rows([&](int y) { std::copy(target.row(y + oy) + ox + x0, target.row(y + oy) + ox + x1, scratch_.row(y) + x0); });
-        // Sharp text drawn there belongs to the picture at the same offset.
+        // Sharp text and HD art drawn there belong to the picture at the
+        // same offset.
         render::TextLayer* layer = render::TextLayer::active();
         if (layer && layer->attached(target)) layer->attach(scratch_, ox, oy);
+        render::ImageLayer* images = render::ImageLayer::active();
+        if (images && images->attached(target)) images->attach(scratch_, ox, oy);
         sc.draw(scratch_);
         if (layer) layer->detach(scratch_);
+        if (images) images->detach(scratch_);
         rows([&](int y) { std::copy(scratch_.row(y) + x0, scratch_.row(y) + x1, target.row(y + oy) + ox + x0); });
     }
 }

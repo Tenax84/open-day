@@ -423,6 +423,7 @@ same panel (648):
 | Drag on the minimap | Camera | `minimap_drag` | on | tactical-interface.md 2.6 (dragging with the left button) |
 | Resizable window | Display | `resizable_window` | on | the map screens are laid out for the window's size (below) |
 | Sharp text | Display | `sharp_text` | on | the text is drawn anti-aliased at the window's resolution (below) |
+| HD interface | Display | `hd_interface` | off | the interface art is drawn again from high-resolution versions (below) |
 
 #### Resizable window
 
@@ -443,7 +444,7 @@ is scaled to fit the window (letter-boxed, as before). With the option on:
   that limits `k` keeps its standard length, the other gets the window's
   shape: `W0 × max(H0, round(h × W0 / w))` when `w × H0 ≤ h × W0`,
   otherwise `max(W0, round(w × H0 / h)) × H0`. The picture is scaled by
-  `k` (nearest pixel, as with the option off) and fills the window, up to
+  `k` (as with the option off; see *Scaling*) and fills the window, up to
   a rounding pixel. A wider window shows more of the map sideways, a
   taller one more downwards; a window of the standard shape shows the
   standard layout, only larger or smaller.
@@ -520,6 +521,92 @@ remain pixel art.
   picture pixel is visible (a cursor or a dialog over part of a text hides
   that part).
 - Switching the option takes effect with the next frame.
+
+#### Scaling
+
+The picture is scaled to the window "sharp bilinear" (SDL's pixel-art
+scale mode), not by nearest pixel (which at a factor `k` that is not a
+whole number makes some picture pixels one window pixel wider or taller
+than the others, and below 1 drops some): every picture pixel covers a box
+of `k × k` window pixels; a window pixel inside one box takes that pixel's
+colour, one on the border between boxes blends the neighbours by how much
+of it each covers (the blend is one window pixel wide). No row or column is
+lost or doubled, and at a whole `k` the result is the same as nearest
+pixel. Below `k` = 1 every picture pixel is blended with its neighbours
+(close to bilinear filtering). Renderers without the mode (software) fall
+back to nearest pixel. The sharp text and the HD interface are drawn over
+the result; the screenshots of the debug server and of the test mode are
+not scaled. *(Earlier versions had options for nearest-pixel and
+whole-number-only scaling; the HD interface made them unnecessary, and the
+keys `smooth_scaling` and `pixel_perfect` of `openday.cfg` are ignored.)*
+
+#### HD interface
+
+The interface art (the elements of the interface atlas, docs/formats/INTERFACE-SMK.md:
+panels, buttons, frames, the message strip) can be drawn a second time,
+over the scaled picture, from versions with more pixels. They come from the
+user's own *pack* or, where the pack has none, are enlarged by the engine.
+The pack is made by the user from their own installation, on their own
+computer; no enlarged art ships with OpenDay.
+
+- **Recording:** while a frame is drawn, every draw of an atlas element
+  into the frame (or into a dialog's part of it) is noted: the element
+  (its frame number, and whether of the 640×480 or the 1024×768 atlas),
+  the part of it drawn (a piece of a repeated filler or strip), and where
+  that part landed, clipped to the surface. Draws with a draw mode other
+  than the plain one are not noted. The frame is not changed.
+- **Visibility:** after the frame is finished (and, with *Sharp text* on,
+  after the sharp texts were taken out of the copy that is shown, so that
+  the art under them counts), a pixel of a recorded part is *visible* if
+  the frame holds the element's pixel there. Runs of visible pixels along
+  each row are joined, rows with the same runs into one rectangle.
+- **Drawing:** for each recorded part, the high-resolution version is
+  drawn over its visible rectangles, the rectangle `(x, y, w, h)` of the
+  picture mapped to window pixels by the picture's place and scale `k`,
+  and to the same rectangle of the element in the version's texture
+  coordinates (the version may have any size; it is filtered linearly).
+  The sharp text is drawn over it. Nothing is drawn at `k` ≤ 1.01: the
+  original pixels are as sharp as it gets.
+- **Enlarging:** an element without a pack picture is enlarged with xBRZ
+  (Zenju's "scale by rules" filter, GPL-3.0) from its colours in the game
+  palette (or the screen's own palette), by `n = clamp(⌈k⌉, 2, m)` with
+  `m = clamp(⌊4096 / longer side⌋, 2, 6)`; the window's linear filtering
+  covers the rest. It runs in the background (at most four elements at a
+  time, the rows of one element shared by the processor's threads); until
+  it is ready the original pixels show. When `k` changes so that `n`
+  changes, the element is enlarged again.
+- **Pack:** PNG files (any colour type; alpha is used) in
+  `<per-user dir>/hd-interface/640/NNNN.png` and `.../1024/NNNN.png`, where
+  `NNNN` is the atlas frame number with four digits. The picture covers the
+  whole element at any size, preferably a whole multiple of it. Elements
+  without a file are enlarged as above. The folder is looked at once per
+  element and run.
+- **Export:** `openday --export-interface [DIR]` writes every element of
+  both atlases (the frames the engine uses), in the game palette, with the
+  pack's names into `DIR` (default `<per-user dir>/interface-export`): the
+  starting point for enlarging them with any tool and copying the results
+  into the pack folder.
+- **Making a pack with Real-ESRGAN:** `openday --make-hd-interface
+  [UPSCALER] [--upscale-model NAME]` makes the pack with the user's own
+  `realesrgan-ncnn-vulkan` (Real-ESRGAN's portable Vulkan build, not shipped
+  with OpenDay). `UPSCALER` is the program or its folder; without it the one
+  used last (`upscaler` in `openday.cfg`), then the `PATH`, then
+  `<per-user dir>/realesrgan` are tried. Steps:
+  1. the elements are exported as above into `<per-user dir>/hd-interface.work/in`;
+  2. the program enlarges each resolution's folder 4× (`-s 4 -f png`, the
+     model given; default `realesr-animevideov3`: fast and keeps the most
+     of the original texture; `realesrgan-x4plus-anime` gives cleaner, flatter
+     surfaces, `realesrgan-x4plus` is much slower), its output hidden;
+  3. a result is used only if it is a whole multiple (≥ 2×) of the element
+     and not empty (every pixel black or transparent) where the element is
+     not; a GPU short of memory gives such empty pictures. The failed ones
+     are enlarged once more in 32-pixel tiles (`-t 32`);
+  4. the usable results replace the pictures of the same name in the pack
+     folder; the rest are left to xBRZ. The work folder is removed.
+- **Memory:** enlarged versions are kept up to 64 M texels (256 MB); above
+  that, the ones used longest ago and not in the current frame are dropped.
+- Screenshots of the debug server and of the test mode show the original
+  art. Switching the option takes effect with the next frame.
 
 ### Save and load dialogs (`CInterfSave` / `CInterfLoad`)
 

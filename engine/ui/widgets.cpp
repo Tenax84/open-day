@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include "render/image_layer.hpp"
+
 namespace openday::ui {
 namespace {
 
@@ -32,6 +34,10 @@ void drawFrame(render::IndexedSurface& s, const UiContext& ui, int frame, const 
 
 void drawTiled(render::IndexedSurface& s, const formats::DbiSprite& from, const Rect& src, const Rect& dst) {
     if (src.w <= 0 || src.h <= 0) return;
+    if (render::ImageLayer* layer = render::ImageLayer::active())
+        for (int ty = dst.y; ty < dst.y + dst.h; ty += src.h)
+            for (int tx = dst.x; tx < dst.x + dst.w; tx += src.w)
+                layer->record(s, from, {src.x, src.y, src.w, src.h}, tx, ty, {dst.x, dst.y, dst.w, dst.h});
     for (int y = std::max(0, dst.y); y < std::min(s.height(), dst.y + dst.h); ++y) {
         const int sy = src.y + (y - dst.y) % src.h;
         if (sy < 0 || sy >= from.height) continue;

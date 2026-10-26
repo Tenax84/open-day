@@ -43,6 +43,7 @@ constexpr Option kOptions[] = {
     {Section::Camera, &Settings::minimapDrag, "Drag on the minimap", "The view follows the held left button."},
     {Section::Display, &Settings::resizableWindow, "Resizable window", "The map screens grow with the window."},
     {Section::Display, &Settings::sharpText, "Sharp text", "Text is drawn smooth at the window's resolution."},
+    {Section::Display, &Settings::hdInterface, "HD interface", "Buttons and panels redrawn smooth (xBRZ or your own pack)."},
 };
 
 // Fonts for re-lettering the art: bold capitals, like the captions drawn
