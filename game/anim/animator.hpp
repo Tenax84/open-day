@@ -22,7 +22,9 @@ enum class Occlusion {
 };
 
 // One scheduled animation. It is active from tick `start` to `start +
-// duration`: onStart runs at the start tick, onEnd after the last tick.
+// duration`: onStart runs at the start tick, onEnd after the last tick. A
+// track that shows no frame on its last tick runs onEnd at once, so the
+// static sprite it puts back does not miss a tick.
 struct AnimTrack {
     int start = 0;
     int duration = 0;

@@ -28,6 +28,7 @@ void Animator::tick() {
         AnimDraw draw;
     };
     std::vector<Keyed> drawn;
+    std::vector<std::function<void()>> endsNow;
     // Start actions may schedule more tracks; iterate by index.
     for (std::size_t i = 0; i < tracks_.size(); ++i) {
         Running& r = tracks_[i];
@@ -58,6 +59,7 @@ void Animator::tick() {
             cur.lastFacing = facing;
         }
         const render::Animation* clip = t.clips[static_cast<std::size_t>(t.loop ? facing : 0)];
+        bool shown = false;
         if (clip && !clip->frames.empty()) {
             const int count = static_cast<int>(clip->frames.size());
             int frame = 0;
@@ -69,11 +71,19 @@ void Animator::tick() {
                 if (t.occlusion == Occlusion::AtRest) k.draw.refresh = refreshAtRest(tile);
                 else if (t.occlusion == Occlusion::Translate) k.draw.refresh = refreshTranslate(tile, facing);
                 drawn.push_back(std::move(k));
+                shown = true;
             }
         }
-        if (now_ == t.start + t.duration) pendingEnds_.push_back(t.onEnd ? t.onEnd : std::function<void()>());
+        if (now_ == t.start + t.duration) {
+            // An end part without a clip (e.g. infantry has no move-end clip)
+            // follows a part that showed frames one tick later; deferring its
+            // end action too would leave a tick without the unit.
+            if (shown) pendingEnds_.push_back(t.onEnd ? t.onEnd : std::function<void()>());
+            else if (t.onEnd) endsNow.push_back(t.onEnd);
+        }
     }
     std::erase_if(tracks_, [&](const Running& r) { return r.track.start + r.track.duration <= now_; });
+    for (auto& fn : endsNow) fn();
     std::stable_sort(drawn.begin(), drawn.end(), [](const Keyed& a, const Keyed& b) {
         return std::tie(a.group, a.frame.y, a.frame.x) < std::tie(b.group, b.frame.y, b.frame.x);
     });

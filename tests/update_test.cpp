@@ -84,6 +84,19 @@ void testJson() {
     CHECK(throws([] { JsonValue::parse(std::string(100, '[') + std::string(100, ']')); }));
 }
 
+void testJsonWriter() {
+    using formats::JsonValue;
+    formats::JsonWriter w;
+    w.beginObject().field("s", "a\"b\\c\n\x01").field("n", 42).field("d", 2.5).field("t", true);
+    w.key("a").beginArray().value(1).null().beginObject().endObject().beginArray().endArray().endArray();
+    w.key("raw").raw("[1,2]").field("latin1", std::string("\xE9t\xE9")).field("utf8", "\xC3\xA9").endObject();
+    CHECK(w.str() == "{\"s\":\"a\\\"b\\\\c\\n\\u0001\",\"n\":42,\"d\":2.5,\"t\":true,\"a\":[1,null,{},[]],\"raw\":[1,2],"
+                     "\"latin1\":\"\xC3\xA9t\xC3\xA9\",\"utf8\":\"\xC3\xA9\"}");
+    const JsonValue v = JsonValue::parse(w.str());
+    CHECK(v["s"].string() == "a\"b\\c\n\x01");
+    CHECK(v["a"].items().size() == 4 && v["raw"].items().size() == 2);
+}
+
 void testRelease() {
     const std::string json = R"({
         "tag_name": "v0.2.0", "name": "OpenDay v0.2.0", "draft": false, "prerelease": false,
@@ -243,6 +256,7 @@ void testTar() {
 int main() {
     testSha256();
     testJson();
+    testJsonWriter();
     testRelease();
     testVersions();
     testSums();

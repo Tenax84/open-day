@@ -272,4 +272,9 @@ using Event = std::variant<UnitMoved, UnitShot, UnitDamaged, BuildingDamaged, Wa
 // through this function, so client copies stay identical.
 void applyEvent(BattleState& state, const Event& event);
 
+// A one-line description of an event ("UnitMoved unit=3 to=(10,12) ..."),
+// for logs and the debug server. Units, buildings and the other objects are
+// given by their index in the state.
+std::string describeEvent(const Event& event);
+
 } // namespace openday::game

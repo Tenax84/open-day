@@ -210,10 +210,30 @@ void testHiddenWhileAnimating() {
     };
     CHECK(!unitHidden());
     battle.destroyUnit(0);
-    battle.tick(); // the start action hides the static sprite
-    CHECK(unitHidden() && m.entities.units[0].alive);
-    battle.tick(); // the end action removes the unit
-    CHECK(!m.entities.units[0].alive && unitName(m.scene) == "none");
+    battle.tick(); // without a clip the end action removes the unit at once
+    CHECK(!m.entities.units[0].alive && unitName(m.scene) == "none" && !battle.busy());
+}
+
+// A part without a clip after one that showed frames (a move without an end
+// clip): its end action runs in its own tick, so no tick shows neither the
+// clip nor the static sprite.
+void testEmptyEndPart() {
+    const render::Animation clip = testClip(2);
+    Animator anim;
+    bool hidden = true;
+    AnimTrack slide;
+    slide.clips[0] = &clip;
+    slide.duration = 1;
+    const int slideEnd = anim.add(slide);
+    AnimTrack end;
+    end.start = slideEnd + 1;
+    end.onEnd = [&] { hidden = false; };
+    anim.add(end);
+    for (int i = 0; i < 4; ++i) {
+        anim.tick();
+        CHECK(!anim.frames().empty() || !hidden);
+    }
+    CHECK(!hidden && anim.idle());
 }
 
 bool hasCell(const std::vector<RefreshCell>& list, RefreshCell c) {
@@ -365,6 +385,7 @@ int main() {
     testAnimator();
     testBattleAnimations();
     testHiddenWhileAnimating();
+    testEmptyEndPart();
     testOcclusionTables();
     testFrameOrder();
     testFacingRestart();

@@ -13,6 +13,7 @@
 #include <set>
 
 #include "anim/battle_session.hpp"
+#include "app/battle_control.hpp"
 #include "app/map_screen.hpp"
 #include "app/screens.hpp"
 #include "battle/automated.hpp"
@@ -185,7 +186,7 @@ private:
 
 // ---------------------------------------------------------------------------
 
-class BattleScreen : public Screen {
+class BattleScreen : public Screen, public BattleControl {
 public:
     BattleScreen(App& app, BattleConfig config, std::unique_ptr<game::BattleSession> session)
         : Screen(app), config_(std::move(config)), entry_(config_.entry), session_(std::move(session)),
@@ -207,8 +208,11 @@ public:
         centerOnHuman();
         buildControls();
         app.startMusic();
-        if (std::getenv("OPENDAY_LOG"))
-            session_->log = [](const game::Event& e) { std::fprintf(stderr, "event %zu\n", e.index()); };
+        const bool log = std::getenv("OPENDAY_LOG") != nullptr;
+        session_->log = [this, log](const game::Event& e) {
+            eventLog_.push_back(game::describeEvent(e));
+            if (log) std::fprintf(stderr, "event %s\n", eventLog_.back().c_str());
+        };
         if (!session_->state().deploying) session_->begin();
         if (session_->state().deploying) firstMap_ = true; // the tactical map first (opened by update)
         else openGoal();
@@ -217,6 +221,133 @@ public:
     int width() const override { return width_; }
     int height() const override { return height_; }
     bool paletteCycling() const override { return true; }
+    BattleControl* battleControl() override { return this; }
+
+    // --- BattleControl (the debug server) ---------------------------------
+
+    const game::BattleSession& session() const override { return *session_; }
+    int localPlayer() const override { return kHuman; }
+    std::string modeName() const override {
+        switch (mode()) {
+        case Mode::Deploy: return "deploy";
+        case Mode::Tactic: return "tactic";
+        case Mode::Automated: return "automated";
+        default: return "wait";
+        }
+    }
+    std::string dialogName() const override {
+        if (dialog_ == Dialog::Goal) return "goal";
+        if (dialog_ == Dialog::Menu) return "menu";
+        return "none";
+    }
+    std::string messageText() const override { return messageMs_ > 0 ? message_ : std::string(); }
+    std::vector<int> selected() const override { return selection_; }
+    ui::Rect mapView() const override { return {0, 0, viewW_, viewH_}; }
+    game::Point tileAt(int x, int y) const override {
+        return game::iso::tileAt(static_cast<int>(camX_) + x, static_cast<int>(camY_) + y,
+                                 session_->scene().terrain().size);
+    }
+    game::Point screenPos(game::Point tile) const override {
+        const game::Point o = game::iso::tileOrigin(tile.x, tile.y, session_->scene().terrain().size);
+        return {o.x + 27 - static_cast<int>(camX_), o.y + 42 - static_cast<int>(camY_)};
+    }
+    void centerOn(game::Point tile) override {
+        const game::Point o = game::iso::tileOrigin(tile.x, tile.y, session_->scene().terrain().size);
+        camX_ = static_cast<float>(o.x + 27 - viewW_ / 2);
+        camY_ = static_cast<float>(o.y + 42 - viewH_ / 2);
+        clampCamera();
+    }
+
+    std::vector<int> deployTypes() override {
+        if (!session_->state().deploying && !reinforcing_) buildDeployList();
+        std::vector<int> out;
+        for (const game::UnitType* t : deployTypes_) out.push_back(t->typeId);
+        return out;
+    }
+
+    std::string deployUnit(int typeId, game::Point tile) override {
+        if (std::string e = readyForOrders(); !e.empty()) return e;
+        if (mode() == Mode::Tactic) startReinforcement(); // buying a reinforcement
+        if (mode() != Mode::Deploy) return "cannot deploy now (mode: " + modeName() + ")";
+        const auto it = std::find_if(deployTypes_.begin(), deployTypes_.end(),
+                                     [&](const game::UnitType* t) { return t->typeId == typeId; });
+        if (it == deployTypes_.end()) return "unit type " + std::to_string(typeId) + " is not for sale";
+        deployList_.selected = static_cast<int>(it - deployTypes_.begin());
+        const game::BattleState& s = session_->state();
+        if (!s.inside(tile)) return "tile outside the map";
+        if (s.unitAt(tile) >= 0) return "a unit stands on that tile";
+        const std::size_t before = s.units().size();
+        deployClick(tile);
+        return s.units().size() > before ? std::string() : message_;
+    }
+
+    std::string undeployUnit(int unit) override {
+        if (std::string e = readyForOrders(); !e.empty()) return e;
+        const game::BattleState& s = session_->state();
+        if (!s.deploying) return "units can only be taken back during deployment";
+        if (std::find(deployed_.begin(), deployed_.end(), unit) == deployed_.end()) return "not a unit you placed";
+        const std::string refused = session_->send(game::UndeployRequest{kHuman, unit});
+        if (refused.empty()) std::erase(deployed_, unit);
+        return refused;
+    }
+
+    std::string endDeployment() override {
+        if (std::string e = readyForOrders(); !e.empty()) return e;
+        if (mode() != Mode::Deploy) return "not deploying";
+        finishDeployment();
+        return {};
+    }
+
+    std::string moveUnits(const std::vector<int>& units, game::Point target) override {
+        if (std::string e = tacticalOrder(units); !e.empty()) return e;
+        const game::BattleState& s = session_->state();
+        if (!s.inside(target)) return "tile outside the map";
+        selection_ = units;
+        preview_ = game::planGroupMove(s, selection_, target, app_.settings().overwatch);
+        plannedTarget_.reset();
+        if (preview_.empty()) return text(app_, 577, "Unit can't reach that position");
+        game::MoveRequest r{s.currentPlayer, {}};
+        for (const game::PlannedMove& m : preview_) {
+            destination_[m.unit] = m.target;
+            game::UnitOrder o{m.unit, m.path};
+            o.path.resize(static_cast<std::size_t>(m.affordable));
+            if (!o.path.empty()) r.orders.push_back(std::move(o));
+        }
+        preview_.clear();
+        if (r.orders.empty()) return "not enough AP to move";
+        return session_->send(r);
+    }
+
+    std::string shootAt(const std::vector<int>& units, game::Point target) override {
+        if (std::string e = tacticalOrder(units); !e.empty()) return e;
+        const game::BattleState& s = session_->state();
+        if (!s.inside(target)) return "tile outside the map";
+        selection_ = units;
+        preview_.clear();
+        plannedTarget_.reset();
+        const int lead = units.front();
+        const game::ShotCheck check = game::checkShot(s, lead, target, true);
+        std::vector<game::PathStep> path;
+        if (!check.ok() && !game::planMoveToFire(s, lead, target, nullptr, path)) return shotError(check.error);
+        marked_.erase(lead);
+        destination_.erase(lead);
+        return session_->send(game::shootOrder(s, selection_, target, app_.settings().autofire));
+    }
+
+    std::string finishTurn() override {
+        if (std::string e = readyForOrders(); !e.empty()) return e;
+        if (mode() != Mode::Tactic) return "not your turn (mode: " + modeName() + ")";
+        endTurn();
+        return {};
+    }
+
+    std::string forceResult(bool win) override {
+        if (std::string e = readyForOrders(); !e.empty()) return e;
+        if (mode() != Mode::Tactic) return "not your turn (mode: " + modeName() + ")";
+        return session_->send(game::CheatRequest{kHuman, win});
+    }
+
+    const std::vector<std::string>& eventLog() const override { return eventLog_; }
 
     // --- Input ---------------------------------------------------------------
 
@@ -347,16 +478,34 @@ private:
     enum class Mode { Deploy, Tactic, Wait, Automated };
     enum class Dialog { None, Goal, Menu };
 
+    // Checks before an order of the debug server; closes the dialogs.
+    std::string readyForOrders() {
+        if (app_.top() != this) return "another screen is open over the battle; close it first (for example key esc)";
+        dialog_ = Dialog::None;
+        confirm_.reset();
+        infoTile_.reset();
+        if (session_->state().over) return "the battle is over";
+        if (session_->animations().busy()) return "animations are still playing; wait until idle (wait_idle)";
+        return {};
+    }
+
+    std::string tacticalOrder(const std::vector<int>& units) {
+        if (std::string e = readyForOrders(); !e.empty()) return e;
+        reinforcing_ = false;
+        if (automated_) closeAutomated();
+        if (mode() != Mode::Tactic) return "not your turn (mode: " + modeName() + ")";
+        if (units.empty()) return "no units given";
+        for (const int u : units)
+            if (u < 0 || u >= static_cast<int>(session_->state().units().size()) || !ownUnit(u))
+                return "unit " + std::to_string(u) + " is not one of your living units";
+        return {};
+    }
+
     Mode mode() const {
         if (session_->state().deploying) return Mode::Deploy;
         if (session_->displayedPlayer() == kHuman && !session_->animations().busy() && !session_->state().over)
             return reinforcing_ ? Mode::Deploy : automated_ ? Mode::Automated : Mode::Tactic;
         return Mode::Wait;
-    }
-
-    game::Point tileAt(int x, int y) const {
-        return game::iso::tileAt(static_cast<int>(camX_) + x, static_cast<int>(camY_) + y,
-                                 session_->scene().terrain().size);
     }
 
     bool ownUnit(int u) const {
@@ -372,13 +521,6 @@ private:
     }
 
     // --- Camera --------------------------------------------------------------
-
-    void centerOn(game::Point tile) {
-        const game::Point o = game::iso::tileOrigin(tile.x, tile.y, session_->scene().terrain().size);
-        camX_ = static_cast<float>(o.x + 27 - viewW_ / 2);
-        camY_ = static_cast<float>(o.y + 42 - viewH_ / 2);
-        clampCamera();
-    }
 
     void clampCamera() {
         const game::Rect b = game::iso::mapBounds(session_->scene().terrain().size);
@@ -1208,7 +1350,12 @@ private:
             }
         }
         const game::Point hover = mouseX_ >= 0 && mouseX_ < viewW_ && mouseY_ < viewH_ ? tileAt(mouseX_, mouseY_) : game::Point{-1, -1};
-        if (mode == Mode::Deploy) {
+        // The deployment markers are drawn on top so that tall terrain of the
+        // cells in front (trees, rocks) does not cover them; the objects on
+        // the zone tiles go on top too, to stay above the markers *(OpenDay
+        // change: the original draws them in the cell pass, layer 3)*.
+        const bool deploy = mode == Mode::Deploy;
+        if (deploy) {
             for (const game::Point z : s.deployZone[kHuman]) {
                 int mask = 0;
                 if (s.inDeployZone(kHuman, {z.x - 1, z.y})) mask |= 8;
@@ -1216,12 +1363,13 @@ private:
                 if (s.inDeployZone(kHuman, {z.x, z.y - 1})) mask |= 2;
                 if (s.inDeployZone(kHuman, {z.x, z.y + 1})) mask |= 1;
                 // In the local player's own color (map-objects.md).
-                marker(markers, z, "DEPL" + std::to_string(colors(kHuman)) + twoDigits(deployMarker(mask)), 3);
+                marker(markers, z, "DEPL" + std::to_string(colors(kHuman)) + twoDigits(deployMarker(mask)), 3, game::kDrawOnTop);
             }
             if (s.inside(hover) && s.inDeployZone(kHuman, hover)) {
                 const int u = s.unitAt(hover);
-                if (u < 0) marker(markers, hover, "CDEPL");
-                else if (std::find(deployed_.begin(), deployed_.end(), u) != deployed_.end()) marker(markers, hover, "CRECA");
+                if (u < 0) marker(markers, hover, "CDEPL", kCursorLayer, game::kDrawOnTop);
+                else if (std::find(deployed_.begin(), deployed_.end(), u) != deployed_.end())
+                    marker(markers, hover, "CRECA", kCursorLayer, game::kDrawOnTop);
             }
         }
         if (mode == Mode::Automated) automatedMarkers(markers, hover);
@@ -1251,6 +1399,10 @@ private:
                 marker(markers, s.building(b).pos, "LILBULB", 16, game::kDrawOnTop);
         game::SceneExtras extras = session_->animations().extras();
         extras.overlays.insert(extras.overlays.end(), markers.begin(), markers.end());
+        if (deploy)
+            extras.onTop = [&s](const game::MapSprite& o) {
+                return o.layer >= game::Layer::Mine && s.inDeployZone(kHuman, {o.x, o.y});
+            };
         viewport_.fill(0);
         session_->scene().draw(viewport_, {static_cast<int>(camX_), static_cast<int>(camY_), viewW_, viewH_},
                                app_.data().sprites, true, &extras);
@@ -1561,6 +1713,7 @@ private:
     std::vector<const game::AutomatedType*> autoTypes_;
     std::vector<game::Point> autoPoints_; // target points given so far
     int lastAutomated_ = -1;              // the type selected last (explanation text)
+    std::vector<std::string> eventLog_;   // every event received, described (the debug server)
 };
 
 } // namespace

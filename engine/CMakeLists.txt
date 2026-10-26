@@ -2,6 +2,7 @@ add_library(openday_formats
     formats/bmp_palette.cpp
     formats/byte_source.cpp
     formats/dbi.cpp
+    formats/deflate.cpp
     formats/ff.cpp
     formats/game_path.cpp
     formats/hash.cpp

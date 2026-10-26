@@ -61,6 +61,7 @@ struct GameData {
 };
 
 class App;
+class BattleControl;
 
 class Screen {
 public:
@@ -80,6 +81,8 @@ public:
     // visible; with `updatesBelow` the screen below keeps running too.
     virtual bool overlay() const { return false; }
     virtual bool updatesBelow() const { return false; }
+    // The running battle, for the debug server (app/battle_control.hpp).
+    virtual BattleControl* battleControl() { return nullptr; }
 
 protected:
     App& app_;
@@ -120,6 +123,8 @@ public:
     bool quitting() const { return quit_ || (screens_.empty() && pending_.empty()); }
 
     Screen* top() { return screens_.empty() ? nullptr : screens_.back().get(); }
+    // The stack, bottom first.
+    const std::vector<std::unique_ptr<Screen>>& screens() const { return screens_; }
     void applyChanges();
     // Updates the top screen (and the screens below it that overlays keep
     // running) and draws the top screen over the screens below its overlays.

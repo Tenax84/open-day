@@ -122,6 +122,9 @@ struct AnimDraw {
 
 struct SceneExtras {
     std::function<bool(const MapSprite&)> hidden; // objects not to draw (optional)
+    // Objects drawn as if their mode had kDrawOnTop (optional): they stay
+    // above markers that are drawn on top.
+    std::function<bool(const MapSprite&)> onTop;
     std::vector<Overlay> overlays;
     std::vector<AnimDraw> frames{};
 };

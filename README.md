@@ -103,7 +103,7 @@ Per-user files (converted data, saves, settings in `openday.cfg`):
 ### Command line
 
 ```
-openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--no-intro] [--mute] [--scale N] [--cheats] [--no-update-check]
+openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--no-intro] [--mute] [--scale N] [--cheats] [--no-update-check] [--mcp] [--mcp-port N]
 ```
 
 | Option | Meaning |
@@ -117,6 +117,8 @@ openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--no-in
 | `--scale N` | window size as a multiple of 640×480 |
 | `--cheats` | Tab + W / Tab + L win or lose a battle |
 | `--no-update-check` | do not look for a newer release this time |
+| `--mcp` | start the debug server (MCP over HTTP on `127.0.0.1:47800`, see [docs/debug-mcp.md](docs/debug-mcp.md)) |
+| `--mcp-port N` | the debug server on port N |
 
 Environment variables: `OPENDAY_GAME_DIR`, `OPENDAY_DATA_DIR`,
 `OPENDAY_SAVE_DIR` (saves folder). On macOS the program is

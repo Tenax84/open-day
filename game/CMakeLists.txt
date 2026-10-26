@@ -9,6 +9,7 @@ add_library(openday_game
     battle/battle_save.cpp
     battle/battle_state.cpp
     battle/combat.cpp
+    battle/event_text.cpp
     battle/messages.cpp
     battle/movement.cpp
     battle/objectives.cpp

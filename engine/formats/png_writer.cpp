@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <string_view>
 
+#include "formats/deflate.hpp"
+
 namespace openday::formats {
 namespace {
 
@@ -36,6 +38,15 @@ void putChunk(std::vector<std::uint8_t>& out, std::string_view type, const std::
     putU32Be(out, crc32(out.data() + typeStart, out.size() - typeStart));
 }
 
+std::uint32_t adler32(const std::vector<std::uint8_t>& raw) {
+    std::uint32_t a = 1, b = 0;
+    for (std::uint8_t v : raw) {
+        a = (a + v) % 65521;
+        b = (b + a) % 65521;
+    }
+    return (b << 16) | a;
+}
+
 // zlib stream made of stored (uncompressed) deflate blocks.
 std::vector<std::uint8_t> zlibStore(const std::vector<std::uint8_t>& raw) {
     std::vector<std::uint8_t> z = {0x78, 0x01};
@@ -53,12 +64,15 @@ std::vector<std::uint8_t> zlibStore(const std::vector<std::uint8_t>& raw) {
         pos += n;
     } while (pos < raw.size());
 
-    std::uint32_t a = 1, b = 0;
-    for (std::uint8_t v : raw) {
-        a = (a + v) % 65521;
-        b = (b + a) % 65521;
-    }
-    putU32Be(z, (b << 16) | a);
+    putU32Be(z, adler32(raw));
+    return z;
+}
+
+std::vector<std::uint8_t> zlibCompress(const std::vector<std::uint8_t>& raw) {
+    std::vector<std::uint8_t> z = {0x78, 0x01};
+    const std::vector<std::uint8_t> d = deflate(raw);
+    z.insert(z.end(), d.begin(), d.end());
+    putU32Be(z, adler32(raw));
     return z;
 }
 
@@ -84,6 +98,32 @@ std::vector<std::uint8_t> encodePngRgba(int width, int height, const std::vector
     ihdr.insert(ihdr.end(), {8, 6, 0, 0, 0}); // 8-bit, RGBA, deflate, adaptive filter, no interlace
     putChunk(out, "IHDR", ihdr);
     putChunk(out, "IDAT", zlibStore(raw));
+    putChunk(out, "IEND", {});
+    return out;
+}
+
+std::vector<std::uint8_t> encodePngIndexed(int width, int height, const std::vector<std::uint8_t>& pixels,
+                                           const std::vector<std::uint8_t>& palette) {
+    const std::size_t stride = static_cast<std::size_t>(width);
+    if (width <= 0 || height <= 0 || pixels.size() != stride * static_cast<std::size_t>(height) || palette.size() != 768)
+        throw std::invalid_argument("encodePngIndexed: bad dimensions");
+
+    std::vector<std::uint8_t> raw;
+    raw.reserve((stride + 1) * static_cast<std::size_t>(height));
+    for (int y = 0; y < height; ++y) {
+        raw.push_back(0); // filter: none
+        const auto row = pixels.begin() + static_cast<std::ptrdiff_t>(stride * static_cast<std::size_t>(y));
+        raw.insert(raw.end(), row, row + static_cast<std::ptrdiff_t>(stride));
+    }
+
+    std::vector<std::uint8_t> out = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+    std::vector<std::uint8_t> ihdr;
+    putU32Be(ihdr, static_cast<std::uint32_t>(width));
+    putU32Be(ihdr, static_cast<std::uint32_t>(height));
+    ihdr.insert(ihdr.end(), {8, 3, 0, 0, 0}); // 8-bit, palette, deflate, adaptive filter, no interlace
+    putChunk(out, "IHDR", ihdr);
+    putChunk(out, "PLTE", palette);
+    putChunk(out, "IDAT", zlibCompress(raw));
     putChunk(out, "IEND", {});
     return out;
 }

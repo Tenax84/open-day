@@ -1,10 +1,12 @@
 // ZIP and Deflate reader tests on synthetic data (streams made for this
 // test; no game file is involved), plus the case-insensitive file lookup.
 
+#include "formats/deflate.hpp"
 #include "formats/game_path.hpp"
 #include "formats/inflate.hpp"
 #include "formats/zip.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -124,6 +126,30 @@ void testInflate() {
     CHECK(throws([] { inflate(std::vector<std::uint8_t>{}); }));
 }
 
+// The compressor, checked by inflating its output: empty input, text, long
+// runs (matches of 258 bytes, overlapping copies), and noise mixed with
+// repeats at varied distances, longer than the 32 KiB window.
+void testDeflate() {
+    auto roundTrip = [](const std::vector<std::uint8_t>& data) { return inflate(deflate(data)) == data; };
+    CHECK(roundTrip({}));
+    CHECK(roundTrip(bytes(dynamicText())));
+    CHECK(roundTrip(std::vector<std::uint8_t>(100000, 7)));
+    CHECK(deflate(std::vector<std::uint8_t>(100000, 7)).size() < 2000);
+    std::vector<std::uint8_t> mixed;
+    std::uint32_t seed = 12345;
+    while (mixed.size() < 200000) {
+        seed = seed * 1103515245u + 12345u;
+        if (mixed.size() > 1000 && (seed >> 16) % 4 == 0) {
+            const std::size_t distance = 1 + (seed >> 8) % std::min<std::size_t>(mixed.size(), 40000);
+            const std::size_t length = (seed >> 4) % 300;
+            for (std::size_t k = 0; k < length; ++k) mixed.push_back(mixed[mixed.size() - distance]);
+        } else {
+            mixed.push_back(static_cast<std::uint8_t>(seed >> 24));
+        }
+    }
+    CHECK(roundTrip(mixed));
+}
+
 void testZip() {
     const std::vector<std::uint8_t> zip = writeZip({
         {"readme.txt", bytes("stored member"), {}},
@@ -173,6 +199,7 @@ void testGamePath() {
 int main() {
     testCrc();
     testInflate();
+    testDeflate();
     testZip();
     testGamePath();
     if (failures) {

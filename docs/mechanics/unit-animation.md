@@ -250,6 +250,13 @@ Per tick (see *The clock* for the full order): at the start tick the
 start ≤ tick the current frame is drawn; at the end tick the *end action*
 runs and the animation is removed.
 
+*(OpenDay choice)* OpenDay redraws the whole frame every tick and runs end
+actions at the start of the next tick, after the last frame was shown. An
+animation that draws nothing on its end tick (a missing clip, such as the
+move-end part of infantry, which has no `N` clip) runs its end action at
+once instead; otherwise the unit would be missing for one tick between the
+last slide frame and its static sprite.
+
 A clip that is not looped stops drawing after its last frame. Moves loop
 their clip.
 

@@ -198,7 +198,8 @@ void MapScene::drawCell(render::IndexedSurface& target, const Rect& view, Sprite
             const MapSprite& obj = objects_[i];
             overlaysUpTo(static_cast<int>(obj.layer) - 1);
             if (extras && extras->hidden && extras->hidden(obj)) continue;
-            if (const formats::DbiSprite* sprite = sprites.get(obj.set, obj.name)) put(*sprite, sx, sy + obj.dy, obj.mode);
+            const int mode = extras && extras->onTop && extras->onTop(obj) ? obj.mode | kDrawOnTop : obj.mode;
+            if (const formats::DbiSprite* sprite = sprites.get(obj.set, obj.name)) put(*sprite, sx, sy + obj.dy, mode);
             else ++stats.missingSprites;
         }
     overlaysUpTo(std::numeric_limits<int>::max());

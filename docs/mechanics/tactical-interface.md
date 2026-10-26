@@ -1073,6 +1073,12 @@ views, objectives dialog, in-game options, battle report) on top of
 - *Done* marks (3.8) are cleared at the start of each of your turns
   *(deliberate change; the original keeps them for the whole battle)*.
 - REINFORCEMENT is disabled in death match kind 10 (2.9).
+- In the deployment view the `DEPL` markers and the `CDEPL` / `CRECA`
+  cursors are drawn on top (draw-mode bit 16), and so are the mines, ruins,
+  buildings, walls and units on the zone tiles, which stay above the
+  markers. Tall terrain of the cells in front (trees, rocks, ice) therefore
+  no longer hides parts of the zone *(deliberate change; the original draws
+  the markers in the cell pass, layer 3)*.
 - The info card disappears when the right button is released (the release
   is a mouse event too); `--script` has `rdown:X,Y` to show it.
 - MENU: Save / Surrender / Quit enabled as in interface.md; Surrender and

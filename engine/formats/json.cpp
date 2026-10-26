@@ -1,6 +1,8 @@
 #include "formats/json.hpp"
 
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 
 namespace openday::formats {
@@ -203,5 +205,123 @@ const JsonValue& JsonValue::operator[](std::string_view key) const {
 }
 
 JsonValue JsonValue::parse(std::string_view text) { return JsonParser(text).document(); }
+
+namespace {
+
+bool validUtf8(std::string_view s) {
+    for (std::size_t i = 0; i < s.size();) {
+        const auto c = static_cast<unsigned char>(s[i]);
+        const int extra = c < 0x80 ? 0 : (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : -1;
+        if (extra < 0 || i + static_cast<std::size_t>(extra) >= s.size()) return false;
+        for (int k = 1; k <= extra; ++k)
+            if ((static_cast<unsigned char>(s[i + static_cast<std::size_t>(k)]) & 0xC0) != 0x80) return false;
+        i += static_cast<std::size_t>(extra) + 1;
+    }
+    return true;
+}
+
+} // namespace
+
+std::string jsonQuote(std::string_view s) {
+    const bool utf8 = validUtf8(s);
+    std::string out = "\"";
+    for (const char ch : s) {
+        const auto c = static_cast<unsigned char>(ch);
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                char buf[8];
+                std::snprintf(buf, sizeof buf, "\\u%04x", c);
+                out += buf;
+            } else if (c >= 0x80 && !utf8) {
+                out += static_cast<char>(0xC0 | (c >> 6));
+                out += static_cast<char>(0x80 | (c & 0x3F));
+            } else {
+                out += ch;
+            }
+        }
+    }
+    out += '"';
+    return out;
+}
+
+void JsonWriter::separate() {
+    if (afterKey_) {
+        afterKey_ = false;
+        return;
+    }
+    if (!first_.empty()) {
+        if (!first_.back()) out_ += ',';
+        first_.back() = false;
+    }
+}
+
+JsonWriter& JsonWriter::open(char c) {
+    separate();
+    out_ += c;
+    first_.push_back(true);
+    return *this;
+}
+
+JsonWriter& JsonWriter::close(char c) {
+    out_ += c;
+    if (!first_.empty()) first_.pop_back();
+    return *this;
+}
+
+JsonWriter& JsonWriter::key(std::string_view name) {
+    separate();
+    out_ += jsonQuote(name);
+    out_ += ':';
+    afterKey_ = true;
+    return *this;
+}
+
+JsonWriter& JsonWriter::value(std::string_view s) {
+    separate();
+    out_ += jsonQuote(s);
+    return *this;
+}
+
+JsonWriter& JsonWriter::value(bool b) {
+    separate();
+    out_ += b ? "true" : "false";
+    return *this;
+}
+
+JsonWriter& JsonWriter::value(int n) {
+    separate();
+    out_ += std::to_string(n);
+    return *this;
+}
+
+JsonWriter& JsonWriter::value(double n) {
+    separate();
+    if (!std::isfinite(n)) {
+        out_ += "null";
+    } else {
+        char buf[32];
+        std::snprintf(buf, sizeof buf, "%.17g", n);
+        out_ += buf;
+    }
+    return *this;
+}
+
+JsonWriter& JsonWriter::null() {
+    separate();
+    out_ += "null";
+    return *this;
+}
+
+JsonWriter& JsonWriter::raw(std::string_view json) {
+    separate();
+    out_ += json;
+    return *this;
+}
 
 } // namespace openday::formats

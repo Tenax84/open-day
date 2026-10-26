@@ -1,7 +1,7 @@
 // openday: the game program.
 //
 //   openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]
-//           [--cheats] [--no-update-check] [--script STEPS --shot OUT.png]
+//           [--cheats] [--no-update-check] [--mcp] [--mcp-port N] [--script STEPS --shot OUT.png]
 //
 // --game-dir  the game installation. Default: $OPENDAY_GAME_DIR, then the
 //             folder remembered in the per-user configuration, then the usual
@@ -23,6 +23,9 @@
 // --no-update-check
 //             does not ask GitHub for a newer release this time (openday.cfg:
 //             check_updates=0 turns the check off for good; docs/updates.md)
+// --mcp       starts the debug server: an MCP server on http://127.0.0.1:47800/mcp
+//             that lets a tool watch and drive the game (docs/debug-mcp.md)
+// --mcp-port  the debug server on another port (implies --mcp)
 // --script    test input, steps separated by ';': click:X,Y (left), rclick:X,Y,
 //             rdown:X,Y (right button pressed, not released),
 //             move:X,Y, key:NAME (a letter, enter, esc, tab, up, down, left,
@@ -36,12 +39,15 @@
 #include <SDL3/SDL_main.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <stdexcept>
 
 #include "app/app.hpp"
+#include "app/debug_tools.hpp"
+#include "app/mcp_server.hpp"
 #include "app/screens.hpp"
 #include "app/setup.hpp"
 #include "formats/png_writer.hpp"
@@ -186,8 +192,9 @@ void placeWindow(SDL_Window* window, int scale) {
 
 // `config` is null in the scripted test mode (settings are neither read nor
 // stored then).
+// `mcpPort` > 0 starts the debug server on that port.
 int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, bool mute, bool cheats, bool updateCheck,
-        std::deque<Step> script, const fs::path& shot) {
+        int mcpPort, std::deque<Step> script, const fs::path& shot) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     if (!SDL_CreateWindowAndRenderer("OpenDay", 640, 480, SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN, &window, &renderer)) {
@@ -211,6 +218,18 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         }
         app.push(intro ? app::makeIntro(app) : app::makeMainMenu(app));
         app.applyChanges();
+        std::unique_ptr<app::McpServer> mcp;
+        std::unique_ptr<app::DebugTools> tools;
+        if (mcpPort > 0) {
+            try {
+                mcp = std::make_unique<app::McpServer>(mcpPort, app::DebugTools::toolList(), app::DebugTools::instructions());
+                tools = std::make_unique<app::DebugTools>(app);
+                std::printf("debug server: http://127.0.0.1:%d/mcp\n", mcpPort);
+                std::fflush(stdout);
+            } catch (const std::exception& e) {
+                std::fprintf(stderr, "%s\n", e.what());
+            }
+        }
 
         render::IndexedSurface surface(640, 480);
         SDL_Texture* texture = nullptr;
@@ -325,7 +344,9 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     break;
                 }
             }
-            app.update(elapsed);
+            // The debug server's game speed (set_speed).
+            const int gameMs = tools ? static_cast<int>(std::lround(elapsed * tools->speed())) : elapsed;
+            app.update(gameMs);
             app.applyChanges();
             if (app.quitting()) break;
             audio.update();
@@ -353,6 +374,10 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                     std::copy_n(rgba.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(texW) * 4,
                                 static_cast<std::size_t>(texW) * 4, static_cast<std::uint8_t*>(pixels) + y * pitch);
                 SDL_UnlockTexture(texture);
+            }
+            if (tools) {
+                tools->frame(*mcp, surface, pal, gameMs);
+                if (app.quitting()) break;
             }
             SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
             SDL_RenderClear(renderer);
@@ -382,6 +407,7 @@ int main(int argc, char** argv) {
     fs::path gameDirArg, dataDirArg, installFrom;
     int scale = 0; // 0 = fit the screen
     bool intro = true, mute = false, cheats = false, convert = false, updateCheck = true;
+    int mcpPort = 0; // 0 = no debug server
     std::string script;
     fs::path shot;
     for (int i = 1; i < argc; ++i) {
@@ -391,6 +417,8 @@ int main(int argc, char** argv) {
         else if (a == "--cheats") cheats = true;
         else if (a == "--convert") convert = true;
         else if (a == "--no-update-check") updateCheck = false;
+        else if (a == "--mcp") mcpPort = mcpPort > 0 ? mcpPort : 47800;
+        else if (a == "--mcp-port" && i + 1 < argc) mcpPort = std::clamp(std::atoi(argv[++i]), 1, 65535);
         else if (a == "--game-dir" && i + 1 < argc) gameDirArg = argPath(argv[++i]);
         else if (a == "--install-from" && i + 1 < argc) installFrom = argPath(argv[++i]);
         else if (a == "--data" && i + 1 < argc) dataDirArg = argPath(argv[++i]);
@@ -400,7 +428,7 @@ int main(int argc, char** argv) {
         else if (a.rfind("-psn_", 0) == 0) continue; // process serial number from older macOS Finder launches
         else {
             std::fprintf(stderr, "usage: openday [--game-dir DIR | --install-from FILE] [--data DIR] [--convert] [--scale N] [--no-intro] [--mute]\n"
-                                 "               [--cheats] [--no-update-check] [--script STEPS --shot OUT.png]\n");
+                                 "               [--cheats] [--no-update-check] [--mcp] [--mcp-port N] [--script STEPS --shot OUT.png]\n");
             return 2;
         }
     }
@@ -430,7 +458,7 @@ int main(int argc, char** argv) {
         } else {
             if (interactive) config.save(); // remembers the game folder
             app::GameData data = app::GameData::load(gameDir, dataDir);
-            rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, updateCheck, parseScript(script), shot);
+            rc = run(data, interactive ? &config : nullptr, scale, intro, mute, cheats, updateCheck, mcpPort, parseScript(script), shot);
         }
     } catch (const std::exception& e) {
         app::setup::reportError(e.what(), interactive);
