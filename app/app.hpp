@@ -112,6 +112,7 @@ struct Settings {
     bool exactMinimap = true;     // minimap click and frame centred on the exact point
     bool minimapDrag = true;      // dragging on the minimap moves the view
     bool resizableWindow = true;  // the map screens grow with the window
+    bool sharpText = true;        // text drawn anew at the window's resolution
     bool checkUpdates = true;   // ask GitHub for a newer release on start
     std::string updateDeclined; // a release the user said "No" to (not offered again)
 };

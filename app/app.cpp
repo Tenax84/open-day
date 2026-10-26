@@ -10,6 +10,7 @@
 #include "formats/game_path.hpp"
 #include "formats/pe_resources.hpp"
 #include "info/encyclopedia.hpp"
+#include "render/text_layer.hpp"
 
 namespace openday::app {
 namespace {
@@ -231,7 +232,11 @@ void App::draw(render::IndexedSurface& target) {
             for (int y = std::max(0, -oy); y < std::min(h, target.height() - oy); ++y) copy(y);
         };
         rows([&](int y) { std::copy(target.row(y + oy) + ox + x0, target.row(y + oy) + ox + x1, scratch_.row(y) + x0); });
+        // Sharp text drawn there belongs to the picture at the same offset.
+        render::TextLayer* layer = render::TextLayer::active();
+        if (layer && layer->attached(target)) layer->attach(scratch_, ox, oy);
         sc.draw(scratch_);
+        if (layer) layer->detach(scratch_);
         rows([&](int y) { std::copy(scratch_.row(y) + x0, scratch_.row(y) + x1, target.row(y + oy) + ox + x0); });
     }
 }

@@ -1,8 +1,10 @@
 #include "render/font.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
+#include "render/text_layer.hpp"
 #include "stb_truetype.h"
 
 namespace openday::embedded {
@@ -64,7 +66,7 @@ struct Font::Impl {
     float scale = 1;
 };
 
-Font::Font(FontFace face, int cellHeight) : impl_(std::make_unique<Impl>()), cellHeight_(cellHeight) {
+Font::Font(FontFace face, int cellHeight) : impl_(std::make_unique<Impl>()), face_(face), cellHeight_(cellHeight) {
     const std::span<const std::uint8_t> data = face == FontFace::Bold ? embedded::fontBold() : embedded::fontRegular();
     if (!stbtt_InitFont(&impl_->info, data.data(), stbtt_GetFontOffsetForIndex(data.data(), 0)))
         throw std::runtime_error("cannot read the embedded font");
@@ -107,9 +109,28 @@ int Font::width(std::string_view utf8) const {
 }
 
 void Font::draw(IndexedSurface& target, int x, int y, std::string_view utf8, std::uint8_t color) const {
-    int pen = x;
+    std::u32string text = decodeUtf8(utf8);
     const int base = y + baseline_;
-    for (const char32_t c : decodeUtf8(utf8)) {
+    // Sharp text: the pixels the text may touch are noted before and after.
+    TextLayer* layer = TextLayer::active();
+    if (layer && !layer->attached(target)) layer = nullptr;
+    if (layer) {
+        int x0 = x, x1 = x, y0 = y, y1 = y + cellHeight_, pen = x;
+        for (const char32_t c : text) {
+            const Glyph& g = glyph(c);
+            if (g.width > 0 && g.height > 0) {
+                x0 = std::min(x0, pen + g.left);
+                x1 = std::max(x1, pen + g.left + g.width);
+                y0 = std::min(y0, base + g.top);
+                y1 = std::max(y1, base + g.top + g.height);
+            }
+            pen += g.advance;
+            x1 = std::max(x1, pen);
+        }
+        layer->beginItem(target, x0, y0, x1, y1);
+    }
+    int pen = x;
+    for (const char32_t c : text) {
         const Glyph& g = glyph(c);
         for (int gy = 0; gy < g.height; ++gy) {
             const int ty = base + g.top + gy;
@@ -124,6 +145,7 @@ void Font::draw(IndexedSurface& target, int x, int y, std::string_view utf8, std
         }
         pen += g.advance;
     }
+    if (layer) layer->endItem(target, face_, cellHeight_, x, y, pen - x, std::move(text), color);
 }
 
 void Font::drawIn(IndexedSurface& target, int x, int y, int w, int h, std::string_view utf8, std::uint8_t color,

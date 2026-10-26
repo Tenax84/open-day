@@ -1,7 +1,8 @@
 // OpenDay's own options (docs/mechanics/interface.md, "OpenDay options").
 // The dialog is the panel of the in-game options (frame 648) with its title
 // re-lettered and its controls covered by one black box, like the one of the
-// CD player; the settings are rows of the options' on/off lamps (665).
+// CD player; the settings are rows of the options' on/off lamps (665), in
+// sections chosen by the headings above them.
 #include "app/openday_options.hpp"
 
 #include <algorithm>
@@ -22,20 +23,26 @@ constexpr ui::Rect kContent{14, 41, 373, 289};    // the box over the options' c
 // QUIT ends and BACK starts here; the OPENDAY button is centred between them.
 constexpr int kQuitRight = 250, kBackLeft = 336, kButtonY = 340, kButtonH = 17;
 
+enum class Section { Camera, Display };
+constexpr const char* kSectionNames[] = {"CAMERA", "DISPLAY"};
+constexpr int kSections = 2;
+
 struct Option {
+    Section section;
     bool Settings::*value;
     const char* label;
     const char* description;
 };
 
 constexpr Option kOptions[] = {
-    {&Settings::edgeScroll, "Edge scrolling", "The map scrolls at the edge of the screen."},
-    {&Settings::smoothEdgeScroll, "Smooth edge scrolling", "Pixel by pixel instead of a tile at a time."},
-    {&Settings::dragScroll, "Drag the map with the right button", "Hold the right button and move the mouse."},
-    {&Settings::keepViewOnSelect, "Keep the view when selecting", "Clicking a unit does not move the map to it."},
-    {&Settings::exactMinimap, "Exact minimap", "A click centres the view on the exact point."},
-    {&Settings::minimapDrag, "Drag on the minimap", "The view follows the held left button."},
-    {&Settings::resizableWindow, "Resizable window", "The map screens grow with the window."},
+    {Section::Camera, &Settings::edgeScroll, "Edge scrolling", "The map scrolls at the edge of the screen."},
+    {Section::Camera, &Settings::smoothEdgeScroll, "Smooth edge scrolling", "Pixel by pixel instead of a tile at a time."},
+    {Section::Camera, &Settings::dragScroll, "Drag the map with the right button", "Hold the right button and move the mouse."},
+    {Section::Camera, &Settings::keepViewOnSelect, "Keep the view when selecting", "Clicking a unit does not move the map to it."},
+    {Section::Camera, &Settings::exactMinimap, "Exact minimap", "A click centres the view on the exact point."},
+    {Section::Camera, &Settings::minimapDrag, "Drag on the minimap", "The view follows the held left button."},
+    {Section::Display, &Settings::resizableWindow, "Resizable window", "The map screens grow with the window."},
+    {Section::Display, &Settings::sharpText, "Sharp text", "Text is drawn smooth at the window's resolution."},
 };
 
 // Fonts for re-lettering the art: bold capitals, like the captions drawn
@@ -118,6 +125,12 @@ public:
 
     void handle(const ui::InputEvent& e) override {
         if (back_.handle(e)) return;
+        // The headings choose the section; Tab steps to the next one.
+        if (e.type == ui::InputEvent::Type::KeyDown && e.key == ui::kKeyTab)
+            return show(static_cast<Section>((static_cast<int>(section_) + 1) % kSections));
+        if (e.type == ui::InputEvent::Type::MouseDown && e.button == 1)
+            for (int i = 0; i < kSections; ++i)
+                if (heading(i).contains(e.x, e.y)) return show(static_cast<Section>(i));
         for (Row& r : rows_) {
             r.lamp.onClick = [this, &r] { flip(r); };
             if (r.lamp.handle(e)) return;
@@ -137,7 +150,9 @@ public:
             ui::drawFrame(s, ui, -1, box);
         }
         drawSpaced(s, boldFont(17), offset(kTitleStrip, panel_), "OPENDAY", 3, gold(app_));
-        drawSpaced(s, boldFont(12), {box.x + 16, box.y + 10, box.w - 32, 16}, "CAMERA", 2, gold(app_));
+        for (int i = 0; i < kSections; ++i)
+            drawSpaced(s, boldFont(12), heading(i), kSectionNames[i], 2,
+                       static_cast<Section>(i) == section_ ? gold(app_) : ui.grey);
         for (const Row& r : rows_) {
             r.lamp.draw(s, ui);
             const int x = r.lamp.rect.x + kTextX;
@@ -162,6 +177,7 @@ private:
         rows_.clear();
         int y = box.y + 32;
         for (const Option& o : kOptions) {
+            if (o.section != section_) continue;
             Row r;
             r.option = &o;
             r.lamp.rect = {box.x + 16, y, 19, 19};
@@ -181,6 +197,17 @@ private:
     // description kDescriptionY under the row's top; kRowGap between rows.
     static constexpr int kTextX = 30, kDescriptionY = 18, kRowGap = 4;
     static int descriptionWidth(const ui::Rect& box) { return box.w - 32 - kTextX; }
+    // The section headings side by side over the rows.
+    ui::Rect heading(int i) const {
+        const ui::Rect box = offset(kContent, panel_);
+        const int w = (box.w - 32) / kSections;
+        return {box.x + 16 + i * w, box.y + 10, w, 16};
+    }
+    void show(Section s) {
+        if (s == section_) return;
+        section_ = s;
+        build();
+    }
 
     struct Row {
         const Option* option = nullptr;
@@ -199,6 +226,7 @@ private:
     bool resizable_;
     int width_, height_;
     ui::Rect panel_;
+    Section section_ = Section::Camera;
     ui::Button back_;
     std::vector<Row> rows_;
 };

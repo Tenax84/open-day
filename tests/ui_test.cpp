@@ -1,14 +1,16 @@
 // User-interface foundations on synthetic data: font metrics and wrapping,
-// message formatting, PE string tables and bitmaps, the interface atlas,
+// sharp text, message formatting, PE string tables and bitmaps, the interface atlas,
 // buttons.
 
 #include "formats/binary.hpp"
 #include "formats/pe_resources.hpp"
 #include "formats/smk.hpp"
 #include "render/font.hpp"
+#include "render/text_layer.hpp"
 #include "ui/atlas.hpp"
 #include "ui/widgets.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -56,6 +58,78 @@ void testFont() {
     CHECK(render::decodeUtf8("\xc3\xa9") == std::u32string(1, U'é'));
     CHECK(render::decodeUtf8("\xe9") == std::u32string(1, U'é'));
     CHECK(render::Font(render::FontFace::Bold, 17).width("Bold") > 0);
+}
+
+// Sharp text: recorded texts, their visibility in the finished frame and the
+// frame without them.
+void testTextLayer() {
+    const render::Font f(render::FontFace::Regular, 14);
+    render::IndexedSurface frame(80, 40, 3);
+    render::TextLayer layer;
+    layer.attach(frame, 0, 0);
+    render::TextLayer::setActive(&layer);
+    f.draw(frame, 11, 6, "Ab", 1); // a shadow ...
+    f.draw(frame, 10, 5, "Ab", 2); // ... and the text over it
+    // A text drawn into another surface over the frame, at an offset.
+    render::IndexedSurface dialog(20, 20, 3);
+    layer.attach(dialog, 50, 10);
+    f.draw(dialog, 2, 2, "x", 4);
+    layer.detach(dialog);
+    render::IndexedSurface loose(20, 20, 3);
+    f.draw(loose, 0, 0, "y", 5); // not attached: not recorded
+    render::TextLayer::setActive(nullptr);
+    for (int y = 0; y < 20; ++y) std::copy_n(dialog.row(y), 20, frame.row(10 + y) + 50);
+    // Something drawn later over the left part of the text.
+    for (int y = 0; y < frame.height(); ++y) std::fill_n(frame.row(y), 14, std::uint8_t{9});
+
+    const auto& items = layer.items();
+    CHECK(items.size() == 3);
+    if (items.size() != 3) return;
+    CHECK(items[1].x == 10 && items[1].y == 5 && items[1].width == f.width("Ab") && items[1].color == 2);
+    CHECK(items[2].x == 52 && items[2].y == 12 && items[2].text == U"x");
+    render::IndexedSurface shown = frame;
+    layer.resolve(shown);
+    // Both lines of the shadowed text are partly covered, the dialog's text not.
+    CHECK(items[0].anyVisible && !items[0].allVisible);
+    CHECK(items[1].anyVisible && !items[1].allVisible);
+    CHECK(items[2].allVisible);
+    // The covered pixels stay.
+    int covered = 0, left = 0;
+    for (int y = 0; y < shown.height(); ++y)
+        for (int x = 0; x < 14; ++x) covered += shown.at(x, y) == 9;
+    CHECK(covered == 14 * shown.height());
+    // Next to the cover the pixel text stays (hidden glyph pixels hide their
+    // surroundings, the cover may have the background's colour), elsewhere
+    // the frame shows the background again.
+    for (int y = 0; y < shown.height(); ++y)
+        for (int x = 18; x < shown.width(); ++x) left += shown.at(x, y) != 3;
+    CHECK(left == 0);
+    // Visibility per pixel: none under the box drawn over the text.
+    const auto& t = items[1];
+    bool hidden = true;
+    for (int y = 0; y < t.boxH; ++y)
+        for (int x = 0; x < t.boxW && t.boxX + x < 14; ++x)
+            hidden = hidden && !t.visible[static_cast<std::size_t>(y * t.boxW + x)];
+    CHECK(hidden);
+
+    // A text covered entirely by something of its background's colour (a
+    // dialog over a screen) is not visible at all.
+    render::IndexedSurface under(60, 30, 0);
+    render::TextLayer second;
+    second.attach(under, 0, 0);
+    render::TextLayer::setActive(&second);
+    f.draw(under, 5, 5, "Hidden", 15);
+    render::TextLayer::setActive(nullptr);
+    under.fill(0);
+    second.resolve(under);
+    CHECK(second.items().size() == 1 && !second.items()[0].anyVisible);
+
+    // The anti-aliased font has shades, and grows with its height.
+    const render::SmoothFont small(render::FontFace::Regular, 14), large(render::FontFace::Regular, 28);
+    const auto& g = large.glyph(U'A');
+    CHECK(g.width > 0 && large.glyph(U'A').advance > 1.9f * small.glyph(U'A').advance);
+    CHECK(std::any_of(g.coverage.begin(), g.coverage.end(), [](std::uint8_t c) { return c > 0 && c < 255; }));
+    CHECK(large.baseline() > small.baseline());
 }
 
 void testFormat() {
@@ -236,6 +310,7 @@ void testButton() {
 
 int main() {
     testFont();
+    testTextLayer();
     testFormat();
     testStrings();
     testBitmaps();

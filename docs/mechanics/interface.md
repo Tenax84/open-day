@@ -35,7 +35,9 @@ Arial this gives a cap height of roughly 0.72 × height (about 10 px for the
 standard font). The three session fonts are created with default width,
 weight, quality and character set ("default charset"); the lobby font uses
 family "swiss, variable pitch". No anti-aliasing is requested; on an 8-bit
-surface GDI draws plain, non-smoothed glyphs.
+surface GDI draws plain, non-smoothed glyphs. *(OpenDay: the same plain glyphs go into
+the picture; the "Sharp text" option in section 4 draws the text again,
+smoothed, at the window's resolution.)*
 
 **Substitution for OpenDay:** any metric-compatible sans-serif works
 (Liberation Sans or Arimo are metric-compatible with Arial). Render without
@@ -398,8 +400,12 @@ same panel (648):
 - The controls of the options are covered by one black box (14, 41,
   373×289) made from the CD player's box (167, 67, 220×225): the 3-pixel
   edges and corners are kept, the rest is repeated.
-- Inside: a section heading ("CAMERA", bold 12 px, the title's colour),
-  then one row per setting: the on/off lamp (665) at x + 16, the name in
+- Inside: the section headings side by side ("CAMERA", "DISPLAY", bold
+  12 px, 2 px letter spacing), each centred in an equal share of
+  (box.x + 16, box.y + 10, box.w − 32, 16); the chosen section's heading is
+  in the title's colour, the other grey. A click on a heading or `Tab`
+  (next section) shows that section; the dialog opens on *Camera*. Under
+  the headings, one row per setting of the section: the on/off lamp (665) at x + 16, the name in
   the standard font in white and a description of up to two lines in grey
   under it (the first row at y + 32 of the box, the description 18 px
   under the name; a row is 18 px plus its description's lines of 14 px
@@ -407,15 +413,16 @@ same panel (648):
   setting at once (like the original options, there is no confirmation).
 - *Back* (653) at (336, 340), `Esc`, closes the dialog.
 
-| Setting | `openday.cfg` key | Default | Effect |
-|---|---|---|---|
-| Edge scrolling | `edge_scroll` | **off** | tactical-interface.md 3.6 |
-| Smooth edge scrolling | `smooth_edge_scroll` | on | tactical-interface.md 3.6 |
-| Drag the map with the right button | `drag_scroll` | on | tactical-interface.md 3.6 |
-| Keep the view when selecting | `keep_view_on_select` | on | tactical-interface.md 3.2 (click on an own unit) |
-| Exact minimap | `exact_minimap` | on | tactical-interface.md 2.6 (click and viewport frame) |
-| Drag on the minimap | `minimap_drag` | on | tactical-interface.md 2.6 (dragging with the left button) |
-| Resizable window | `resizable_window` | on | the map screens are laid out for the window's size (below) |
+| Setting | Section | `openday.cfg` key | Default | Effect |
+|---|---|---|---|---|
+| Edge scrolling | Camera | `edge_scroll` | **off** | tactical-interface.md 3.6 |
+| Smooth edge scrolling | Camera | `smooth_edge_scroll` | on | tactical-interface.md 3.6 |
+| Drag the map with the right button | Camera | `drag_scroll` | on | tactical-interface.md 3.6 |
+| Keep the view when selecting | Camera | `keep_view_on_select` | on | tactical-interface.md 3.2 (click on an own unit) |
+| Exact minimap | Camera | `exact_minimap` | on | tactical-interface.md 2.6 (click and viewport frame) |
+| Drag on the minimap | Camera | `minimap_drag` | on | tactical-interface.md 2.6 (dragging with the left button) |
+| Resizable window | Display | `resizable_window` | on | the map screens are laid out for the window's size (below) |
+| Sharp text | Display | `sharp_text` | on | the text is drawn anti-aliased at the window's resolution (below) |
 
 #### Resizable window
 
@@ -476,6 +483,43 @@ is scaled to fit the window (letter-boxed, as before). With the option on:
   during a live resize (SDL: `SDL_EVENT_WINDOW_EXPOSED` with `data1 = 1`,
   caught by an event watch). Input that arrives during the drag is mapped
   with the window's size at that moment.
+
+#### Sharp text
+
+The picture is drawn at 640×480, 1024×768 or the resizable size and scaled
+to the window by a factor that is rarely a whole number; the nearest-pixel
+scaling then drops or doubles rows and columns, and the thin, unsmoothed
+strokes of the text (section 1) break up. With *Sharp text* on, the text is
+drawn a second time at the window's resolution, over the scaled picture.
+Captions that are part of the art (button labels, titles in the atlas)
+remain pixel art.
+
+- **Recording:** while a frame is drawn, every line of text drawn into the
+  frame (or into a dialog's part of it) is noted: font, cell height, the
+  cell's top-left, the colour index, the width of the pixel line, and the
+  pixels of a rectangle around it (the glyphs' extent plus 2 px) as they
+  were before and after it was drawn. The frame itself is not changed:
+  screenshots of the debug server and of the test mode show the pixel
+  text.
+- **Visibility:** after the frame is finished, the texts are looked at from
+  the last drawn to the first. A pixel of a text's rectangle *matches* if
+  the frame still holds the value it had after the text was drawn. A
+  letter pixel (one the text changed) that does not match was covered by
+  something drawn later, and every pixel within 2 px of it counts as
+  covered too (the cover may have the background's colour). A pixel that
+  matches and is not covered is *visible*; in the copy of the frame that is
+  shown, it gets back the value it had before the text was drawn. Going
+  from the last text to the first, a text drawn over another one (a
+  shadow) is taken out before the one under it is checked.
+- **Drawing:** for each text with a visible letter pixel, the same font is
+  rasterized with anti-aliasing at `cell height × k` pixels (`k`: window
+  pixels per picture pixel), with the same ascent-based baseline. The
+  advances are spread evenly so that the line is `k` times as wide as the
+  pixel line (alignment and wrapping stay as laid out). The glyph pixels
+  are blended in the text's palette colour, only over window pixels whose
+  picture pixel is visible (a cursor or a dialog over part of a text hides
+  that part).
+- Switching the option takes effect with the next frame.
 
 ### Save and load dialogs (`CInterfSave` / `CInterfLoad`)
 

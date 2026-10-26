@@ -15,6 +15,7 @@ add_executable(openday
     mcp_server.cpp
     menus.cpp
     openday_options.cpp
+    sharp_text.cpp
     ui_frames.cpp
     updater.cpp
     view_layout.cpp

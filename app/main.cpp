@@ -50,7 +50,9 @@
 #include "app/mcp_server.hpp"
 #include "app/screens.hpp"
 #include "app/setup.hpp"
+#include "app/sharp_text.hpp"
 #include "formats/png_writer.hpp"
+#include "render/text_layer.hpp"
 
 #include <deque>
 #include <sstream>
@@ -80,6 +82,7 @@ void loadSettings(app::Settings& s, const app::setup::Config& c) {
     s.exactMinimap = c.getInt("exact_minimap", s.exactMinimap) != 0;
     s.minimapDrag = c.getInt("minimap_drag", s.minimapDrag) != 0;
     s.resizableWindow = c.getInt("resizable_window", s.resizableWindow) != 0;
+    s.sharpText = c.getInt("sharp_text", s.sharpText) != 0;
     s.checkUpdates = c.getInt("check_updates", s.checkUpdates) != 0;
     s.updateDeclined = c.get("update_declined");
 }
@@ -101,6 +104,7 @@ void storeSettings(const app::Settings& s, app::setup::Config& c, bool mute) {
     c.setInt("exact_minimap", s.exactMinimap);
     c.setInt("minimap_drag", s.minimapDrag);
     c.setInt("resizable_window", s.resizableWindow);
+    c.setInt("sharp_text", s.sharpText);
     c.setInt("check_updates", s.checkUpdates);
     c.set("update_declined", s.updateDeclined);
 }
@@ -247,6 +251,10 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
         }
 
         render::IndexedSurface surface(640, 480);
+        // Sharp text: the texts of the frame, and the frame shown without them.
+        render::TextLayer textLayer;
+        render::IndexedSurface shown;
+        app::SharpText sharpText(renderer);
         SDL_Texture* texture = nullptr;
         int texW = 0, texH = 0;
         Uint64 last = SDL_GetTicks(), scriptLast = last;
@@ -294,7 +302,18 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             app.layout(outW, outH);
             if (surface.width() != app.frameWidth() || surface.height() != app.frameHeight())
                 surface.resize(app.frameWidth(), app.frameHeight());
+            const bool sharp = app.settings().sharpText;
+            textLayer.clear();
+            if (sharp) {
+                textLayer.attach(surface, 0, 0);
+                render::TextLayer::setActive(&textLayer);
+            }
             app.draw(surface);
+            render::TextLayer::setActive(nullptr);
+            if (sharp) {
+                shown = surface;
+                textLayer.resolve(shown);
+            }
             if (surface.width() != texW || surface.height() != texH) {
                 SDL_DestroyTexture(texture);
                 texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STREAMING, surface.width(),
@@ -309,7 +328,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
             void* pixels = nullptr;
             int pitch = 0;
             if (SDL_LockTexture(texture, nullptr, &pixels, &pitch)) {
-                const std::vector<std::uint8_t> rgba = surface.toRgba(pal);
+                const std::vector<std::uint8_t> rgba = (sharp ? shown : surface).toRgba(pal);
                 for (int y = 0; y < texH; ++y)
                     std::copy_n(rgba.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(texW) * 4,
                                 static_cast<std::size_t>(texW) * 4, static_cast<std::uint8_t*>(pixels) + y * pitch);
@@ -327,6 +346,7 @@ int run(app::GameData& data, app::setup::Config* config, int scale, bool intro, 
                                 (static_cast<float>(outH) - static_cast<float>(texH) * kk) / 2, static_cast<float>(texW) * kk,
                                 static_cast<float>(texH) * kk};
             SDL_RenderTexture(renderer, texture, nullptr, &dst);
+            if (sharp) sharpText.draw(textLayer, pal, dst, kk);
             SDL_RenderPresent(renderer);
         };
         bool inFrame = false;

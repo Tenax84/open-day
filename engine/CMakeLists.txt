@@ -58,6 +58,7 @@ add_library(openday_render
     render/font.cpp
     render/indexed_surface.cpp
     render/smk_frames.cpp
+    render/text_layer.cpp
 )
 target_include_directories(openday_render PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(openday_render PUBLIC openday_formats PRIVATE openday_stb openday_embedded openday_warnings)

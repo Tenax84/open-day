@@ -1,7 +1,8 @@
 // Text for the user interface. The original draws Arial with Windows GDI,
 // without anti-aliasing (docs/mechanics/interface.md, "Text rendering");
 // OpenDay rasterizes an embedded metric-compatible font the same way: every
-// glyph pixel is either fully set or not.
+// glyph pixel is either fully set or not. Text drawn while a sharp-text layer
+// records (render/text_layer.hpp) is noted there as well.
 #pragma once
 
 #include <cstdint>
@@ -28,6 +29,7 @@ public:
     Font(const Font&) = delete;
     Font& operator=(const Font&) = delete;
 
+    FontFace face() const { return face_; }
     int lineHeight() const { return cellHeight_; }
     int width(std::string_view utf8) const;
 
@@ -53,6 +55,7 @@ private:
 
     struct Impl;
     std::unique_ptr<Impl> impl_;
+    FontFace face_;
     int cellHeight_;
     int baseline_ = 0; // from the top of the cell
     mutable std::unordered_map<char32_t, Glyph> glyphs_;
